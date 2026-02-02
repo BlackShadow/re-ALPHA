@@ -1,17 +1,18 @@
 
-![Shot_1](https://github.com/BlackShadow/re-ALPHA/blob/main/media/Header.jpg)
+![Shot_1](https://github.com/BlackShadow/re-ALPHA/blob/main/media/Banner.png)
 
 # re-ALPHA
 
 **Half-Life Alpha 0.52 reverse engineering / decompilation project** — focused on reconstructing the early GoldSrc-era engine code.
 
 > **Status:** In-development
+> 
 > **Build:** Visual Studio **2026** (MSVC **v145**)  
 > **Primary target:** `enginegl.exe` (decompiled / reconstructed)
 
 ---
 
-## What this is
+## What this is?
 
 re-ALPHA is a reverse engineering + decompilation effort targeting **Half-Life Alpha 0.52**. The goal is to rebuild a readable, maintainable codebase that matches the original engine behavior closely.
 
