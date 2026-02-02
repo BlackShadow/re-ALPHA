@@ -1,5 +1,5 @@
 
-![Shot_1](https://github.com/BlackShadow/re-ALPHA/blob/main/media/Header1.jpg)
+![Shot_1](https://github.com/BlackShadow/re-ALPHA/blob/main/media/Header.jpg)
 
 # re-ALPHA
 
