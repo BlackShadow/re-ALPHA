@@ -8,7 +8,7 @@
 > **Status:** In-development
 > 
 > **Build:** Visual Studio **2026** (MSVC **v145**)  
-> **Primary target:** `enginegl.exe` (decompiled / reconstructed)
+> **Primary target:** `enginegl.exe`
 
 ---
 
