@@ -18,8 +18,6 @@ re-ALPHA is a reverse engineering + decompilation effort targeting **Half-Life A
 
 ---
 
----
-
 ## Notes
 
 Bugs from original Half-Life Alpha is not fixed purposefully. Such as, VIS issues, flashing decals, NPC movement issues etc...
