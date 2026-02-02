@@ -1,3 +1,6 @@
+
+![Shot_1](https://github.com/BlackShadow/re-ALPHA/blob/main/media/Header1.jpg)
+
 # re-ALPHA
 
 **Half-Life Alpha 0.52 reverse engineering / decompilation project** — focused on reconstructing the early GoldSrc-era engine code.
@@ -30,14 +33,6 @@ re-ALPHA is a reverse engineering + decompilation effort targeting **Half-Life A
 - There's some small issues in Networking that preventing LAN play
 - Save system
 ---
-
-## Build
-
-### Requirements
-
-- Visual Studio 2026 - v145 (can be downgraded to v143 for VS2022) 
-
-
 
 ## Legal / Disclaimer
 
