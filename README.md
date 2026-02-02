@@ -5,7 +5,7 @@
 
 **Half-Life Alpha 0.52 reverse engineering / decompilation project** — focused on reconstructing the early GoldSrc-era engine code.
 
-> **Status:** In-development
+> **Status:** Mostly done
 > 
 > **Build:** Visual Studio **2026** (MSVC **v145**)  
 > **Primary target:** `enginegl.exe`
