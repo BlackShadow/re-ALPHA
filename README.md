@@ -5,8 +5,8 @@
 
 **Half-Life Alpha 0.52 reverse engineering / decompilation project** — focused on reconstructing the early GoldSrc-era engine code.
 
-> **Status:** actively in-progress  
-> **Toolchain:** Visual Studio **2026** (MSVC **v145**)  
+> **Status:** In-development
+> **Build:** Visual Studio **2026** (MSVC **v145**)  
 > **Primary target:** `enginegl.exe` (decompiled / reconstructed)
 
 ---
@@ -26,12 +26,6 @@ re-ALPHA is a reverse engineering + decompilation effort targeting **Half-Life A
 | **hl.dll** | Game/server-side logic | In-Progress |
 
 
----
-
-## Known issues
-
-- There's some small issues in Networking that preventing LAN play
-- Save system
 ---
 
 ## Legal / Disclaimer
