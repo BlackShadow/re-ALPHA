@@ -22,8 +22,8 @@ re-ALPHA is a reverse engineering + decompilation effort targeting **Half-Life A
 
 | Component | Purpose | Status |
 |---|---|---|
-| **enginegl.exe** | OpenGL launcher / renderer path | **Decomped** |
-| **engine.exe** | Software renderer / rasterizer path | Planned |
+| **enginegl.exe** | OpenGL engine | **Decomped** |
+| **engine.exe** | Software engine | Planned |
 | **hl.dll** | Game/server-side logic | In-Progress |
 
 
