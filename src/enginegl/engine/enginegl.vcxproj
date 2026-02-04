@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <ProjectGuid>{B12702AD-ABFB-343A-A199-8F5B4C0B3B6C}</ProjectGuid>
+    <RootNamespace>enginegl</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>enginegl</ProjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <OutDir>$(SolutionDir)build\</OutDir>
+    <IntDir>$(SolutionDir)build\bin\$(Configuration)\</IntDir>
+    <TargetName>enginegl</TargetName>
+    <TargetExt>.exe</TargetExt>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <OutDir>$(SolutionDir)build\</OutDir>
+    <IntDir>$(SolutionDir)build\bin\$(Configuration)\</IntDir>
+    <TargetName>enginegl</TargetName>
+    <TargetExt>.exe</TargetExt>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <SDLCheck>false</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;GLQUAKE;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;_WINSOCK_DEPRECATED_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>false</ConformanceMode>
+      <AdditionalIncludeDirectories>$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <FloatingPointModel>Fast</FloatingPointModel>
+      <CallingConvention>Cdecl</CallingConvention>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <CompileAs>CompileAsC</CompileAs>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <ProgramDatabaseFile>$(IntDir)$(TargetName).pdb</ProgramDatabaseFile>
+      <AdditionalDependencies>ws2_32.lib;wsock32.lib;winmm.lib;gdi32.lib;user32.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <EntryPointSymbol>WinMainCRTStartup</EntryPointSymbol>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>false</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;GLQUAKE;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;_WINSOCK_DEPRECATED_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>false</ConformanceMode>
+      <AdditionalIncludeDirectories>$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <FloatingPointModel>Fast</FloatingPointModel>
+      <CallingConvention>Cdecl</CallingConvention>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <CompileAs>CompileAsC</CompileAs>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <ProgramDatabaseFile>$(IntDir)$(TargetName).pdb</ProgramDatabaseFile>
+      <AdditionalDependencies>ws2_32.lib;wsock32.lib;winmm.lib;gdi32.lib;user32.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <EntryPointSymbol>WinMainCRTStartup</EntryPointSymbol>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <!-- Core Source Files -->
+    <ClCompile Include="sys_win.c" />
+    <ClCompile Include="host.c" />
+    <ClCompile Include="common.c" />
+    <ClCompile Include="cmd.c" />
+    <ClCompile Include="cvar.c" />
+    <ClCompile Include="console.c" />
+    <ClCompile Include="keys.c" />
+    <ClCompile Include="in_win.c" />
+    <!-- Client Source Files -->
+    <ClCompile Include="cl_main.c" />
+    <ClCompile Include="cl_parse.c" />
+    <ClCompile Include="cl_input.c" />
+    <ClCompile Include="cl_tent.c" />
+    <ClCompile Include="cl_demo.c" />
+    <ClCompile Include="cam.c" />
+    <ClCompile Include="chase.c" />
+    <ClCompile Include="view.c" />
+    <!-- Server Source Files -->
+    <ClCompile Include="sv_main.c" />
+    <ClCompile Include="sv_client.c" />
+    <ClCompile Include="sv_phys.c" />
+    <ClCompile Include="sv_user.c" />
+    <ClCompile Include="sv_move.c" />
+    <ClCompile Include="host_cmd.c" />
+    <!-- OpenGL Rendering Source Files -->
+    <ClCompile Include="gl_draw.c" />
+    <ClCompile Include="gl_texloader.c" />
+    <ClCompile Include="gl_vidnt.c" />
+    <ClCompile Include="gl_model.c" />
+    <ClCompile Include="gl_rmain.c" />
+    <ClCompile Include="gl_rsurf.c" />
+    <ClCompile Include="gl_rlight.c" />
+    <ClCompile Include="gl_screen.c" />
+    <ClCompile Include="gl_warp.c" />
+    <ClCompile Include="gl_mesh.c" />
+    <ClCompile Include="gl_refrag.c" />
+    <ClCompile Include="r_studio.c" />
+    <ClCompile Include="r_part.c" />
+    <ClCompile Include="r_efx.c" />
+    <!-- Sound Source Files -->
+    <ClCompile Include="snd_dma.c" />
+    <ClCompile Include="snd_win.c" />
+    <ClCompile Include="snd_dsp.c" />
+    <ClCompile Include="snd_mix.c" />
+    <ClCompile Include="snd_mem.c" />
+    <!-- Networking Source Files -->
+    <ClCompile Include="net_wins.c" />
+    <ClCompile Include="net_wipx.c" />
+    <ClCompile Include="net_main.c" />
+    <ClCompile Include="net_datagram.c" />
+    <ClCompile Include="net_loop.c" />
+    <ClCompile Include="net_vcr.c" />
+    <ClCompile Include="eiface.c" />
+    <!-- QuakeC VM Source Files -->
+    <ClCompile Include="pr_exec.c" />
+    <ClCompile Include="pr_edict.c" />
+    <ClCompile Include="pr_cmds.c" />
+    <!-- Utilities Source Files -->
+    <ClCompile Include="mathlib.c" />
+    <ClCompile Include="zone.c" />
+    <ClCompile Include="crc.c" />
+    <ClCompile Include="wad.c" />
+    <ClCompile Include="world.c" />
+    <ClCompile Include="decal.c" />
+    <ClCompile Include="mod_utils.c" />
+    <ClCompile Include="pm_shared.c" />
+    <ClCompile Include="engine_globals.c" />
+    <!-- Menu and Audio Source Files -->
+    <ClCompile Include="menu.c" />
+    <ClCompile Include="cd_win.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Header Files -->
+    <ClInclude Include="bspfile.h" />
+    <ClInclude Include="client.h" />
+    <ClInclude Include="cmd.h" />
+    <ClInclude Include="common.h" />
+    <ClInclude Include="console.h" />
+    <ClInclude Include="crc.h" />
+    <ClInclude Include="cvar.h" />
+    <ClInclude Include="decal.h" />
+    <ClInclude Include="draw.h" />
+    <ClInclude Include="edict.h" />
+    <ClInclude Include="glquake.h" />
+    <ClInclude Include="globals.h" />
+    <ClInclude Include="keys.h" />
+    <ClInclude Include="mathlib.h" />
+    <ClInclude Include="menu.h" />
+    <ClInclude Include="model.h" />
+    <ClInclude Include="net.h" />
+    <ClInclude Include="nullsubs.h" />
+    <ClInclude Include="progdefs.h" />
+    <ClInclude Include="protocol.h" />
+    <ClInclude Include="quakedef.h" />
+    <ClInclude Include="render.h" />
+    <ClInclude Include="server.h" />
+    <ClInclude Include="sound.h" />
+    <ClInclude Include="studio.h" />
+    <ClInclude Include="sys.h" />
+    <ClInclude Include="wad.h" />
+    <ClInclude Include="world.h" />
+    <ClInclude Include="zone.h" />
+    <ClInclude Include="winquake.h" />
+    <ClInclude Include="net_loop.h" />
+    <ClInclude Include="pmove.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="enginegl.rc" />
+    <None Include="hl.ico" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

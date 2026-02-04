@@ -1,0 +1,344 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Source Files\Core">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Client">
+      <UniqueIdentifier>{D9D6E242-F8AF-46E4-B9FD-80ECBC20BA3E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Server">
+      <UniqueIdentifier>{A4F3D8AA-9C5E-4A3F-8C7B-C5E8D3A6B7C9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Rendering">
+      <UniqueIdentifier>{C7E8D9F0-A1B2-4C3D-8E5F-F6A7B8C9D0E1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Sound">
+      <UniqueIdentifier>{E2F3A4B5-C6D7-4E8F-9A0B-1C2D3E4F5A6B}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Network">
+      <UniqueIdentifier>{F7A8B9C0-D1E2-4F3A-8B5C-6D7E8F9A0B1C}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\QuakeC VM">
+      <UniqueIdentifier>{A0B1C2D3-E4F5-4A6B-8C7D-8E9F0A1B2C3D}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Utilities">
+      <UniqueIdentifier>{B3C4D5E6-F7A8-4B9C-8D0E-1F2A3B4C5D6E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFC}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{D6E7B8C9-0A1B-4C2D-8E3F-4A5B6C7D8E9F}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav</Extensions>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Core Source Files -->
+    <ClCompile Include="sys_win.c">
+      <Filter>Source Files\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="host.c">
+      <Filter>Source Files\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="common.c">
+      <Filter>Source Files\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="cmd.c">
+      <Filter>Source Files\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="cvar.c">
+      <Filter>Source Files\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="console.c">
+      <Filter>Source Files\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="keys.c">
+      <Filter>Source Files\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="in_win.c">
+      <Filter>Source Files\Core</Filter>
+    </ClCompile>
+    <!-- Client Source Files -->
+    <ClCompile Include="cl_main.c">
+      <Filter>Source Files\Client</Filter>
+    </ClCompile>
+    <ClCompile Include="cl_parse.c">
+      <Filter>Source Files\Client</Filter>
+    </ClCompile>
+    <ClCompile Include="cl_input.c">
+      <Filter>Source Files\Client</Filter>
+    </ClCompile>
+    <ClCompile Include="cl_tent.c">
+      <Filter>Source Files\Client</Filter>
+    </ClCompile>
+    <ClCompile Include="cl_demo.c">
+      <Filter>Source Files\Client</Filter>
+    </ClCompile>
+    <ClCompile Include="cam.c">
+      <Filter>Source Files\Client</Filter>
+    </ClCompile>
+    <ClCompile Include="chase.c">
+      <Filter>Source Files\Client</Filter>
+    </ClCompile>
+    <ClCompile Include="view.c">
+      <Filter>Source Files\Client</Filter>
+    </ClCompile>
+    <!-- Server Source Files -->
+    <ClCompile Include="sv_main.c">
+      <Filter>Source Files\Server</Filter>
+    </ClCompile>
+    <ClCompile Include="sv_client.c">
+      <Filter>Source Files\Server</Filter>
+    </ClCompile>
+    <ClCompile Include="sv_phys.c">
+      <Filter>Source Files\Server</Filter>
+    </ClCompile>
+    <ClCompile Include="sv_user.c">
+      <Filter>Source Files\Server</Filter>
+    </ClCompile>
+    <ClCompile Include="sv_move.c">
+      <Filter>Source Files\Server</Filter>
+    </ClCompile>
+    <ClCompile Include="host_cmd.c">
+      <Filter>Source Files\Server</Filter>
+    </ClCompile>
+    <!-- OpenGL Rendering Source Files -->
+    <ClCompile Include="gl_draw.c">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_vidnt.c">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_model.c">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_rmain.c">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_rsurf.c">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_rlight.c">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_screen.c">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_warp.c">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_mesh.c">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_refrag.c">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="r_studio.c">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="r_part.c">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="r_efx.c">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <!-- Sound Source Files -->
+    <ClCompile Include="snd_dma.c">
+      <Filter>Source Files\Sound</Filter>
+    </ClCompile>
+    <ClCompile Include="snd_win.c">
+      <Filter>Source Files\Sound</Filter>
+    </ClCompile>
+    <ClCompile Include="snd_dsp.c">
+      <Filter>Source Files\Sound</Filter>
+    </ClCompile>
+    <ClCompile Include="snd_mix.c">
+      <Filter>Source Files\Sound</Filter>
+    </ClCompile>
+    <ClCompile Include="snd_mem.c">
+      <Filter>Source Files\Sound</Filter>
+    </ClCompile>
+    <ClCompile Include="cd_win.c">
+      <Filter>Source Files\Sound</Filter>
+    </ClCompile>
+    <!-- Networking Source Files -->
+    <ClCompile Include="net_wins.c">
+      <Filter>Source Files\Network</Filter>
+    </ClCompile>
+    <ClCompile Include="net_wipx.c">
+      <Filter>Source Files\Network</Filter>
+    </ClCompile>
+    <ClCompile Include="net_main.c">
+      <Filter>Source Files\Network</Filter>
+    </ClCompile>
+    <ClCompile Include="net_datagram.c">
+      <Filter>Source Files\Network</Filter>
+    </ClCompile>
+    <ClCompile Include="net_loop.c">
+      <Filter>Source Files\Network</Filter>
+    </ClCompile>
+    <ClCompile Include="net_vcr.c">
+      <Filter>Source Files\Network</Filter>
+    </ClCompile>
+    <ClCompile Include="eiface.c">
+      <Filter>Source Files\Network</Filter>
+    </ClCompile>
+    <!-- QuakeC VM Source Files -->
+    <ClCompile Include="pr_exec.c">
+      <Filter>Source Files\QuakeC VM</Filter>
+    </ClCompile>
+    <ClCompile Include="pr_edict.c">
+      <Filter>Source Files\QuakeC VM</Filter>
+    </ClCompile>
+    <ClCompile Include="pr_cmds.c">
+      <Filter>Source Files\QuakeC VM</Filter>
+    </ClCompile>
+    <!-- Utilities Source Files -->
+    <ClCompile Include="mathlib.c">
+      <Filter>Source Files\Utilities</Filter>
+    </ClCompile>
+    <ClCompile Include="zone.c">
+      <Filter>Source Files\Utilities</Filter>
+    </ClCompile>
+    <ClCompile Include="crc.c">
+      <Filter>Source Files\Utilities</Filter>
+    </ClCompile>
+    <ClCompile Include="wad.c">
+      <Filter>Source Files\Utilities</Filter>
+    </ClCompile>
+    <ClCompile Include="world.c">
+      <Filter>Source Files\Utilities</Filter>
+    </ClCompile>
+    <ClCompile Include="decal.c">
+      <Filter>Source Files\Utilities</Filter>
+    </ClCompile>
+    <ClCompile Include="pm_shared.c">
+      <Filter>Source Files\Utilities</Filter>
+    </ClCompile>
+    <ClCompile Include="engine_globals.c">
+      <Filter>Source Files\Utilities</Filter>
+    </ClCompile>
+    <ClCompile Include="menu.c">
+      <Filter>Source Files\Utilities</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_texloader.c">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="mod_utils.c">
+      <Filter>Source Files\Utilities</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Header Files -->
+    <ClInclude Include="bspfile.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="client.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cmd.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="common.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="console.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="crc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cvar.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="decal.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="draw.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="edict.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="glquake.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="globals.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="keys.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="mathlib.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="menu.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="model.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="net.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="nullsubs.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="progdefs.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="protocol.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="quakedef.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="render.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="server.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="sound.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="studio.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="sys.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="wad.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="world.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="zone.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="winquake.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="net_loop.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="pmove.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="enginegl.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
+    <None Include="hl.ico">
+      <Filter>Resource Files</Filter>
+    </None>
+  </ItemGroup>
+</Project>
