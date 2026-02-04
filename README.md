@@ -5,7 +5,7 @@
 
 **Half-Life Alpha 0.52 reverse engineering / decompilation project** — focused on reconstructing the early GoldSrc-era engine code.
 
-> **Status:** Mostly done
+> **Status:** Released
 > 
 > **Build:** Visual Studio **2026** (MSVC **v145**)  
 > **Primary target:** `enginegl.exe`
@@ -19,6 +19,8 @@ re-ALPHA is a reverse engineering + decompilation effort targeting **Half-Life A
 ---
 
 ## Notes
+
+Remove the Opengl32.dll packaged with the Half-Life Alpha or else it won't work!
 
 Bugs from original Half-Life Alpha is not fixed purposefully. Such as, VIS issues, flashing decals, NPC movement issues etc...
 
