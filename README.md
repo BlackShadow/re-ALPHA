@@ -41,7 +41,7 @@ However there are some minor fixes, such as: Fixing save/load system, console/te
 
 ## Tools
 
-We also created modelling tools for Half-Life Alpha:
+We also created tools for Half-Life Alpha:
 
 | Tool           | Purpose         | Notes |
 |----------------|-----------------|-------|
