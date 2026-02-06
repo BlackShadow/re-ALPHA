@@ -39,12 +39,12 @@ Bugs from original Half-Life Alpha is not fixed purposefully. Such as, VIS issue
 
 ## Tools
 
-We also created Modelling tools for Half-Life Alpha
+We also created modelling tools for Half-Life Alpha:
 
-|---|---|---|
-| **StudioMDL.exe** | MDL Compiler  |
-| **MDLDec.exe** | MDL Decompiler | 
-
+| Tool           | Purpose         | Notes |
+|----------------|-----------------|-------|
+| **StudioMDL.exe** | MDL Compiler     |  ✅     |
+| **MDLDec.exe**    | MDL Decompiler   |    ✅   |
 
 ---
 
