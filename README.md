@@ -37,6 +37,17 @@ Bugs from original Half-Life Alpha is not fixed purposefully. Such as, VIS issue
 
 ---
 
+## Tools
+
+We also created Modelling tools for Half-Life Alpha
+
+|---|---|---|
+| **StudioMDL.exe** | MDL Compiler  |
+| **MDLDec.exe** | MDL Decompiler | 
+
+
+---
+
 ## Legal / Disclaimer
 
 Half-Life and related names are trademarks of their respective owners.  
