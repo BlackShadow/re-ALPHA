@@ -46,14 +46,6 @@ We also created modelling tools for Half-Life Alpha:
 | **StudioMDL.exe** | MDL Compiler     |  ✅     |
 | **MDLDec.exe**    | MDL Decompiler   |    ✅   |
 
----
-
-## Legal / Disclaimer
-
-Half-Life and related names are trademarks of their respective owners.  
-This repository is intended for **research, interoperability, and educational** reverse engineering.
-
----
 
 ## Credits
 
