@@ -464,7 +464,12 @@ int SV_PrevPlayerSlot(int start_slot)
 
 int SV_EntityChangeLevelCallback(const char *level, const char *startspot)
 {
+	const qboolean has_startspot = (startspot && startspot[0]);
+
 	if (svs.changelevel_issued)
+		return 0;
+
+	if (!level || !level[0])
 		return 0;
 
 	scr_con_current = 0.0f;
@@ -475,10 +480,18 @@ int SV_EntityChangeLevelCallback(const char *level, const char *startspot)
 
 	Draw_BeginDisc();
 
-	if (((int)pr_global_struct->serverflags & 0x30) != 0)
+	if (!has_startspot)
+	{
+		Cbuf_AddText(va("changelevel %s\n", (char *)level));
+	}
+	else if (((int)pr_global_struct->serverflags & 0x30) != 0)
+	{
 		Cbuf_AddText(va("changelevel %s %s\n", (char *)level, (char *)startspot));
+	}
 	else
+	{
 		Cbuf_AddText(va("changelevel2 %s %s\n", (char *)level, (char *)startspot));
+	}
 
 	return 0;
 }

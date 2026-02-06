@@ -40,6 +40,7 @@ extern int type_size[];
 extern char *PR_UglyValueString(int type, void *val);
 extern edict_t *ED_SetEdictPointers(edict_t *e);
 extern void *ED_CallDispatch(void *ent, int callback_type, void *param);
+extern void *ED_GetPrivateData(edict_t *ent);
 extern edict_t *FindEntityByString(edict_t *pEdictStartSearchAfter, const char *pszField, const char *pszValue);
 
 #define sv_active           (sv.active)
@@ -54,6 +55,78 @@ extern edict_t *FindEntityByString(edict_t *pEdictStartSearchAfter, const char *
 #define demos               (cls.demos)
 #define cls_demoplayback    (cls.demoplayback)
 #define cls_state           ((int)cls.state)
+
+typedef struct host_landmark_transition_s
+{
+	qboolean pending;
+	char name[64];
+	vec3_t offset;
+	vec3_t angles;
+} host_landmark_transition_t;
+
+static host_landmark_transition_t host_landmark_transition;
+
+static void Host_ClearLandmarkTransition(void)
+{
+	host_landmark_transition.pending = false;
+	host_landmark_transition.name[0] = 0;
+	VectorClear(host_landmark_transition.offset);
+	VectorClear(host_landmark_transition.angles);
+}
+
+static void Host_CaptureLandmarkTransition(const char *landmark)
+{
+	edict_t *old_landmark;
+	edict_t *player_ent;
+
+	if (!landmark || !landmark[0])
+		return;
+
+	if (g_iextdllcount <= 0 || svs_maxclients != 1 || !svs_clients[0].active)
+		return;
+
+	player_ent = svs_clients[0].edict;
+	if (!player_ent || player_ent->free)
+		return;
+
+	VectorClear(host_landmark_transition.offset);
+	VectorCopy(player_ent->v.v_angle, host_landmark_transition.angles);
+	Q_strcpy(host_landmark_transition.name, landmark);
+	host_landmark_transition.pending = true;
+
+	old_landmark = FindEntityByString(NULL, "targetname", landmark);
+	if (old_landmark && !old_landmark->free)
+		VectorSubtract(player_ent->v.origin, old_landmark->v.origin, host_landmark_transition.offset);
+}
+
+static void Host_ApplyLandmarkTransition(edict_t *ent)
+{
+	edict_t *new_landmark;
+	vec3_t translated_origin;
+
+	if (!host_landmark_transition.pending)
+		return;
+
+	if (svs_maxclients != 1 || !ent || ent->free)
+	{
+		Host_ClearLandmarkTransition();
+		return;
+	}
+
+	new_landmark = FindEntityByString(NULL, "targetname", host_landmark_transition.name);
+	if (new_landmark && !new_landmark->free)
+	{
+		VectorAdd(new_landmark->v.origin, host_landmark_transition.offset, translated_origin);
+		VectorCopy(translated_origin, ent->v.origin);
+		VectorCopy(translated_origin, ent->v.oldorigin);
+		VectorCopy(host_landmark_transition.angles, ent->v.angles);
+		VectorCopy(host_landmark_transition.angles, ent->v.v_angle);
+		ent->v.fixangle = 1.0f;
+		SV_LinkEdict(ent, false);
+	}
+
+	Host_ClearLandmarkTransition();
+}
 
 void Host_Status_f(void)
 {
@@ -336,12 +409,14 @@ void Host_Restart_f(void)
 {
 	char mapname[64];
 	char startspot[64];
+	char *landmark;
 
 	if (!cls_demoplayback && sv_active && cmd_source == src_command)
 	{
 		strcpy(mapname, sv.name);
 		strcpy(startspot, sv.startspot);
-		SV_SpawnServer(mapname, startspot);
+		landmark = startspot[0] ? startspot : NULL;
+		SV_SpawnServer(mapname, landmark);
 	}
 }
 
@@ -388,13 +463,17 @@ void Host_Changelevel_f(void)
 
 	SCR_BeginLoadingPlaque();
 	strcpy(level, Cmd_Argv(1));
+	Host_ClearLandmarkTransition();
 
 	landmark = NULL;
-	if (Cmd_Argc() != 2)
+	if (Cmd_Argc() > 2)
 	{
 		strcpy(spot, Cmd_Argv(2));
-		landmark = spot;
+		if (spot[0])
+			landmark = spot;
 	}
+	Host_CaptureLandmarkTransition(landmark);
+
 	SV_SaveSpawnparms();
 	SV_SpawnServer(level, landmark);
 }
@@ -419,13 +498,17 @@ void Host_Changelevel2_f(void)
 
 	SCR_BeginLoadingPlaque();
 	strcpy(level, Cmd_Argv(1));
+	Host_ClearLandmarkTransition();
 
 	landmark = NULL;
-	if (Cmd_Argc() != 2)
+	if (Cmd_Argc() > 2)
 	{
 		strcpy(spot, Cmd_Argv(2));
-		landmark = spot;
+		if (spot[0])
+			landmark = spot;
 	}
+	Host_CaptureLandmarkTransition(landmark);
+
 	SV_SaveSpawnparms();
 	SV_SpawnServer(level, landmark);
 }
@@ -567,7 +650,41 @@ void Host_Spawn_f(void)
 
 	if (sv.loadgame)
 	{
+		ent = host_client->edict;
+
+		// Savegames restore entvars from text, but game-DLL player private data may still be null.
+		// Re-run player callbacks once to allocate DLL-side state, then restore loaded entvars.
+		if (g_iextdllcount > 0 && !ED_GetPrivateData(ent))
+		{
+			entvars_t saved_entvars;
+
+			memcpy(&saved_entvars, &ent->v, sizeof(saved_entvars));
+			memcpy(&pr_global_struct->parm1, host_client->spawn_parms, sizeof(host_client->spawn_parms));
+
+			pr_global_struct->time = sv.time;
+			pr_global_struct->self = EDICT_TO_PROG(ent);
+
+			DispatchEntityCallback(7);
+			DispatchEntityCallback(8);
+
+			memcpy(&ent->v, &saved_entvars, sizeof(saved_entvars));
+			ent->v.pContainingEntity = ent;
+			ent->v.pSystemGlobals = pr_global_struct;
+			SV_LinkEdict(ent, false);
+		}
+
+		// Save files can contain stale transition tokens from prior runs.
+		// Rebuild spawn parms now so future levelchanges use a valid parm block.
+		if (g_iextdllcount > 0)
+		{
+			pr_global_struct->time = sv.time;
+			pr_global_struct->self = EDICT_TO_PROG(ent);
+			DispatchEntityCallback(4);
+			memcpy(host_client->spawn_parms, &pr_global_struct->parm1, sizeof(host_client->spawn_parms));
+		}
+
 		sv.paused = false;
+		sv.loadgame = false;
 	}
 	else
 	{
@@ -594,7 +711,10 @@ void Host_Spawn_f(void)
 			Sys_Printf("%s entered the game\n", host_client->name);
 
 		DispatchEntityCallback(8);
+
 	}
+
+	Host_ApplyLandmarkTransition(ent);
 
 	SZ_Clear(&host_client->message);
 	MSG_WriteByte(&host_client->message, svc_time);
@@ -1488,6 +1608,9 @@ void Host_Savegame_f(void)
 	Host_ConvertPathSlashes(fileName);
 
 	Con_Printf("Saving game to %s...\n", fileName);
+
+	// Keep save spawn parms synchronized with current player state.
+	SV_SaveSpawnparms();
 
 	f = fopen(fileName, "w");
 	if (!f)

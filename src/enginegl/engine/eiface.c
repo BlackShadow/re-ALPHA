@@ -396,13 +396,32 @@ void DispatchEntityCallback(int callbackIndex)
 {
 	int (__stdcall *pfn)(globalvars_t *);
 	edict_t *self;
+	int self_ofs;
+	int max_self_ofs;
+
+	if (callbackIndex < 0 || callbackIndex >= (int)(sizeof(g_entityfuncs) / sizeof(g_entityfuncs[0])))
+		return;
 
 	pfn = (int (__stdcall *)(globalvars_t *))g_entityfuncs[callbackIndex];
 	if (pfn)
 	{
-		self = (edict_t *)((byte *)sv_edicts + pr_global_struct->self);
-		self->v.pContainingEntity = self;
-		self->v.pSystemGlobals = pr_global_struct;
+		if (!pr_global_struct)
+			return;
+
+		if (sv.edicts && sv.num_edicts > 0 && pr_edict_size > 0)
+		{
+			self_ofs = pr_global_struct->self;
+			max_self_ofs = sv.num_edicts * pr_edict_size;
+			if (self_ofs < 0 || self_ofs >= max_self_ofs)
+			{
+				self_ofs = 0;
+				pr_global_struct->self = 0;
+			}
+
+			self = (edict_t *)((byte *)sv.edicts + self_ofs);
+			self->v.pContainingEntity = self;
+			self->v.pSystemGlobals = pr_global_struct;
+		}
 
 		pfn(pr_global_struct);
 		return;

@@ -216,6 +216,8 @@ void SV_ConnectClient(int clientnum)
 		}
 		else
 		{
+			pr_global_struct->time = sv.time;
+			pr_global_struct->self = EDICT_TO_PROG(ent);
 			DispatchEntityCallback(4);
 			memcpy(client->spawn_parms, &pr_global_struct->parm1, sizeof(spawn_parms));
 		}
@@ -889,6 +891,8 @@ void SV_SaveSpawnparms(void)
 {
 	int		i;
 	server_client_t *client;
+	int token_live;
+	qboolean keep_live_token;
 
 	svs.serverflags = (int)pr_global_struct->serverflags;
 
@@ -897,7 +901,20 @@ void SV_SaveSpawnparms(void)
 		if (!client->active)
 			continue;
 
+		// HL alpha SetChangeParms expects incoming parm1..parm16 to contain the
+		// current transition block (parm1 is used as a pointer-sized token).
 		pr_global_struct->self = EDICT_TO_PROG(client->edict);
+		pr_global_struct->time = sv.time;
+		token_live = *(int *)&pr_global_struct->parm1;
+		keep_live_token = (g_iextdllcount > 0 && svs.changelevel_issued && token_live != 0);
+
+		if (!keep_live_token)
+		{
+			memcpy(&pr_global_struct->parm1, client->spawn_parms, sizeof(client->spawn_parms));
+			if (g_iextdllcount > 0 && (*(int *)&pr_global_struct->parm1) == 0)
+				DispatchEntityCallback(4);
+		}
+
 		DispatchEntityCallback(5);
 		memcpy(client->spawn_parms, &pr_global_struct->parm1, sizeof(client->spawn_parms));
 	}
