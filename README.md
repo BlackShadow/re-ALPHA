@@ -24,6 +24,8 @@ Remove the Opengl32.dll packaged with the Half-Life Alpha or else it won't work!
 
 Bugs from original Half-Life Alpha is not fixed purposefully. Such as, VIS issues, flashing decals, NPC movement issues etc...
 
+However there are some minor fixes, such as: Fixing save/load system, console/text scaling issue when HUD is on
+
 ---
 
 ## Scope / Targets
