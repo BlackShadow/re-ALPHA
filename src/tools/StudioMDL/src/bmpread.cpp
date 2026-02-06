@@ -90,7 +90,7 @@ int ReadBmpFile(
 	// Figure out how many entires are actually in the table
 	if (bmih.biClrUsed == 0)
 	{
-		cbPalBytes = (1 << bmih.biBitCount) * sizeof(RGBQUAD);
+		cbPalBytes = static_cast<ULONG>((1ULL << bmih.biBitCount) * sizeof(RGBQUAD));
 	}
 	else
 	{

@@ -1095,7 +1095,8 @@ int lookupControl(char* string)
 // search case-insensitive for string2 in string
 char* stristr(const char* string, const char* string2)
 {
-	int c, len;
+	int c;
+	size_t len;
 	c = tolower(*string2);
 	len = strlen(string2);
 
@@ -1850,9 +1851,10 @@ void Grab_Triangles(s_model_t* pmodel)
 
 			// strip off trailing smag
 			strcpy(texturename, line);
-			for (i = strlen(texturename) - 1; i >= 0 && !isgraph(texturename[i]); i--)
-				;
-			texturename[i + 1] = '\0';
+			size_t texturenameLength = strlen(texturename);
+			while (texturenameLength > 0 && !isgraph(static_cast<unsigned char>(texturename[texturenameLength - 1])))
+				texturenameLength--;
+			texturename[texturenameLength] = '\0';
 
 			// funky texture overrides
 			for (i = 0; i < numrep; i++)
