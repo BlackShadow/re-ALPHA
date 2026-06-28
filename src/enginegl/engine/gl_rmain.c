@@ -747,6 +747,7 @@ void R_Clear(void)
 	}
 	else
 	{
+		glFinish();  // keep ztrick depth-half parity in sync with the presented frame
 		if (gl_clear.value != 0.0f)
 			glClear(GL_COLOR_BUFFER_BIT);
 
