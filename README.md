@@ -34,7 +34,7 @@ However there are some minor fixes, such as: Fixing save/load system, console/te
 |---|---|---|
 | **enginegl.exe** | OpenGL engine | **Decomped** |
 | **engine.exe** | Software engine | Planned |
-| **hl.dll** | Game/server-side logic | In-Progress |
+| **hl.dll** | Game/server-side logic | **Decomped** |
 
 
 ---
