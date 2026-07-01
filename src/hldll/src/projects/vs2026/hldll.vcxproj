@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{C8092BD5-050F-4163-9817-AACE129A9DC8}</ProjectGuid>
+    <RootNamespace>hldll</RootNamespace>
+    <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <TargetName>hl</TargetName>
+    <OutDir>$(ProjectDir)..\..\build\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)..\..\build\obj\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <AdditionalOptions>/vms %(AdditionalOptions)</AdditionalOptions>
+      <Optimization>Disabled</Optimization>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <PreprocessorDefinitions>WIN32;_WINDOWS;_USRDLL;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\dlls;$(ProjectDir)..\..\game_shared;$(ProjectDir)..\..\public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <ModuleDefinitionFile>..\..\dlls\hl.def</ModuleDefinitionFile>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+      <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
+      <ProgramDatabaseFile>$(IntDir)$(TargetName).pdb</ProgramDatabaseFile>
+      <IncrementalLinkDatabaseFile>$(IntDir)$(TargetName).ilk</IncrementalLinkDatabaseFile>
+      <SubSystem>Windows</SubSystem>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <AdditionalOptions>/vms %(AdditionalOptions)</AdditionalOptions>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <PreprocessorDefinitions>WIN32;_WINDOWS;_USRDLL;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\dlls;$(ProjectDir)..\..\game_shared;$(ProjectDir)..\..\public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <ModuleDefinitionFile>..\..\dlls\hl.def</ModuleDefinitionFile>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+      <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
+      <ProgramDatabaseFile>$(IntDir)$(TargetName).pdb</ProgramDatabaseFile>
+      <IncrementalLinkDatabaseFile>$(IntDir)$(TargetName).ilk</IncrementalLinkDatabaseFile>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>false</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\dlls\alien_grunt.cpp" />
+    <ClCompile Include="..\..\dlls\barney.cpp" />
+    <ClCompile Include="..\..\dlls\bmodels.cpp" />
+    <ClCompile Include="..\..\dlls\boid.cpp" />
+    <ClCompile Include="..\..\dlls\boidflock.cpp" />
+    <ClCompile Include="..\..\dlls\buttons.cpp" />
+    <ClCompile Include="..\..\dlls\cbase.cpp" />
+    <ClCompile Include="..\..\dlls\cbase_toggle.cpp" />
+    <ClCompile Include="..\..\dlls\combat.cpp" />
+    <ClCompile Include="..\..\dlls\doors.cpp" />
+    <ClCompile Include="..\..\dlls\animating.cpp" />
+    <ClCompile Include="..\..\dlls\basemonster.cpp" />
+    <ClCompile Include="..\..\dlls\monsters.cpp" />
+    <ClCompile Include="..\..\dlls\enginefuncs.cpp" />
+    <ClCompile Include="..\..\dlls\explode.cpp" />
+    <ClCompile Include="..\..\dlls\func_break.cpp" />
+    <ClCompile Include="..\..\dlls\ggrenade.cpp" />
+    <ClCompile Include="..\..\dlls\h_cine.cpp" />
+    <ClCompile Include="..\..\dlls\h_cycler.cpp" />
+    <ClCompile Include="..\..\dlls\human_grunt.cpp" />
+    <ClCompile Include="..\..\dlls\h_export.cpp" />
+    <ClCompile Include="..\..\dlls\houndeye.cpp" />
+    <ClCompile Include="..\..\dlls\human_sarge.cpp" />
+    <ClCompile Include="..\..\dlls\alien_slave.cpp" />
+    <ClCompile Include="..\..\dlls\items.cpp" />
+    <ClCompile Include="..\..\dlls\lights.cpp" />
+    <ClCompile Include="..\..\dlls\m44.cpp" />
+    <ClCompile Include="..\..\dlls\panther.cpp" />
+    <ClCompile Include="..\..\dlls\pathcorner.cpp" />
+    <ClCompile Include="..\..\dlls\john_train.cpp" />
+    <ClCompile Include="..\..\dlls\plats.cpp" />
+    <ClCompile Include="..\..\dlls\player.cpp" />
+    <ClCompile Include="..\..\dlls\polyrobo.cpp" />
+    <ClCompile Include="..\..\dlls\scientist.cpp" />
+    <ClCompile Include="..\..\dlls\sound.cpp" />
+    <ClCompile Include="..\..\dlls\subs.cpp" />
+    <ClCompile Include="..\..\dlls\tentacle.cpp" />
+    <ClCompile Include="..\..\dlls\triggers.cpp" />
+    <ClCompile Include="..\..\dlls\turret.cpp" />
+    <ClCompile Include="..\..\dlls\world.cpp" />
+    <ClCompile Include="..\..\dlls\bullchicken.cpp" />
+    <ClCompile Include="..\..\dlls\headcrab.cpp" />
+    <ClCompile Include="..\..\dlls\weapons.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\dlls\client.h" />
+    <ClInclude Include="..\..\dlls\cbase.h" />
+    <ClInclude Include="..\..\dlls\cbase_toggle.h" />
+    <ClInclude Include="..\..\dlls\player.h" />
+    <ClInclude Include="..\..\dlls\ggrenade.h" />
+    <ClInclude Include="..\..\dlls\utils.h" />
+    <ClInclude Include="..\..\dlls\animating.h" />
+    <ClInclude Include="..\..\dlls\basemonster.h" />
+    <ClInclude Include="..\..\dlls\enginefuncs.h" />
+    <ClInclude Include="..\..\dlls\hl_exports.h" />
+    <ClInclude Include="..\..\dlls\hl_types.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\dlls\hl.def" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\public\edict.h" />
+    <ClInclude Include="..\..\public\eiface.h" />
+    <ClInclude Include="..\..\public\progdefs.h" />
+    <ClInclude Include="..\..\public\vector.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

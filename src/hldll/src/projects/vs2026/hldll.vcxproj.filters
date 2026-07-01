@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="dlls">
+      <UniqueIdentifier>{9563F4A6-2D19-456A-B31F-14C9B87C7F5E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="public">
+      <UniqueIdentifier>{C5B1A0A3-801B-44EB-A6BC-01B9C38FCC38}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\dlls\h_export.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\cbase.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\combat.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\alien_grunt.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\barney.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\bmodels.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\boid.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\boidflock.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\buttons.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\bullchicken.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\doors.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\enginefuncs.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\explode.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\func_break.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\ggrenade.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\h_cine.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\h_cycler.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\headcrab.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\weapons.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\human_grunt.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\houndeye.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\human_sarge.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\alien_slave.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\items.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\lights.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\m44.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\panther.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\pathcorner.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\plats.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\polyrobo.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\scientist.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\sound.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\subs.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\tentacle.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\triggers.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\turret.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\world.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\animating.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\basemonster.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\monsters.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\cbase_toggle.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\player.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\john_train.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\dlls\hl_exports.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dlls\hl_types.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dlls\cbase.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dlls\client.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dlls\enginefuncs.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dlls\ggrenade.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dlls\utils.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dlls\animating.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dlls\basemonster.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dlls\cbase_toggle.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dlls\player.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\dlls\hl.def">
+      <Filter>dlls</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\public\edict.h">
+      <Filter>public</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\public\eiface.h">
+      <Filter>public</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\public\progdefs.h">
+      <Filter>public</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\public\vector.h">
+      <Filter>public</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>
