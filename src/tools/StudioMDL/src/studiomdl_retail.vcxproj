@@ -25,7 +25,7 @@
     <ProjectGuid>{3F5C5FA5-06FC-4D33-A4E8-59E7018C58FA}</ProjectGuid>
     <RootNamespace>studiomdl_retail</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
-    <HLSDKRoot>$(SolutionDir)..\..\Half-LifeAlpha\game\fork\HLSDK</HLSDKRoot>
+    <HLSDKRoot>$(MSBuildThisFileDirectory)..\fork\HLSDK</HLSDKRoot>
   </PropertyGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
