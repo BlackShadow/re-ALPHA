@@ -47,6 +47,7 @@ We also created tools for Half-Life Alpha:
 |----------------|-----------------|-------|
 | **StudioMDL.exe** | MDL Compiler     |  ✅     |
 | **MDLDec.exe**    | MDL Decompiler   |    ✅   |
+| **WorldCraft**    | MDL Decompiler   |    In progress   |
 
 
 ## Credits
