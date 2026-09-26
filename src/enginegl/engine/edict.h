@@ -164,14 +164,17 @@ typedef struct entvars_s
 // Edict structure
 typedef struct edict_s
 {
-	int			free;
-	link_t		area; // world link
-	int			num_leafs; // 0..MAX_ENT_LEAFS
+	qboolean	free;
+	link_t		area;				// linked to a division node or leaf
+
+	int			num_leafs;
 	short		leafnums[MAX_ENT_LEAFS];
-	// Extra header state used by this build (baseline/ misc).
-	byte		header_data[68];
-	void		*pvPrivateData; // allocated via ED_AllocPrivateData
-	entvars_t	v; // progs fields
+
+	entity_state_t	baseline;
+
+	float		freetime;			// sv.time when the object was freed
+	void		*pvPrivateData;		// the game DLL's object, allocated by ED_AllocPrivateData
+	entvars_t	v;					// C exported fields from progs
 } edict_t;
 
 #if defined(_DEBUG)
