@@ -13,14 +13,14 @@
 *
 ****/
 
- // bspfile.h -- BSP file format definitions
+// bspfile.h -- BSP file format definitions
 
 #ifndef BSPFILE_H
 #define BSPFILE_H
 
- // =============================================================================
- // BSP file format constants
- // =============================================================================
+// =============================================================================
+// BSP file format constants
+// =============================================================================
 
 
 #define BSPVERSION      29
@@ -30,7 +30,7 @@
 #define MAX_MAP_HULLS	4
 
 
- // Lump indices
+// Lump indices
 #define LUMP_ENTITIES       0
 #define LUMP_PLANES         1
 #define LUMP_TEXTURES       2
@@ -48,128 +48,128 @@
 #define LUMP_MODELS         14
 #define HEADER_LUMPS        15
 
- // =============================================================================
- // BSP file structures
- // =============================================================================
+// =============================================================================
+// BSP file structures
+// =============================================================================
 
- // Lump directory entry
+// Lump directory entry
 typedef struct
 {
-    int fileofs;
-    int filelen;
+	int fileofs;
+	int filelen;
 } lump_t;
 
- // BSP header
+// BSP header
 typedef struct
 {
-    int version;
-    lump_t lumps[HEADER_LUMPS];
+	int version;
+	lump_t lumps[HEADER_LUMPS];
 } dheader_t;
 
- // Model (submodel)
+// Model (submodel)
 typedef struct
 {
-    float mins[3], maxs[3];
-    float origin[3];
-    int headnode[4];
-    int visleafs;
-    int firstface, numfaces;
+	float mins[3], maxs[3];
+	float origin[3];
+	int headnode[4];
+	int visleafs;
+	int firstface, numfaces;
 } dmodel_t;
 
- // Vertex
+// Vertex
 typedef struct
 {
-    float point[3];
+	float point[3];
 } dvertex_t;
 
- // Plane (disk format)
+// Plane (disk format)
 typedef struct
 {
-    float normal[3];
-    float dist;
-    int type;
+	float normal[3];
+	float dist;
+	int type;
 } dplane_t;
 
 
- // Node
+// Node
 typedef struct
 {
-    int planenum;
-    short children[2];
-    short mins[3];
-    short maxs[3];
-    unsigned short firstface;
-    unsigned short numfaces;
+	int planenum;
+	short children[2];
+	short mins[3];
+	short maxs[3];
+	unsigned short firstface;
+	unsigned short numfaces;
 } dnode_t;
 
- // Leaf
+// Leaf
 typedef struct
 {
-    int contents;
-    int visofs;
-    short mins[3];
-    short maxs[3];
-    unsigned short firstmarksurface;
-    unsigned short nummarksurfaces;
-    byte ambient_level[4];
+	int contents;
+	int visofs;
+	short mins[3];
+	short maxs[3];
+	unsigned short firstmarksurface;
+	unsigned short nummarksurfaces;
+	byte ambient_level[4];
 } dleaf_t;
 
- // Clipnode
+// Clipnode
 typedef struct
 {
-    int planenum;
-    short children[2];
+	int planenum;
+	short children[2];
 } dclipnode_t;
 
- // Texinfo
+// Texinfo
 typedef struct
 {
-    float vecs[2][4];
-    int miptex;
-    int flags;
+	float vecs[2][4];
+	int miptex;
+	int flags;
 } texinfo_t;
 
- // Face
+// Face
 typedef struct
 {
-    short planenum;
-    short side;
-    int firstedge;
-    short numedges;
-    short texinfo;
-    byte styles[4];
-    int lightofs;
+	short planenum;
+	short side;
+	int firstedge;
+	short numedges;
+	short texinfo;
+	byte styles[4];
+	int lightofs;
 } dface_t;
 
- // Edge
+// Edge
 typedef struct
 {
-    unsigned short v[2];
+	unsigned short v[2];
 } dedge_t;
 
- // =============================================================================
- // Texture structures
- // =============================================================================
+// =============================================================================
+// Texture structures
+// =============================================================================
 
 
 #define MIPLEVELS 4
 
 typedef struct
 {
-    int nummiptex;
-    int dataofs[4]; // variable sized
+	int nummiptex;
+	int dataofs[4]; // variable sized
 } dmiptexlump_t;
 
 typedef struct miptex_s
 {
-    char name[16];
-    unsigned width, height;
-    unsigned offsets[4]; // four mip maps stored
+	char name[16];
+	unsigned width, height;
+	unsigned offsets[4]; // four mip maps stored
 } miptex_t;
 
- // =============================================================================
- // Ambient sound types
- // =============================================================================
+// =============================================================================
+// Ambient sound types
+// =============================================================================
 
 
 #define AMBIENT_WATER   0
@@ -178,9 +178,9 @@ typedef struct miptex_s
 #define AMBIENT_LAVA    3
 #define NUM_AMBIENTS    4
 
- // =============================================================================
- // Contents types
- // =============================================================================
+// =============================================================================
+// Contents types
+// =============================================================================
 
 
 #define CONTENTS_EMPTY      -1
@@ -199,11 +199,11 @@ typedef struct miptex_s
 #define CONTENTS_CURRENT_DOWN -14
 #define CONTENTS_TRANSLUCENT -15
 
- // =============================================================================
+// =============================================================================
 
- // =============================================================================
- // Alias Model (MDL) structures
- // =============================================================================
+// =============================================================================
+// Alias Model (MDL) structures
+// =============================================================================
 
 #define IDPOLYHEADER	(('O'<<24)+('P'<<16)+('D'<<8)+'I')
 #define IDSPRITEHEADER	(('P'<<24)+('S'<<16)+('D'<<8)+'I')
@@ -277,9 +277,9 @@ typedef struct
 	float		interval;
 } daliasinterval_t;
 
- // =============================================================================
- // Sprite Model structures
- // =============================================================================
+// =============================================================================
+// Sprite Model structures
+// =============================================================================
 
 typedef struct
 {
@@ -319,6 +319,6 @@ typedef struct
 	int			type;
 } dspriteframetype_t;
 
- // =============================================================================
+// =============================================================================
 
 #endif // BSPFILE_H

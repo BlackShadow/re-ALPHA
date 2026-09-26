@@ -32,31 +32,31 @@ void CL_StopPlayback(void)
 
 void CL_WriteDemoMessage(void)
 {
-    int i;
-    int len;
-    float angle;
+	int i;
+	int len;
+	float angle;
 
-    len = LittleLong(net_message.cursize);
-    fwrite(&len, 4, 1, cls.demofile);
+	len = LittleLong(net_message.cursize);
+	fwrite(&len, 4, 1, cls.demofile);
 
-    for (i = 0; i < 3; i++)
-    {
-        angle = LittleFloat(cl_viewangles[i]);
-        fwrite(&angle, 4, 1, cls.demofile);
-    }
+	for (i = 0; i < 3; i++)
+	{
+		angle = LittleFloat(cl_viewangles[i]);
+		fwrite(&angle, 4, 1, cls.demofile);
+	}
 
-    fwrite(net_message.data, net_message.cursize, 1, cls.demofile);
-    fflush(cls.demofile);
+	fwrite(net_message.data, net_message.cursize, 1, cls.demofile);
+	fflush(cls.demofile);
 }
 
 int CL_GetMessage(void)
 {
-    int i;
-    float angle;
-    int r;
+	int i;
+	float angle;
+	int r;
 
-    if (cls.demoplayback)
-    {
+	if (cls.demoplayback)
+	{
 
 		if (cls.signon == SIGNONS)
 		{
@@ -75,56 +75,56 @@ int CL_GetMessage(void)
 			}
 		}
 
-        if (fread(&net_message.cursize, 4, 1, cls.demofile) != 1)
-        {
-            CL_StopPlayback();
-            return 0;
-        }
+		if (fread(&net_message.cursize, 4, 1, cls.demofile) != 1)
+		{
+			CL_StopPlayback();
+			return 0;
+		}
 
-        net_message.cursize = LittleLong(net_message.cursize);
-        if (net_message.cursize > MAX_MSGLEN)
-            Sys_Error("Demo message > MAX_MSGLEN");
+		net_message.cursize = LittleLong(net_message.cursize);
+		if (net_message.cursize > MAX_MSGLEN)
+			Sys_Error("Demo message > MAX_MSGLEN");
 
 		VectorCopy(cl.mviewangles[0], cl.mviewangles[1]);
 
-        for (i = 0; i < 3; i++)
-        {
-            if (fread(&angle, 4, 1, cls.demofile) != 1)
-            {
-                CL_StopPlayback();
-                return 0;
-            }
+		for (i = 0; i < 3; i++)
+		{
+			if (fread(&angle, 4, 1, cls.demofile) != 1)
+			{
+				CL_StopPlayback();
+				return 0;
+			}
 			cl.mviewangles[0][i] = LittleFloat(angle);
-        }
+		}
 
-        if (fread(net_message.data, net_message.cursize, 1, cls.demofile) == 1)
-        {
-            return 1;
-        }
-        else
-        {
-            CL_StopPlayback();
-            return 0;
-        }
-    }
-    else
-    {
-        while (1)
-        {
-            r = NET_GetMessage(cls.netcon);
-            if (r != 1 && r != 2)
-                break;
+		if (fread(net_message.data, net_message.cursize, 1, cls.demofile) == 1)
+		{
+			return 1;
+		}
+		else
+		{
+			CL_StopPlayback();
+			return 0;
+		}
+	}
+	else
+	{
+		while (1)
+		{
+			r = NET_GetMessage(cls.netcon);
+			if (r != 1 && r != 2)
+				break;
 
-            if (net_message.cursize != 1 || net_message.data[0] != svc_nop)
-            {
-                if (cls.demorecording)
-                    CL_WriteDemoMessage();
-                return r;
-            }
-            Con_Printf("<-- server to client keepalive\n");
-        }
-        return r;
-    }
+			if (net_message.cursize != 1 || net_message.data[0] != svc_nop)
+			{
+				if (cls.demorecording)
+					CL_WriteDemoMessage();
+				return r;
+			}
+			Con_Printf("<-- server to client keepalive\n");
+		}
+		return r;
+	}
 }
 
 void CL_Stop_f(void)
@@ -175,7 +175,7 @@ void CL_Record_f(void)
 	if (argc == 2 && cls.state == ca_connected)
 	{
 		Con_Printf("Can not record - already connected to server\n"
-		           "Client demo recording must be started before connecting\n");
+				   "Client demo recording must be started before connecting\n");
 		return;
 	}
 
@@ -251,17 +251,17 @@ void CL_PlayDemo_f(void)
 
 void CL_FinishTimeDemo(void)
 {
-    float totaltime;
-    float frames;
+	float totaltime;
+	float frames;
 
-    totaltime = realtime - cls.td_starttime;
-    cls.timedemo = false;
+	totaltime = realtime - cls.td_starttime;
+	cls.timedemo = false;
 
-    if (totaltime == 0.0)
-        totaltime = 1.0;
+	if (totaltime == 0.0)
+		totaltime = 1.0;
 
-    frames = (float)(host_framecount - cls.td_startframe - 1);
-    Con_Printf("%i frames %5.1f seconds %5.1f fps\n", (int)frames, totaltime, frames / totaltime);
+	frames = (float)(host_framecount - cls.td_startframe - 1);
+	Con_Printf("%i frames %5.1f seconds %5.1f fps\n", (int)frames, totaltime, frames / totaltime);
 }
 
 void CL_TimeDemo_f(void)
@@ -283,19 +283,19 @@ void CL_TimeDemo_f(void)
 
 void CL_StartMovie_f(void)
 {
-    const char *filename;
+	const char *filename;
 
-    if (Cmd_Argc() == 2)
-    {
-        cl.movie_recording = true;
-        filename = Cmd_Argv(1);
-        VID_WriteBuffer(filename);
-        Con_Printf("Started recording movie...\n");
-    }
-    else
-    {
-        Con_Printf("startmovie <filename>\n");
-    }
+	if (Cmd_Argc() == 2)
+	{
+		cl.movie_recording = true;
+		filename = Cmd_Argv(1);
+		VID_WriteBuffer(filename);
+		Con_Printf("Started recording movie...\n");
+	}
+	else
+	{
+		Con_Printf("startmovie <filename>\n");
+	}
 }
 
 int CL_StopDemoAndEnableCom1(void)

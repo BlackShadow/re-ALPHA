@@ -110,9 +110,9 @@ int WINS_Init(void)
 	getsocknameFunc = (int (__stdcall *)(SOCKET, struct sockaddr FAR *, int FAR *))GetProcAddress(hWinsock, "getsockname");
 
 	if (!WSAStartupFunc || !WSACleanupFunc || !WSAGetLastErrorFunc || !socketFunc ||
-	    !ioctlsocketFunc || !setsockoptFunc || !recvfromFunc || !sendtoFunc ||
-	    !closesocketFunc || !gethostnameFunc || !p_gethostbyname ||
-	    !p_gethostbyaddr || !getsocknameFunc)
+		!ioctlsocketFunc || !setsockoptFunc || !recvfromFunc || !sendtoFunc ||
+		!closesocketFunc || !gethostnameFunc || !p_gethostbyname ||
+		!p_gethostbyaddr || !getsocknameFunc)
 	{
 		Con_Printf("Couldn't get winsock function pointers\n");
 		return -1;
@@ -366,11 +366,11 @@ char *WINS_AddrToString(struct sockaddr_in *addr)
 	port = ntohs(addr->sin_port);
 
 	sprintf(buffer, "%d.%d.%d.%d:%d",
-	        (ip >> 24) & 0xFF,
-	        (ip >> 16) & 0xFF,
-	        (ip >> 8) & 0xFF,
-	        ip & 0xFF,
-	        port);
+			(ip >> 24) & 0xFF,
+			(ip >> 16) & 0xFF,
+			(ip >> 8) & 0xFF,
+			ip & 0xFF,
+			port);
 
 	return buffer;
 }

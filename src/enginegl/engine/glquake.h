@@ -13,30 +13,30 @@
 *
 ****/
 
- // glquake.h -- OpenGL definitions for Half-Life Alpha 0.52
- // NOTE: This is a skeleton header derived from reverse engineering.
- // OpenGL-specific types and declarations will be filled during translation.
+// glquake.h -- OpenGL definitions for Half-Life Alpha 0.52
+// NOTE: This is a skeleton header derived from reverse engineering.
+// OpenGL-specific types and declarations will be filled during translation.
 
 #ifndef GLQUAKE_H
 #define GLQUAKE_H
 
- // Some OpenGL headers on Windows can be missing newer constants when building
- // against older SDKs.
+// Some OpenGL headers on Windows can be missing newer constants when building
+// against older SDKs.
 #ifndef GL_COMBINE
 #define GL_COMBINE 0x8570
 #endif
 
- // =============================================================================
- // Disable MSVC data conversion warnings for OpenGL
- // =============================================================================
+// =============================================================================
+// Disable MSVC data conversion warnings for OpenGL
+// =============================================================================
 
 #pragma warning(disable : 4244) // float/ double conversion
 #pragma warning(disable : 4136) // X86
 #pragma warning(disable : 4051) // ALPHA
 
- // =============================================================================
- // Windows and OpenGL includes
- // =============================================================================
+// =============================================================================
+// Windows and OpenGL includes
+// =============================================================================
 
 #ifdef _WIN32
 #include <windows.h>
@@ -45,23 +45,23 @@
 #include <GL/gl.h>
 #include <GL/glu.h>
 
- // =============================================================================
- // OpenGL renderer interface
- // =============================================================================
+// =============================================================================
+// OpenGL renderer interface
+// =============================================================================
 
- // NOTE: To be filled from reverse engineering
+// NOTE: To be filled from reverse engineering
 
- // Rendering functions
+// Rendering functions
 void GL_BeginRendering(int *x, int *y, int *width, int *height);
 void GL_EndRendering(void);
 
- // Video system (gl_vidnt.c)
+// Video system (gl_vidnt.c)
 int VID_Init(void);
 BOOL VID_WriteBuffer(const char *filename);
 void VID_Shutdown(void);
 BOOL VID_TakeSnapshot(const char *filename);
 
- // Sky polygon clipping (gl_warp.c)
+// Sky polygon clipping (gl_warp.c)
 int SetupSkyPolygonClipping(int param1, int param2, int param3);
 void EmitWaterPolys(msurface_t *fa, int direction);
 void EmitSkyPolys(msurface_t *fa);
@@ -70,9 +70,9 @@ void R_DrawSkyBox(void);
 int InitSkyPolygonBounds(void);
 void GL_SubdivideSurface(msurface_t *fa);
 
- // =============================================================================
- // OpenGL extension function pointers (Windows)
- // =============================================================================
+// =============================================================================
+// OpenGL extension function pointers (Windows)
+// =============================================================================
 
 #ifdef _WIN32
 
@@ -94,20 +94,20 @@ extern VERTEXPOINTERPTR VertexPointerFunc;
 
 #endif // _WIN32
 
- // =============================================================================
- // OpenGL state and globals
- // =============================================================================
+// =============================================================================
+// OpenGL state and globals
+// =============================================================================
 
 extern int texture_extension_number;
 extern int texture_mode;
 
 extern float gldepthmin, gldepthmax;
 
- // Sky texture ids (defined in gl_warp.c)
+// Sky texture ids (defined in gl_warp.c)
 extern int solidskytexture;
 extern int alphaskytexture;
 
- // Render modes
+// Render modes
 #define GL_RGB_FORMAT 3
 #define GL_RGBA_FORMAT 4
 
@@ -117,19 +117,19 @@ extern int gl_alpha_format;
 
 extern int gl_filter_min, gl_filter_max;
 
- // =============================================================================
- // Texture management
- // =============================================================================
+// =============================================================================
+// Texture management
+// =============================================================================
 
 #define MAX_GLTEXTURES  1024
 
 typedef struct
 {
-    int     texnum;
-    char    identifier[64];
-    int     width;
-    int     height;
-    int     mipmap;
+	int     texnum;
+	char    identifier[64];
+	int     width;
+	int     height;
+	int     mipmap;
 } gltexture_t;
 
 extern gltexture_t gltextures[MAX_GLTEXTURES];
@@ -143,9 +143,9 @@ void GL_Bind(int texnum);
 void GL_SelectTexture(int unit); // For multitexture
 void GL_MakeAliasModelDisplayLists(model_t *m, aliashdr_t *hdr);
 
- // =============================================================================
- // Video definition structure
- // =============================================================================
+// =============================================================================
+// Video definition structure
+// =============================================================================
 
 typedef unsigned char pixel_t;
 
@@ -174,9 +174,9 @@ typedef struct viddef_s
 
 extern viddef_t vid;
 
- // =============================================================================
- // OpenGL vertex structure
- // =============================================================================
+// =============================================================================
+// OpenGL vertex structure
+// =============================================================================
 
 typedef struct
 {
@@ -185,15 +185,15 @@ typedef struct
 	float	r, g, b;
 } glvert_t;
 
- // =============================================================================
- // OpenGL viewport globals
- // =============================================================================
+// =============================================================================
+// OpenGL viewport globals
+// =============================================================================
 
 extern int glx, gly, glwidth, glheight;
 
- // =============================================================================
- // OpenGL renderer constants
- // =============================================================================
+// =============================================================================
+// OpenGL renderer constants
+// =============================================================================
 
 #define ALIAS_BASE_SIZE_RATIO		1.0
 #define MAX_LBM_HEIGHT				480
@@ -203,20 +203,20 @@ extern int glx, gly, glwidth, glheight;
 #define SKYMASK						(SKYSIZE - 1)
 #define BACKFACE_EPSILON			0.01
 
- // =============================================================================
- // Particle system types
- // =============================================================================
+// =============================================================================
+// Particle system types
+// =============================================================================
 
- // Half-Life extended particle types (base ptype_t defined in render.h)
- // These extend the base Quake particle types with HL-specific ones
+// Half-Life extended particle types (base ptype_t defined in render.h)
+// These extend the base Quake particle types with HL-specific ones
 #define pt_vox_grav      ((ptype_t)8)
 #define pt_vox_slowgrav  ((ptype_t)9)
 #define pt_blur          ((ptype_t)10)
 #define pt_clientcustom  ((ptype_t)11)
 
- // =============================================================================
- // OpenGL renderer cvars
- // =============================================================================
+// =============================================================================
+// OpenGL renderer cvars
+// =============================================================================
 
 extern cvar_t r_norefresh;
 extern cvar_t r_drawentities;
@@ -258,9 +258,9 @@ extern cvar_t gl_reporttjunctions;
 extern cvar_t gl_wateramp;
 extern cvar_t gl_ztrick;
 
- // =============================================================================
- // OpenGL renderer state
- // =============================================================================
+// =============================================================================
+// OpenGL renderer state
+// =============================================================================
 
 extern struct edict_s *r_worldentity;
 
@@ -280,18 +280,18 @@ extern mplane_t *mirror_plane;
 extern float r_world_matrix[16];
 extern float r_base_world_matrix[16];
 
- // =============================================================================
- // Vendor/ version strings
- // =============================================================================
+// =============================================================================
+// Vendor/ version strings
+// =============================================================================
 
 extern const char *gl_vendor;
 extern const char *gl_renderer;
 extern const char *gl_version;
 extern const char *gl_extensions;
 
- // =============================================================================
- // Multitexture support (SGIS extension)
- // =============================================================================
+// =============================================================================
+// Multitexture support (SGIS extension)
+// =============================================================================
 
 #define TEXTURE0_SGIS   0x835E
 #define TEXTURE1_SGIS   0x835F
@@ -310,6 +310,6 @@ extern qboolean gl_mtexable;
 void GL_DisableMultitexture(void);
 void GL_EnableMultitexture(void);
 
- // =============================================================================
+// =============================================================================
 
 #endif // GLQUAKE_H

@@ -28,7 +28,6 @@ extern int cl_targetentity;
 extern int cl_maxspectators;
 extern int cl_autoaim;
 extern int msg_readcount;
-extern int msg_badread;
 extern void CDAudio_Pause(void);
 extern void CDAudio_Resume(void);
 extern void CDAudio_Play(byte track, qboolean looping);

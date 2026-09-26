@@ -13,14 +13,14 @@
 *
 ****/
 
- // crc.h -- CRC-16 checksum calculation
+// crc.h -- CRC-16 checksum calculation
 
 #ifndef CRC_H
 #define CRC_H
 
- // =============================================================================
- // CRC Function Declarations
- // =============================================================================
+// =============================================================================
+// CRC Function Declarations
+// =============================================================================
 
 void CRC_Init(unsigned short *crcvalue);
 void CRC_ProcessByte(unsigned short *crcvalue, unsigned char data);

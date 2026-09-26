@@ -13,34 +13,34 @@
 *
 ****/
 
- // render.h -- render interface
- // NOTE: Render structures populated from Quake/ Half-Life sources
+// render.h -- render interface
+// NOTE: Render structures populated from Quake/ Half-Life sources
 
 #ifndef RENDER_H
 #define RENDER_H
 
- // =============================================================================
- // Basic types (must be defined before structures)
- // =============================================================================
+// =============================================================================
+// Basic types (must be defined before structures)
+// =============================================================================
 
- // Redundant basic types removed (already in common.h or mathlib.h)
+// Redundant basic types removed (already in common.h or mathlib.h)
 
 
- // =============================================================================
- // Constants
- // =============================================================================
+// =============================================================================
+// Constants
+// =============================================================================
 
 #define MAXCLIPPLANES       11
 #define TOP_RANGE           16 // player uniform colors
 #define BOTTOM_RANGE        96
 #define VERTEXSIZE          7
 
- // =============================================================================
- // Plane structure (mplane_t)
- // =============================================================================
+// =============================================================================
+// Plane structure (mplane_t)
+// =============================================================================
 
- // Runtime plane with fast culling support
- // Size: 20 bytes (12 + 4 + 1 + 1 + 2 padding)
+// Runtime plane with fast culling support
+// Size: 20 bytes (12 + 4 + 1 + 1 + 2 padding)
 typedef struct mplane_s
 {
 	vec3_t	normal; // Plane normal vector
@@ -50,14 +50,14 @@ typedef struct mplane_s
 	byte	pad[2]; // Alignment padding
 } mplane_t;
 
- // =============================================================================
- // Particle system
- // =============================================================================
+// =============================================================================
+// Particle system
+// =============================================================================
 
- // synctype_t is defined in bspfile.h/ model.h
+// synctype_t is defined in bspfile.h/ model.h
 
 
- // Base particle types (Half-Life extensions defined in glquake.h as macros)
+// Base particle types (Half-Life extensions defined in glquake.h as macros)
 typedef enum
 {
 	pt_static,
@@ -81,21 +81,21 @@ typedef struct particle_s
 	ptype_t				type; // Particle behavior type
 } particle_t;
 
- // =============================================================================
- // View frustum
- // =============================================================================
+// =============================================================================
+// View frustum
+// =============================================================================
 
- // Global frustum planes for visibility culling
- // 4 planes: left, right, top, bottom (near/ far handled separately)
+// Global frustum planes for visibility culling
+// 4 planes: left, right, top, bottom (near/ far handled separately)
 extern mplane_t	frustum[4];
 
- // =============================================================================
- // Sprite model structures
- // =============================================================================
+// =============================================================================
+// Sprite model structures
+// =============================================================================
 
 #define SPRITE_VERSION	2
 
- // spriteframetype_t is defined in bspfile.h
+// spriteframetype_t is defined in bspfile.h
 
 
 typedef struct
@@ -131,16 +131,16 @@ typedef struct
 	mspritegroupframe_t	frames[1];
 } msprite_t;
 
- // Disk format for sprite header
- // dsprite_t is defined in bspfile.h
+// Disk format for sprite header
+// dsprite_t is defined in bspfile.h
 
 
- // =============================================================================
- // Entity fragment (efrag) system
- // =============================================================================
+// =============================================================================
+// Entity fragment (efrag) system
+// =============================================================================
 
- // NOTE: Structure to be filled from reverse engineering
- // Links entities to BSP leaves for visibility
+// NOTE: Structure to be filled from reverse engineering
+// Links entities to BSP leaves for visibility
 
 typedef struct efrag_s
 {
@@ -152,12 +152,12 @@ typedef struct efrag_s
 
 #define MAX_EFRAGS 640
 
- // =============================================================================
- // Entity structure
- // =============================================================================
+// =============================================================================
+// Entity structure
+// =============================================================================
 
- // NOTE: Main entity structure to be filled from reverse engineering
- // This is the client-side representation of entities
+// NOTE: Main entity structure to be filled from reverse engineering
+// This is the client-side representation of entities
 
 typedef struct entity_s
 {
@@ -205,12 +205,12 @@ typedef struct entity_s
 	float               lightcolor[3];
 } entity_t;
 
- // =============================================================================
- // Refresh definition (refdef)
- // =============================================================================
+// =============================================================================
+// Refresh definition (refdef)
+// =============================================================================
 
- // NOTE: Main view/ camera structure to be filled from reverse engineering
- // Contains viewport, FOV, view position, etc.
+// NOTE: Main view/ camera structure to be filled from reverse engineering
+// Contains viewport, FOV, view position, etc.
 
 typedef struct
 {
@@ -240,11 +240,11 @@ typedef struct
 	int         ambientlight;
 } refdef_t;
 
- // =============================================================================
- // Global variables
- // =============================================================================
+// =============================================================================
+// Global variables
+// =============================================================================
 
- // NOTE: Renderer globals to be filled from reverse engineering
+// NOTE: Renderer globals to be filled from reverse engineering
 
 extern int          reinit_surfcache;
 extern refdef_t     r_refdef;
@@ -252,11 +252,11 @@ extern vec3_t       r_origin, vpn, vright, vup;
 extern struct texture_s *r_notexture_mip;
 extern qboolean     r_cache_thrash;
 
- // =============================================================================
- // Renderer initialization and frame functions
- // =============================================================================
+// =============================================================================
+// Renderer initialization and frame functions
+// =============================================================================
 
- // NOTE: Function declarations to be filled from reverse engineering
+// NOTE: Function declarations to be filled from reverse engineering
 
 void R_Init(void);
 void R_InitTextures(void);
@@ -283,21 +283,21 @@ void SCR_BeginLoadingPlaque(void);
 void SCR_CenterPrint(char *text);
 qboolean SCR_DrawDialog(char *message_ptr);
 
- // =============================================================================
- // Entity fragment management
- // =============================================================================
+// =============================================================================
+// Entity fragment management
+// =============================================================================
 
- // NOTE: Efrag functions to be filled
+// NOTE: Efrag functions to be filled
 
 void R_AddEfrags(entity_t *ent);
 void R_RemoveEfrags(entity_t *ent);
 void R_StoreEfrags(efrag_t **efrag_list);
 
- // =============================================================================
- // Particle system
- // =============================================================================
+// =============================================================================
+// Particle system
+// =============================================================================
 
- // NOTE: Particle functions to be filled from r_part.c
+// NOTE: Particle functions to be filled from r_part.c
 
 void R_ParseParticleEffect(void);
 void R_RunParticleEffect(vec3_t org, vec3_t dir, int color, int count);
@@ -317,35 +317,35 @@ void R_SparkShower(vec3_t org);
 void R_ParticleStatic(vec3_t *pos, vec3_t *vel, float die);
 int  R_StudioGetFrameCount(struct model_s *model);
 
- // =============================================================================
- // Dynamic lights
- // =============================================================================
+// =============================================================================
+// Dynamic lights
+// =============================================================================
 
- // NOTE: Dynamic light functions to be filled
+// NOTE: Dynamic light functions to be filled
 
 void R_PushDlights(void);
 void R_MarkLights(struct dlight_s *light, int bit, struct mnode_s *node);
 
- // =============================================================================
- // Surface cache (software renderer)
- // =============================================================================
+// =============================================================================
+// Surface cache (software renderer)
+// =============================================================================
 
- // NOTE: Surface cache functions (may not be used in GL renderer)
- // To be verified during reverse engineering
+// NOTE: Surface cache functions (may not be used in GL renderer)
+// To be verified during reverse engineering
 
 int  D_SurfaceCacheForRes(int width, int height);
 void D_FlushCaches(void);
 void D_DeleteSurfaceCache(void);
 void D_InitCaches(void *buffer, int size);
 
- // =============================================================================
- // View rectangle
- // =============================================================================
+// =============================================================================
+// View rectangle
+// =============================================================================
 
- // NOTE: View rectangle function to be filled
+// NOTE: View rectangle function to be filled
 
 void R_SetVrect(vrect_t *pvrect, vrect_t *pvrectin, int lineadj);
 
- // =============================================================================
+// =============================================================================
 
 #endif // RENDER_H

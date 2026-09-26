@@ -16,7 +16,7 @@
 #include "quakedef.h"
 #include "studio.h"
 
-#include <gl/gl.h>
+#include <GL/gl.h>
 #include <math.h>
 #include <string.h>
 

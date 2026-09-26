@@ -4,13 +4,13 @@
 
 #include "bspfile.h"
 
- // Forward definition
+// Forward definition
 struct decal_s;
 struct msurface_s;
 
- // =============================================================================
- // Entity effect flags (trail/ rotate etc)
- // =============================================================================
+// =============================================================================
+// Entity effect flags (trail/ rotate etc)
+// =============================================================================
 
 #define EF_ROCKET   1 // leave a trail
 #define EF_GRENADE  2 // leave a trail
@@ -21,9 +21,9 @@ struct msurface_s;
 #define EF_TRACER2  64 // orange split trail + rotate
 #define EF_TRACER3  128 // purple trail
 
- // =============================================================================
- // Runtime model structures
- // =============================================================================
+// =============================================================================
+// Runtime model structures
+// =============================================================================
 
 #define MAX_MIPS    4
 
@@ -60,7 +60,7 @@ typedef struct
 
 #define TEX_SPECIAL	1
 
- // Plane types (mplane_t::type)
+// Plane types (mplane_t::type)
 #define PLANE_X 0
 #define PLANE_Y 1
 #define PLANE_Z 2
@@ -99,25 +99,25 @@ typedef struct glpoly_s
 
 typedef struct mnode_s
 {
- // common with leaf
+// common with leaf
 	int			contents; // 0, to differentiate from leafs
 	int			visframe; // node needs to be traversed if current
-	
+
 	float		minmaxs[6]; // mins[3], maxs[3]
 
 	struct mnode_s	*parent;
 
- // node specific
+// node specific
 	mplane_t	*plane;
-	struct mnode_s	*children[2];	
-	
+	struct mnode_s	*children[2];
+
 	unsigned short	firstsurface;
 	unsigned short	numsurfaces;
 } mnode_t;
 
 typedef struct mleaf_s
 {
- // common with node
+// common with node
 	int			contents; // -1, to differentiate from nodes
 	int			visframe; // node needs to be traversed if current
 
@@ -125,7 +125,7 @@ typedef struct mleaf_s
 
 	struct mnode_s	*parent;
 
- // leaf specific
+// leaf specific
 	byte		*compressed_vis;
 	struct efrag_s	*efrags;
 
@@ -144,7 +144,7 @@ typedef struct msurface_s
 
 	int			firstedge; // look up in model->surfedges[], negative = backwards
 	int			numedges;
-	
+
 	short		texturemins[2];
 	short		extents[2];
 
@@ -155,7 +155,7 @@ typedef struct msurface_s
 
 	mtexinfo_t	*texinfo;
 
- // lighting info
+// lighting info
 	int			dlightframe;
 	int			dlightbits;
 
@@ -183,16 +183,16 @@ typedef struct model_s
 	modtype_t	type;
 	int			numframes;
 	synctype_t	synctype;
-	
+
 	int			flags;
 
- // Volume occupied by the model graphics
+// Volume occupied by the model graphics
 	vec3_t		mins, maxs;
 	float		radius;
 
 	int			pad0[7];
 
- // Brush model data
+// Brush model data
 	int			firstmodelsurface;
 	int			nummodelsurfaces;
 
@@ -241,7 +241,7 @@ typedef struct model_s
 	cache_user_t cache;
 } model_t;
 
- // Flags for msurface_t
+// Flags for msurface_t
 #define SURF_PLANEBACK		2
 #define SURF_DRAWSKY		4
 #define SURF_DRAWSPRITE		8
@@ -253,9 +253,9 @@ typedef struct model_s
 
 #define MAXLIGHTMAPS	4
 
- // =============================================================================
- // Alias Model runtime structures
- // =============================================================================
+// =============================================================================
+// Alias Model runtime structures
+// =============================================================================
 
 typedef struct
 {
@@ -299,11 +299,11 @@ typedef struct aliashdr_s
 	maliasframedesc_t frames[1]; // variable sized
 } aliashdr_t;
 
- // Sprite structures moved to render.h
+// Sprite structures moved to render.h
 
- // =============================================================================
- // Function Prototypes
- // =============================================================================
+// =============================================================================
+// Function Prototypes
+// =============================================================================
 
 void		Mod_Init(void);
 void		Mod_ClearAll(void);

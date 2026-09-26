@@ -1,27 +1,27 @@
 #ifndef ZONE_H
 #define ZONE_H
 
- // =========================================================
- // Memory tags
- // =========================================================
+// =========================================================
+// Memory tags
+// =========================================================
 
 #define Z_MAINZONE      1
 #define Z_STATZONE      2
 
- // =========================================================
- // Zone memory
- // =========================================================
+// =========================================================
+// Zone memory
+// =========================================================
 
 void Z_Free(void *ptr);
 void *Z_Malloc(int size);
 void *Z_TagMalloc(int size, int tag);
 void Z_CheckHeap(void);
 
- // =========================================================
- // Hunk memory
- // =========================================================
+// =========================================================
+// Hunk memory
+// =========================================================
 
- // Globals backing the hunk/ cache allocators.
+// Globals backing the hunk/ cache allocators.
 extern byte *g_HunkBase;
 extern int g_HunkSize;
 extern int g_HunkLowUsed;
@@ -43,13 +43,13 @@ void *Hunk_TempAlloc(int size);
 int Hunk_Check(void);
 void Memory_Init(void *base, int size);
 
- // =========================================================
- // Cache memory
- // =========================================================
+// =========================================================
+// Cache memory
+// =========================================================
 
 typedef struct cache_user_s
 {
-    void    *data;
+	void    *data;
 } cache_user_t;
 
 typedef struct cache_system_s

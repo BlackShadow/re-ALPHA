@@ -4,7 +4,7 @@
 #include "edict.h"
 #include "mathlib.h"
 
- // Returned by TraceLine/ TraceToss for game DLL interface.
+// Returned by TraceLine/ TraceToss for game DLL interface.
 typedef struct TraceResult_s
 {
 	int     fAllSolid; // if true, plane is not valid

@@ -16,12 +16,12 @@
 #ifndef KEYS_H
 #define KEYS_H
 
- // =============================================================================
- // Key button state structure (for input handling)
- // =============================================================================
+// =============================================================================
+// Key button state structure (for input handling)
+// =============================================================================
 
 
- // Key constants
+// Key constants
 #define K_TAB			9
 #define K_ENTER			13
 #define K_ESCAPE		27
@@ -54,20 +54,20 @@
 #define K_END			152
 #define K_PAUSE			255
 
- // Mouse buttons
+// Mouse buttons
 #define K_MOUSE1		200
 #define K_MOUSE2		201
 #define K_MOUSE3		202
 #define K_MWHEELUP      239
 #define K_MWHEELDOWN    240
 
- // Joystick buttons (Quake-style key range)
+// Joystick buttons (Quake-style key range)
 #define K_JOY1          203
 #define K_JOY2          204
 #define K_JOY3          205
 #define K_JOY4          206
 
- // Auxiliary keys (Quake-style key range)
+// Auxiliary keys (Quake-style key range)
 #define K_AUX1          207
 #define K_AUX2          208
 #define K_AUX3          209
@@ -101,7 +101,7 @@
 #define K_AUX31         237
 #define K_AUX32         238
 
- // Key types
+// Key types
 typedef enum {
 	key_game,
 	key_console,
@@ -122,12 +122,12 @@ typedef struct kbutton_s
 	int state; // bit 0 = held, bit 1 = down this frame, bit 2 = up this frame
 } kbutton_t;
 
- // =============================================================================
- // Key functions
- // =============================================================================
+// =============================================================================
+// Key functions
+// =============================================================================
 
 void Key_Init(void);
-void Key_Event(int key, int down);
+void Key_Event(int key, qboolean down);
 void Key_ClearStates(void);
 void Key_WriteBindings(FILE *f);
 void Key_SetBinding(int keynum, const char *binding);

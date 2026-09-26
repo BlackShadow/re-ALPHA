@@ -7,17 +7,17 @@
 #ifndef GLOBALS_H
 #define GLOBALS_H
 
- // =============================================================================
+// =============================================================================
 
- // CENTRALIZED ENGINE GLOBALS
+// CENTRALIZED ENGINE GLOBALS
 
- // Shared variables across Server, Client, and Renderer subsystems.
+// Shared variables across Server, Client, and Renderer subsystems.
 
- // =============================================================================
+// =============================================================================
 
- // ------------------------------------------------------
- // Forward Declarations
- // ------------------------------------------------------
+// ------------------------------------------------------
+// Forward Declarations
+// ------------------------------------------------------
 struct server_s;
 struct server_static_s;
 struct client_s;
@@ -29,9 +29,9 @@ struct entity_s;
 typedef struct globalvars_s globalvars_t;
 typedef struct quakeparms_s quakeparms_t;
 
- // ------------------------------------------------------
- // Engine Flow & Timing
- // ------------------------------------------------------
+// ------------------------------------------------------
+// Engine Flow & Timing
+// ------------------------------------------------------
 extern quakeparms_t host_parms;
 extern int			host_initialized;
 extern double		realtime;
@@ -43,9 +43,9 @@ extern int			host_hunklevel;
 extern int			host_in_intermission;
 extern struct server_client_s	*host_client;
 
- // ------------------------------------------------------
- // Server State
- // ------------------------------------------------------
+// ------------------------------------------------------
+// Server State
+// ------------------------------------------------------
 extern struct server_s			sv;
 extern struct server_static_s	svs;
 extern int			sv_max_edicts;
@@ -57,9 +57,9 @@ extern char			sv_decalnames[255][16];
 extern int			sv_decalnamecount;
 extern edict_t		*sv_player;
 
- // ------------------------------------------------------
- // Progs/ VM State
- // ------------------------------------------------------
+// ------------------------------------------------------
+// Progs/ VM State
+// ------------------------------------------------------
 extern void			*progs;
 extern void			*pr_functions;
 extern void			*pr_globaldefs;
@@ -70,20 +70,20 @@ extern float		*pr_globals;
 extern char			*pr_strings;
 extern int			pr_edict_size;
 
- // ------------------------------------------------------
- // Game Rules/ Skill
- // ------------------------------------------------------
+// ------------------------------------------------------
+// Game Rules/ Skill
+// ------------------------------------------------------
 extern qboolean		noclip_anglehack;
 extern int			current_skill;
 
- // ------------------------------------------------------
- // Client State
- // ------------------------------------------------------
+// ------------------------------------------------------
+// Client State
+// ------------------------------------------------------
 extern struct client_static_s	cls;
 extern struct client_s			cl;
 extern char						cls_spawnparms[1024];
 
- // Client entity and state arrays
+// Client entity and state arrays
 extern entity_t cl_entities[MAX_EDICTS];
 extern entity_t cl_static_entities[128];
 extern int cl_num_entities;
@@ -92,7 +92,7 @@ extern efrag_t *cl_free_efrags;
 extern dlight_t cl_dlights[MAX_DLIGHTS];
 extern char cl_lightstyle_value[MAX_LIGHTSTYLES][64];
 
- // Client subsystem globals
+// Client subsystem globals
 extern int			cl_num_statics; // Number of static entities
 extern double		cl_mtime[2]; // Message time
 extern double		cl_time; // Client time
@@ -116,16 +116,16 @@ extern double		cl_completed_time; // Level completion time
 extern int			cl_lightlevel; // Light level written into usercmd
 extern float		cl_oldz; // Smooth stair height accumulator
 
- // Gamma control (used by V_BuildGammaTables/ palette updates)
+// Gamma control (used by V_BuildGammaTables/ palette updates)
 extern float		old_gamma;
 extern float		old_lightgamma;
 extern float		old_brightness;
 extern int			vid_gamma_changed;
 
- // Client view angles (shared by input, view, and parsing code)
+// Client view angles (shared by input, view, and parsing code)
 extern vec3_t		cl_viewangles;
 
- // Screen/ centerprint timing (defined in gl_screen.c)
+// Screen/ centerprint timing (defined in gl_screen.c)
 extern float		scr_centertime_off;
 extern int			scr_disabled_for_loading;
 extern double		scr_disabled_time;
@@ -139,7 +139,7 @@ extern int			scr_disk_counter;
 extern int			scr_disk_offset;
 extern float		scr_disk_time;
 
- // Screen system entry points (gl_screen.c)
+// Screen system entry points (gl_screen.c)
 void SCR_UpdateScreen(void);
 void SCR_EndLoadingPlaque(void);
 
@@ -173,7 +173,7 @@ extern vec3_t		r_light_rgb; // Result of light point sampling
 extern int			d_lightstylevalue[256];
 extern edict_t      *r_refdef_onlyents;
 
- // Visible entity list for renderer (stores entity pointers)
+// Visible entity list for renderer (stores entity pointers)
 extern int          cl_numvisedicts;
 extern struct entity_s *cl_visedicts[MAX_VISEDICTS];
 
@@ -193,9 +193,9 @@ extern int  Cmd_Argc(void);
 extern char *Cmd_Argv(int arg);
 extern char *Cmd_Args(void);
 
- // ------------------------------------------------------
- // Renderer State
- // ------------------------------------------------------
+// ------------------------------------------------------
+// Renderer State
+// ------------------------------------------------------
 extern float		r_ambient;
 extern float		r_lightscale;
 extern float		r_plightvec[3];
@@ -203,35 +203,35 @@ extern float		r_origin[3];
 extern float		vpn[3], vright[3], vup[3];
 extern float		r_blend_alpha;
 
- // Camera/ chase globals
+// Camera/ chase globals
 extern vec3_t		chase_dest; // Chase camera destination
 extern vec3_t		r_refdef_vieworg; // View origin
 extern vec3_t		r_refdef_viewangles; // View angles
 
- // ------------------------------------------------------
- // Resource/ Memory
- // ------------------------------------------------------
+// ------------------------------------------------------
+// Resource/ Memory
+// ------------------------------------------------------
 extern void			*hunk_base;
 extern byte			*host_basepal;
 extern byte			*host_colormap;
 
- // ------------------------------------------------------
- // Game DLL Integration
- // ------------------------------------------------------
+// ------------------------------------------------------
+// Game DLL Integration
+// ------------------------------------------------------
 extern int			g_iextdllcount;
 extern void			*g_rgextdll[50];
 extern void			*g_rgextinit[50];
 extern int			g_deltaHullCacheChecksum; // DELTA hull cache checksum
 extern int			g_engineHandleTable[9]; // Engine handle table
 
- // ------------------------------------------------------
- // Network Globals
- // ------------------------------------------------------
+// ------------------------------------------------------
+// Network Globals
+// ------------------------------------------------------
 extern sizebuf_t	net_message; // Network message buffer
 
- // ------------------------------------------------------
- // SVC Protocol String Table
- // ------------------------------------------------------
+// ------------------------------------------------------
+// SVC Protocol String Table
+// ------------------------------------------------------
 extern char			*svc_strings[]; // SVC command name strings
 
 #endif // GLOBALS_H

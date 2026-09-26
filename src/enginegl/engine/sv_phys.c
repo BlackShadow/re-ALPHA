@@ -849,8 +849,8 @@ void SV_WallFriction(edict_t *ent, trace_t *trace)
 	if (d < 0.0f)
 	{
 		normal_speed = ent->v.velocity[0] * trace->plane.normal[0] +
-		               ent->v.velocity[1] * trace->plane.normal[1] +
-		               ent->v.velocity[2] * trace->plane.normal[2];
+					   ent->v.velocity[1] * trace->plane.normal[1] +
+					   ent->v.velocity[2] * trace->plane.normal[2];
 
 		VectorScale(trace->plane.normal, normal_speed, normal_vel);
 
@@ -960,9 +960,9 @@ void SV_WalkMove(edict_t *ent)
 		SV_CheckVelocity(ent);
 
 		if (((old_flags & FL_ONGROUND) != 0 || ent->v.waterlevel != 0.0f) &&
-		    ent->v.movetype == MOVETYPE_WALK &&
-		    sv_nostep.value == 0.0f &&
-		    (((int)sv_player->v.flags & FL_WATERJUMP) == 0))
+			ent->v.movetype == MOVETYPE_WALK &&
+			sv_nostep.value == 0.0f &&
+			(((int)sv_player->v.flags & FL_WATERJUMP) == 0))
 		{
 			vec3_t moved_origin;
 			vec3_t moved_velocity;
@@ -994,8 +994,8 @@ void SV_WalkMove(edict_t *ent)
 			SV_CheckVelocity(ent);
 
 			if (step_blocked &&
-			    fabs(original_origin[1] - ent->v.origin[1]) < 0.03125f &&
-			    fabs(original_origin[0] - ent->v.origin[0]) < 0.03125f)
+				fabs(original_origin[1] - ent->v.origin[1]) < 0.03125f &&
+				fabs(original_origin[0] - ent->v.origin[0]) < 0.03125f)
 			{
 				step_blocked = (step_blocked & ~0xFF) | (SV_TryUnstick(ent, original_velocity) & 0xFF);
 			}

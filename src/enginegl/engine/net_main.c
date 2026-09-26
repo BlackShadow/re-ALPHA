@@ -572,7 +572,7 @@ int NET_SendUnreliableMessage(qsocket_t *sock, sizebuf_t *data)
 	return ret;
 }
 
-int NET_CanSendMessage(qsocket_t *sock)
+qboolean NET_CanSendMessage(qsocket_t *sock)
 {
 	int		ret;
 
