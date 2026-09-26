@@ -1,14 +1,14 @@
 #ifndef HOST_H
 #define HOST_H
 
- // Savegame format version (see host.c)
+// Savegame format version (see host.c)
 #define SAVEGAME_VERSION 16
 
- // Note: savebuf_t is defined in common.h (included via quakedef.h)
+// Note: savebuf_t is defined in common.h (included via quakedef.h)
 
- // =========================================================
- // Host Functions
- // =========================================================
+// =========================================================
+// Host Functions
+// =========================================================
 
 void Host_Init(quakeparms_t *parms);
 void Host_Frame(float time);
@@ -19,9 +19,9 @@ void Host_InitCommands(void);
 void Host_FindMaxClients(void);
 int Host_ClearMemory(void);
 
- // =========================================================
- // Host cvars (defined in host.c)
- // =========================================================
+// =========================================================
+// Host cvars (defined in host.c)
+// =========================================================
 
 extern cvar_t host_framerate;
 extern cvar_t host_speeds;
@@ -38,7 +38,7 @@ extern cvar_t coop;
 extern cvar_t pausable;
 extern cvar_t developer;
 
- // Savegame operations
+// Savegame operations
 void Savegame_WriteInt(savebuf_t *sb, int value);
 void Savegame_WriteInt2(savebuf_t *sb, int value);
 void Savegame_WriteString(savebuf_t *sb, const char *str);
@@ -46,7 +46,7 @@ void Savegame_WriteString(savebuf_t *sb, const char *str);
 void ED_Write(savebuf_t *sb, edict_t *ed);
 void ED_WriteGlobals(savebuf_t *sb);
 
- // Host command handlers
+// Host command handlers
 void Host_Status_f(void);
 void Host_Quit_f(void);
 void Host_God_f(void);
@@ -83,7 +83,7 @@ void Host_Viewnext_f(void);
 void Host_Viewprev_f(void);
 void Host_Interp_f(void);
 
- // Other host utilities
+// Other host utilities
 void Host_BuildSaveComment(byte *comment);
 qboolean Host_CanSave(void);
 char *Host_ConvertPathSlashes(char *path);

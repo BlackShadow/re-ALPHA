@@ -12,7 +12,7 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
- // winquake.h -- Windows-specific Quake/ Half-Life definitions
+// winquake.h -- Windows-specific Quake/ Half-Life definitions
 
 #ifndef WINQUAKE_H
 #define WINQUAKE_H
@@ -22,20 +22,20 @@
 #include <windows.h>
 #include <mmsystem.h>
 
- // Windows input
+// Windows input
 extern HWND mainwindow;
 extern qboolean ActiveApp, Minimized;
 
- // DirectInput definitions (if used)
+// DirectInput definitions (if used)
 #ifndef DINPUT_BUFFERSIZE
 #define DINPUT_BUFFERSIZE 16
 #endif
 
- // Mouse state
+// Mouse state
 extern int window_center_x, window_center_y;
 extern RECT window_rect;
 
- // Video
+// Video
 extern DEVMODE gdevmode;
 extern qboolean DDActive;
 

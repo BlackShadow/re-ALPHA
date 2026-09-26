@@ -12,7 +12,7 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
- // decal.h - Decal system types and prototypes
+// decal.h - Decal system types and prototypes
 
 #ifndef DECAL_H
 #define DECAL_H
@@ -30,7 +30,7 @@ typedef struct decal_s
 	short flags; // 22 - FDECAL_* flags
 } decal_t;
 
- // Decal flags
+// Decal flags
 #define FDECAL_PERMANENT	0x01 // Don't remove automatically
 #define FDECAL_CUSTOM		0x02 // Custom decal (logo)
 #define FDECAL_HITSIGN		0x04 // Hit sign (?)

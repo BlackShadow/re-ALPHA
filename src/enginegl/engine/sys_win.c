@@ -146,7 +146,7 @@ double Sys_FloatTime(void)
 	QueryPerformanceCounter(&PerformanceCount);
 
 	low_count = (PerformanceCount.LowPart >> perf_shift) |
-	     (PerformanceCount.HighPart << (32 - perf_shift));
+		 (PerformanceCount.HighPart << (32 - perf_shift));
 
 	if (first_time)
 	{

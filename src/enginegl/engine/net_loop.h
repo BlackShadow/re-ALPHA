@@ -12,12 +12,12 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
- // net_loop.h -- Loopback network driver declarations
+// net_loop.h -- Loopback network driver declarations
 
 #ifndef NET_LOOP_H
 #define NET_LOOP_H
 
- // Loopback driver functions
+// Loopback driver functions
 int  Loop_Init(void);
 void Loop_Listen(qboolean state);
 void Loop_SearchForHosts(qboolean xmit);
@@ -31,7 +31,7 @@ qboolean Loop_CanSendUnreliableMessage(qsocket_t *sock);
 void Loop_Close(qsocket_t *sock);
 void Loop_Shutdown(void);
 
- // Loopback state
+// Loopback state
 extern qboolean localconnectpending;
 extern qsocket_t *loop_client;
 extern qsocket_t *loop_server;

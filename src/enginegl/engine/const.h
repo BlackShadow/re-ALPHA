@@ -1,9 +1,9 @@
 #ifndef CONST_H
 #define CONST_H
 
- // Constants shared between engine + game DLL.
+// Constants shared between engine + game DLL.
 
- // edict->movetype values
+// edict->movetype values
 #define MOVETYPE_NONE           0
 #define MOVETYPE_WALK           3
 #define MOVETYPE_STEP           4
@@ -17,14 +17,14 @@
 #define MOVETYPE_FOLLOW         12
 #define MOVETYPE_PUSHSTEP       13
 
- // edict->solid values
+// edict->solid values
 #define SOLID_NOT        0
 #define SOLID_TRIGGER    1
 #define SOLID_BBOX       2
 #define SOLID_SLIDEBOX   3
 #define SOLID_BSP        4
 
- // Entity effect flags
+// Entity effect flags
 #define EF_BRIGHTFIELD   1 // swirling cloud of particles
 #define EF_MUZZLEFLASH   2 // single frame ELIGHT on entity attachment 0
 #define EF_BRIGHTLIGHT   4 // DLIGHT centered at entity origin

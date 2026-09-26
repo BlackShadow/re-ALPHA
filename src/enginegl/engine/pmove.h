@@ -12,14 +12,14 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
- // pmove.h -- Player movement definitions
+// pmove.h -- Player movement definitions
 
 #ifndef PMOVE_H
 #define PMOVE_H
 
- // =========================================================
- // Player trace result
- // =========================================================
+// =========================================================
+// Player trace result
+// =========================================================
 typedef struct pmtrace_s
 {
 	qboolean	allsolid; // if true, plane is not valid
@@ -33,9 +33,9 @@ typedef struct pmtrace_s
 	int			hitgroup; // 0 = generic, 1-8 = body part
 } pmtrace_t;
 
- // =========================================================
- // Physics entity for player movement
- // =========================================================
+// =========================================================
+// Physics entity for player movement
+// =========================================================
 typedef struct physent_s
 {
 	char		name[32]; // name of model or "player"
@@ -72,9 +72,9 @@ typedef struct physent_s
 	vec3_t		vuser4; // user vector 4
 } physent_t;
 
- // =========================================================
- // Player move structure
- // =========================================================
+// =========================================================
+// Player move structure
+// =========================================================
 #define MAX_PHYSENTS    600
 #define MAX_MOVEENTS    64
 
@@ -138,12 +138,12 @@ typedef struct playermove_s
 	physent_t	moveents[MAX_MOVEENTS]; // moving entities
 	int			numvisent; // number of visible entities
 	physent_t	visents[MAX_PHYSENTS]; // visible entities
- // ... cmd, runfuncs, etc would follow
+// ... cmd, runfuncs, etc would follow
 } playermove_t;
 
- // =========================================================
- // Player movement functions
- // =========================================================
+// =========================================================
+// Player movement functions
+// =========================================================
 void PM_Init(playermove_t *pm);
 void PM_Move(playermove_t *pm, qboolean server);
 void PM_PreventMegaBunnyJumping(void);

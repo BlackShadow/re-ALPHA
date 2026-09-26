@@ -295,7 +295,7 @@ void CL_NextDemo(void)
 		SCR_BeginLoadingPlaque();
 
 		if (cls.demos[cls.demonum][0] && cls.demonum != 8 ||
-		    (cls.demonum = 0, cls.demos[0][0]))
+			(cls.demonum = 0, cls.demos[0][0]))
 		{
 			sprintf(demoCommandBuffer, "playdemo %s\n", cls.demos[cls.demonum]);
 			Cbuf_InsertText(demoCommandBuffer);
@@ -669,7 +669,7 @@ int CL_RelinkEntities(void)
 		ent->forcelink = false;
 
 		if ((cam_thirdperson || cl_viewentity != i || chase_active.value != 0.0f) &&
-		    (ent->effects & EF_NODRAW) == 0 && cl_numvisedicts < MAX_VISEDICTS)
+			(ent->effects & EF_NODRAW) == 0 && cl_numvisedicts < MAX_VISEDICTS)
 		{
 			cl_visedicts[cl_numvisedicts++] = ent;
 			cl.num_visedicts = cl_numvisedicts;

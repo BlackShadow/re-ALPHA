@@ -12,16 +12,16 @@ typedef enum
 	ss_active = 1,
 } server_state_t;
 
- // =============================================================================
- // Server constants
- // =============================================================================
+// =============================================================================
+// Server constants
+// =============================================================================
 
- // MAX_SOUNDS, MAX_MODELS, MAX_LIGHTSTYLES defined in quakedef.h
- // MAX_MSGLEN defined in common.h
+// MAX_SOUNDS, MAX_MODELS, MAX_LIGHTSTYLES defined in quakedef.h
+// MAX_MSGLEN defined in common.h
 
- // =============================================================================
- // Server structures
- // =============================================================================
+// =============================================================================
+// Server structures
+// =============================================================================
 
 typedef struct server_client_s
 {
@@ -67,7 +67,7 @@ typedef struct server_s
 	server_state_t state;
 	double      time;
 
- // PF_checkclient state (pr_cmds.c)
+// PF_checkclient state (pr_cmds.c)
 	double      lastchecktime;
 	int         lastcheck;
 
@@ -97,22 +97,22 @@ typedef struct server_s
 	char        *lightstyles[MAX_LIGHTSTYLES];
 } server_t;
 
- // =============================================================================
- // Global variables
- // =============================================================================
+// =============================================================================
+// Global variables
+// =============================================================================
 
 extern server_t sv;
 extern server_static_t svs;
 
- // Compatibility: some translations refer to sv.time as sv_time.
+// Compatibility: some translations refer to sv.time as sv_time.
 #define sv_time (sv.time)
- // Compatibility: some ports/ translations refer to these fields as globals.
+// Compatibility: some ports/ translations refer to these fields as globals.
 #define sv_paused (sv.paused)
 #define sv_loadgame (sv.loadgame)
 #define sv_signon (sv.signon)
 #define sv_lightstyles (sv.lightstyles)
 
- // Server cvars (defined in sv_main.c)
+// Server cvars (defined in sv_main.c)
 extern cvar_t sv_maxvelocity;
 extern cvar_t sv_gravity;
 extern cvar_t sv_friction;

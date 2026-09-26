@@ -4,27 +4,27 @@
 
 #include "mathlib.h"
 
- // QuakeC VM types
+// QuakeC VM types
 typedef int func_t; // function index in progs
 typedef int string_t; // string offset in progs string table
 
- // QuakeC VM constants
+// QuakeC VM constants
 #define MAX_STACK_DEPTH     32
 #define LOCALSTACK_SIZE     2048
 #define MAX_REGS            2048
 
- // QuakeC message destinations (used by PF_Write* builtins)
+// QuakeC message destinations (used by PF_Write* builtins)
 #define MSG_BROADCAST 0
 #define MSG_ONE       1
 #define MSG_ALL       2
 #define MSG_INIT      3
 
- // QuakeC damage flags (entvars_t.takedamage)
+// QuakeC damage flags (entvars_t.takedamage)
 #define DAMAGE_NO     0
 #define DAMAGE_YES    1
 #define DAMAGE_AIM    2
 
- // dfunction_t - Function definition in progs.dat
+// dfunction_t - Function definition in progs.dat
 typedef struct
 {
 	int		first_statement;
@@ -37,7 +37,7 @@ typedef struct
 	unsigned char parm_size[8];
 } dfunction_t;
 
- // dprograms_t - Progs.dat header
+// dprograms_t - Progs.dat header
 typedef struct
 {
 	int		version;
@@ -57,7 +57,7 @@ typedef struct
 	int		entityfields;
 } dprograms_t;
 
- // ddef_t - Variable definition in progs.dat
+// ddef_t - Variable definition in progs.dat
 typedef struct
 {
 	unsigned short	type;
@@ -65,16 +65,16 @@ typedef struct
 	int				s_name;
 } ddef_t;
 
- // dstatement_t - Statement in progs.dat
+// dstatement_t - Statement in progs.dat
 typedef struct
 {
 	unsigned short	op;
 	short	a, b, c;
 } dstatement_t;
 
- // =========================================================
- // QuakeC VM Parameter Offsets
- // =========================================================
+// =========================================================
+// QuakeC VM Parameter Offsets
+// =========================================================
 
 #define OFS_NULL        0
 #define OFS_RETURN      1
@@ -87,28 +87,28 @@ typedef struct
 #define OFS_PARM6       22
 #define OFS_PARM7       25
 
- // =========================================================
- // QuakeC VM Global Access Macros
- // =========================================================
+// =========================================================
+// QuakeC VM Global Access Macros
+// =========================================================
 
- // (Moved to end of file)
+// (Moved to end of file)
 
- // String functions (in pr_edict.c)
+// String functions (in pr_edict.c)
 char *PROG_TO_STRING(int offset);
 int ED_AllocString(const char *string);
 char *PR_GlobalString(int ofs);
 char *PR_GlobalStringNoContents(int ofs);
 
- // Progs/ VM entry points (pr_exec.c/ pr_edict.c)
+// Progs/ VM entry points (pr_exec.c/ pr_edict.c)
 void PR_ExecuteProgram(int fnum);
 void PR_RunError(char *fmt, ...);
 void PR_LoadProgs(void);
 
- // Aliases for standard Quake naming
+// Aliases for standard Quake naming
 #define PR_GetString(o)  PROG_TO_STRING(o)
 #define PR_SetString(s)  ED_AllocString(s)
 
- // Access progs globals as different types
+// Access progs globals as different types
 #define G_FLOAT(o)      (pr_globals[o])
 #define G_INT(o)        (*(int *)&pr_globals[o])
 #define G_EDICT(o)      ((edict_t *)((byte *)sv.edicts + *(int *)&pr_globals[o]))
@@ -117,12 +117,12 @@ void PR_LoadProgs(void);
 #define G_STRING(o)     (PR_GetString(*(int *)&pr_globals[o]))
 #define G_FUNCTION(o)   (*(func_t *)&pr_globals[o])
 
- // Return value helpers
+// Return value helpers
 #define RETURN_EDICT(e) (*(int *)&pr_globals[OFS_RETURN] = EDICT_TO_PROG(e))
 #define RETURN_STRING(s) (*(int *)&pr_globals[OFS_RETURN] = PR_SetString(s))
 
 
- // global variables
+// global variables
 
 typedef struct globalvars_s
 {
@@ -197,7 +197,7 @@ extern globalvars_t *pr_global_struct;
 extern float *pr_globals;
 extern char *pr_strings;
 
- // Compatibility alias used by some translations.
+// Compatibility alias used by some translations.
 #define gGlobalVariables (*pr_global_struct)
 
 #endif // PROGDEFS_H
