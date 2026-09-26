@@ -1,14 +1,15 @@
 /***
 *
-*    Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*    This product contains software technology licensed from Id
-*    Software, Inc ("Id Technology"). Id Technology (c) 1996 Id Software, Inc.
-*    All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 ****/
+
 //
-// write.cpp: Writes a Half-Life Alpha v6 studio .mdl file.
+// write.cpp: writes a Half-Life Alpha (version 6) studio .mdl file
 //
 
 #pragma warning(disable : 4244)
@@ -18,8 +19,10 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <limits.h>
 
 #include "cmdlib.h"
+#include "mathlib.h"
 #define Vector vec3_t
 #include "studio.h"
 #include "studiomdl.h"
@@ -32,116 +35,66 @@ byte* pStart;
 studiohdr_t* phdr;
 
 #define FILEBUFFER (64 * 1024 * 1024)
-#define ALIGN4(a) a = reinterpret_cast<byte*>((reinterpret_cast<uintptr_t>(a) + 3u) & ~uintptr_t(3u))
+#define ALIGN4(a) a = (byte*)(((uintptr_t)(a) + 3) & ~(uintptr_t)3)
 
-#pragma pack(push, 1)
-typedef struct
-{
-	short frame;
-	short pad;
-	float x;
-	float y;
-	float z;
-} alpha_pos_key_t;
+// differences below these store a single key frame for the bone
+#define POS_EPSILON 0.0001f
+#define ROT_EPSILON 0.00001f
 
-typedef struct
-{
-	short frame;
-	short roll;
-	short pitch;
-	short yaw;
-} alpha_rot_key_t;
+/*
+============
+StringCopy
 
-typedef struct
+Copies a string, truncated and terminated to fit dest
+============
+*/
+static void StringCopy(char* dest, size_t size, const char* src)
 {
-	int frame;
-	int event;
-	int type;
-	char options[64];
-} alpha_event_t;
-
-typedef struct
-{
-	short frame;
-	unsigned char event;
-	unsigned char type;
-} alpha_event_legacy_t;
-
-typedef struct
-{
-	int bone;
-	vec3_t org;
-} alpha_attachment_t;
-#pragma pack(pop)
-
-static inline void WriteSeqInt(mstudioseqdesc_t* seq, size_t offset, int value)
-{
-	*reinterpret_cast<int*>(reinterpret_cast<byte*>(seq) + offset) = value;
+	strncpy(dest, src, size - 1);
+	dest[size - 1] = '\0';
 }
 
-static inline void WriteSeqFloat(mstudioseqdesc_t* seq, size_t offset, float value)
+/*
+============
+AngleToKey
+
+Converts a rotation in radians to hundredths of a degree
+============
+*/
+static short AngleToKey(float radians)
 {
-	*reinterpret_cast<float*>(reinterpret_cast<byte*>(seq) + offset) = value;
+	float value = radians * (180.0f / Q_PI) * ROTKEY_SCALE;
+
+	if (value > SHRT_MAX)
+		value = SHRT_MAX;
+	if (value < SHRT_MIN)
+		value = SHRT_MIN;
+
+	return (short)Q_rint(value);
 }
 
-static short PackAngle100(float radians)
+/*
+============
+IsConstantTrack
+
+True when no frame of the track moves further than epsilon from the first
+============
+*/
+static bool IsConstantTrack(vec3_t* track, int numframes, float epsilon)
 {
-	float value = radians * (180.0f / Q_PI) * 100.0f;
-	if (value > 32767.0f)
-		value = 32767.0f;
-	if (value < -32768.0f)
-		value = -32768.0f;
-	return static_cast<short>(Q_rint(value));
-}
-
-static void CopyStringTrunc(char* dst, size_t dstSize, const char* src)
-{
-	if (!dst || dstSize == 0)
-		return;
-
-	if (!src)
-	{
-		dst[0] = 0;
-		return;
-	}
-
-	strncpy(dst, src, dstSize - 1);
-	dst[dstSize - 1] = 0;
-}
-
-static qboolean IsConstantPosTrack(vec3_t* track, int frameCount)
-{
-	int i;
-	if (!track || frameCount <= 1)
+	if (!track || numframes <= 1)
 		return true;
 
-	for (i = 1; i < frameCount; ++i)
+	for (int i = 1; i < numframes; i++)
 	{
-		if (fabs(track[i][0] - track[0][0]) > 0.0001f ||
-			fabs(track[i][1] - track[0][1]) > 0.0001f ||
-			fabs(track[i][2] - track[0][2]) > 0.0001f)
+		if (fabs(track[i][0] - track[0][0]) > epsilon ||
+			fabs(track[i][1] - track[0][1]) > epsilon ||
+			fabs(track[i][2] - track[0][2]) > epsilon)
 		{
 			return false;
 		}
 	}
-	return true;
-}
 
-static qboolean IsConstantRotTrack(vec3_t* track, int frameCount)
-{
-	int i;
-	if (!track || frameCount <= 1)
-		return true;
-
-	for (i = 1; i < frameCount; ++i)
-	{
-		if (fabs(track[i][0] - track[0][0]) > 0.00001f ||
-			fabs(track[i][1] - track[0][1]) > 0.00001f ||
-			fabs(track[i][2] - track[0][2]) > 0.00001f)
-		{
-			return false;
-		}
-	}
 	return true;
 }
 
@@ -150,21 +103,24 @@ void WriteBoneInfo()
 	int i;
 	mstudiobone_t* pbone;
 	mstudiobonecontroller_t* pbonecontroller;
+	mstudioattachment_t* pattachment;
 
-	pbone = reinterpret_cast<mstudiobone_t*>(pData);
+	// save bone info
+	pbone = (mstudiobone_t*)pData;
 	phdr->numbones = numbones;
 	phdr->boneindex = (pData - pStart);
 
 	for (i = 0; i < numbones; i++)
 	{
 		memset(&pbone[i], 0, sizeof(mstudiobone_t));
-		CopyStringTrunc(pbone[i].name, sizeof(pbone[i].name), bonetable[i].name);
+		StringCopy(pbone[i].name, sizeof(pbone[i].name), bonetable[i].name);
 		pbone[i].parent = bonetable[i].parent;
 	}
 	pData += numbones * sizeof(mstudiobone_t);
 	ALIGN4(pData);
 
-	pbonecontroller = reinterpret_cast<mstudiobonecontroller_t*>(pData);
+	// save bonecontroller info
+	pbonecontroller = (mstudiobonecontroller_t*)pData;
 	phdr->numbonecontrollers = numbonecontrollers;
 	phdr->bonecontrollerindex = (pData - pStart);
 
@@ -178,9 +134,10 @@ void WriteBoneInfo()
 	pData += numbonecontrollers * sizeof(mstudiobonecontroller_t);
 	ALIGN4(pData);
 
+	// save attachment info
 	if (numattachments > 0)
 	{
-		alpha_attachment_t* pattachment = reinterpret_cast<alpha_attachment_t*>(pData);
+		pattachment = (mstudioattachment_t*)pData;
 		phdr->numattachments = numattachments;
 		phdr->attachmentindex = (pData - pStart);
 
@@ -189,27 +146,20 @@ void WriteBoneInfo()
 			pattachment[i].bone = attachment[i].bone;
 			VectorCopy(attachment[i].org, pattachment[i].org);
 		}
-		pData += numattachments * sizeof(alpha_attachment_t);
+		pData += numattachments * sizeof(mstudioattachment_t);
 		ALIGN4(pData);
 	}
-	else
-	{
-		phdr->numattachments = 0;
-		phdr->attachmentindex = 0;
-	}
-
-	phdr->soundtable = 0;
-	phdr->soundindex = 0;
-	phdr->soundgroups = 0;
-	phdr->soundgroupindex = 0;
 }
 
 void WriteSequenceInfo()
 {
 	int i, j;
 	mstudioseqdesc_t* pseqdesc;
+	mstudioevent_t* pevent;
+	mstudiofullevent_t* pfullevent;
 
-	pseqdesc = reinterpret_cast<mstudioseqdesc_t*>(pData);
+	// save sequence info
+	pseqdesc = (mstudioseqdesc_t*)pData;
 	phdr->numseq = numseq;
 	phdr->seqindex = (pData - pStart);
 	pData += numseq * sizeof(mstudioseqdesc_t);
@@ -217,209 +167,172 @@ void WriteSequenceInfo()
 
 	for (i = 0; i < numseq; i++)
 	{
-		int legacyEventCount = sequence[i].numevents;
-		int legacyEventIndex = sequence[i].animindex;
-		int modernEventCount = 0;
-		int modernEventIndex = 0;
-
 		memset(&pseqdesc[i], 0, sizeof(mstudioseqdesc_t));
-		CopyStringTrunc(pseqdesc[i].label, sizeof(pseqdesc[i].label), sequence[i].name);
+		StringCopy(pseqdesc[i].label, sizeof(pseqdesc[i].label), sequence[i].name);
 		pseqdesc[i].numframes = sequence[i].numframes;
 		pseqdesc[i].fps = sequence[i].fps;
 		pseqdesc[i].flags = sequence[i].flags;
-		pseqdesc[i].activity = sequence[i].activity;
-		pseqdesc[i].actweight = sequence[i].actweight;
+
 		pseqdesc[i].motiontype = sequence[i].motiontype;
-		pseqdesc[i].motionbone = 0;
+		VectorCopy(sequence[i].linearmovement, pseqdesc[i].linearmovement);
+
+		pseqdesc[i].numblends = sequence[i].numblends;
 		pseqdesc[i].animindex = sequence[i].animindex;
+		pseqdesc[i].animindex2 = sequence[i].animindex;
 
 		totalframes += sequence[i].numframes;
 		totalseconds += sequence[i].numframes / sequence[i].fps;
 
-		if (sequence[i].numblends > 1)
-		{
-			printf("WARNING: sequence \"%s\" has %d blends; HL Alpha keeps only the first blend.\n",
-				sequence[i].name, sequence[i].numblends);
-		}
+		// save events
+		pseqdesc[i].numevents = sequence[i].numevents;
+		pseqdesc[i].eventindex = sequence[i].animindex;	 // left there when there are no events
 
-		if (sequence[i].numevents > 0)
-		{
-			alpha_event_legacy_t* legacyEvents = reinterpret_cast<alpha_event_legacy_t*>(pData);
-			legacyEventIndex = (pData - pStart);
+		if (sequence[i].numevents == 0)
+			continue;
 
-			for (j = 0; j < sequence[i].numevents; j++)
+		pevent = (mstudioevent_t*)pData;
+		pseqdesc[i].eventindex = (pData - pStart);
+
+		for (j = 0; j < sequence[i].numevents; j++)
+		{
+			int frame = sequence[i].event[j].frame - sequence[i].frameoffset;
+			int event = sequence[i].event[j].event;
+
+			if (frame > SHRT_MAX)
+				frame = SHRT_MAX;
+			else if (frame < SHRT_MIN)
+				frame = SHRT_MIN;
+
+			if (event < 0)
 			{
-				int legacyFrame = sequence[i].event[j].frame - sequence[i].frameoffset;
-				int legacyEvent = sequence[i].event[j].event;
-
-				if (legacyFrame > 32767)
-					legacyFrame = 32767;
-				else if (legacyFrame < -32768)
-					legacyFrame = -32768;
-
-				if (legacyEvent < 0)
-					legacyEvent = 0;
-				else if (legacyEvent > 255)
-				{
-					printf("WARNING: sequence \"%s\" event id %d truncated to 255 for legacy event stream.\n",
-						sequence[i].name,
-						sequence[i].event[j].event);
-					legacyEvent = 255;
-				}
-
-				legacyEvents[j].frame = static_cast<short>(legacyFrame);
-				legacyEvents[j].event = static_cast<unsigned char>(legacyEvent);
-				legacyEvents[j].type = 0;
+				event = 0;
+			}
+			else if (event > UCHAR_MAX)
+			{
+				printf("WARNING: sequence \"%s\" event id %d truncated to 255 for legacy event stream.\n",
+					sequence[i].name, sequence[i].event[j].event);
+				event = UCHAR_MAX;
 			}
 
-			pData += sequence[i].numevents * sizeof(alpha_event_legacy_t);
-			ALIGN4(pData);
-
-			alpha_event_t* pevent = reinterpret_cast<alpha_event_t*>(pData);
-			modernEventCount = sequence[i].numevents;
-			modernEventIndex = (pData - pStart);
-
-			for (j = 0; j < sequence[i].numevents; j++)
-			{
-				pevent[j].frame = sequence[i].event[j].frame - sequence[i].frameoffset;
-				pevent[j].event = sequence[i].event[j].event;
-				pevent[j].type = 0;
-				memset(pevent[j].options, 0, sizeof(pevent[j].options));
-				CopyStringTrunc(pevent[j].options, sizeof(pevent[j].options), sequence[i].event[j].options);
-			}
-
-			pData += modernEventCount * sizeof(alpha_event_t);
-			ALIGN4(pData);
-
-			pseqdesc[i].numevents = modernEventCount;
-			pseqdesc[i].eventindex = modernEventIndex;
+			pevent[j].frame = frame;
+			pevent[j].event = event;
+			pevent[j].type = 0;
 		}
+		pData += sequence[i].numevents * sizeof(mstudioevent_t);
+		ALIGN4(pData);
 
-		// Legacy Alpha engines read sequence events/anim offsets from hardcoded fields.
-		// Keep modern fields while mirroring the old layout for compatibility.
-		WriteSeqInt(&pseqdesc[i], 40, legacyEventCount); // legacy numevents
-		WriteSeqInt(&pseqdesc[i], 44, legacyEventIndex); // legacy eventindex (4-byte events)
-		WriteSeqInt(&pseqdesc[i], 60, sequence[i].animindex); // legacy animindex
-		WriteSeqFloat(&pseqdesc[i], 76, sequence[i].linearmovement[0]); // legacy linear movement X
-		WriteSeqFloat(&pseqdesc[i], 80, sequence[i].linearmovement[1]); // legacy linear movement Y
-		WriteSeqFloat(&pseqdesc[i], 84, sequence[i].linearmovement[2]); // legacy linear movement Z
-		WriteSeqInt(&pseqdesc[i], 88, sequence[i].numblends > 0 ? sequence[i].numblends : 1); // legacy numblends
-		WriteSeqInt(&pseqdesc[i], 92, sequence[i].animindex); // modern animindex
+		// the same events with their options
+		pfullevent = (mstudiofullevent_t*)pData;
+		pseqdesc[i].numfullevents = sequence[i].numevents;
+		pseqdesc[i].fulleventindex = (pData - pStart);
+
+		for (j = 0; j < sequence[i].numevents; j++)
+		{
+			pfullevent[j].frame = sequence[i].event[j].frame - sequence[i].frameoffset;
+			pfullevent[j].event = sequence[i].event[j].event;
+			pfullevent[j].type = 0;
+			StringCopy(pfullevent[j].options, sizeof(pfullevent[j].options), sequence[i].event[j].options);
+		}
+		pData += sequence[i].numevents * sizeof(mstudiofullevent_t);
+		ALIGN4(pData);
 	}
 
+	// save transition graph
 	if (numxnodes > 0)
 	{
-		int row, col;
-		byte* ptransition = reinterpret_cast<byte*>(pData);
+		byte* ptransition = pData;
 		phdr->numtransitions = numxnodes;
 		phdr->transitionindex = (pData - pStart);
 
-		for (row = 0; row < numxnodes; ++row)
+		for (i = 0; i < numxnodes; i++)
 		{
-			for (col = 0; col < numxnodes; ++col)
+			for (j = 0; j < numxnodes; j++)
 			{
-				*ptransition++ = static_cast<byte>(xnode[row][col]);
+				*ptransition++ = xnode[i][j];
 			}
 		}
 		pData = ptransition;
 		ALIGN4(pData);
 	}
-	else
-	{
-		phdr->numtransitions = 0;
-		phdr->transitionindex = 0;
-	}
 }
 
-byte* WriteAnimations(byte* pAnimData, byte* pAnimStart)
+byte* WriteAnimations(byte* pData, byte* pStart)
 {
 	int i, j, n;
+	int numframes;
+	s_animation_t* panim;
+	mstudioboneanim_t* pboneanim;
+	mstudioposkey_t* pposkey;
+	mstudiorotkey_t* protkey;
 
 	for (i = 0; i < numseq; i++)
 	{
-		int frameCount;
-		int* pBoneTable;
-		s_animation_t* panim;
-
+		// the alpha format plays the first blend only
 		panim = sequence[i].panim[0];
 		if (!panim)
-		{
 			Error("sequence \"%s\" has no animation data", sequence[i].name);
+
+		numframes = sequence[i].numframes;
+		if (numframes <= 0)
+		{
+			numframes = panim->endframe - panim->startframe + 1;
+			if (numframes <= 0)
+				numframes = 1;
 		}
 
-		frameCount = sequence[i].numframes;
-		if (frameCount <= 0)
+		sequence[i].animindex = (pData - pStart);
+
+		pboneanim = (mstudioboneanim_t*)pData;
+		pData += numbones * sizeof(mstudioboneanim_t);
+		ALIGN4(pData);
+
+		for (j = 0; j < numbones; j++)
 		{
-			frameCount = panim->endframe - panim->startframe + 1;
-			if (frameCount <= 0)
-				frameCount = 1;
-		}
+			vec3_t* ppos = NULL;
+			vec3_t* prot = NULL;
 
-		sequence[i].animindex = (pAnimData - pAnimStart);
-
-		pBoneTable = reinterpret_cast<int*>(pAnimData);
-		pAnimData += numbones * 4 * sizeof(int);
-		ALIGN4(pAnimData);
-
-		for (j = 0; j < numbones; ++j)
-		{
-			int sourceBone;
-			int posCount;
-			int rotCount;
-			vec3_t* posTrack = NULL;
-			vec3_t* rotTrack = NULL;
-			vec3_t* defaultPos = &bonetable[j].pos;
-			vec3_t* defaultRot = &bonetable[j].rot;
-
-			sourceBone = panim->boneimap[j];
-			if (sourceBone >= 0 && sourceBone < panim->numbones)
+			// bones the animation doesn't have keep their default position
+			int k = panim->boneimap[j];
+			if (k >= 0 && k < panim->numbones)
 			{
-				posTrack = panim->pos[sourceBone];
-				rotTrack = panim->rot[sourceBone];
+				ppos = panim->pos[k];
+				prot = panim->rot[k];
 			}
 
-			posCount = IsConstantPosTrack(posTrack, frameCount) ? 1 : frameCount;
-			pBoneTable[j * 4 + 0] = posCount;
-			pBoneTable[j * 4 + 1] = (pAnimData - pAnimStart);
+			// position keys
+			pboneanim[j].numposkeys = IsConstantTrack(ppos, numframes, POS_EPSILON) ? 1 : numframes;
+			pboneanim[j].poskeyindex = (pData - pStart);
 
-			for (n = 0; n < posCount; ++n)
+			pposkey = (mstudioposkey_t*)pData;
+			for (n = 0; n < pboneanim[j].numposkeys; n++)
 			{
-				int sourceFrame = (posCount == 1) ? 0 : n;
-				vec3_t* source = posTrack ? &posTrack[sourceFrame] : defaultPos;
-				alpha_pos_key_t* key = reinterpret_cast<alpha_pos_key_t*>(pAnimData);
-				key->frame = static_cast<short>(sourceFrame);
-				key->pad = 0;
-				key->x = (*source)[0];
-				key->y = (*source)[1];
-				key->z = (*source)[2];
-				pAnimData += sizeof(alpha_pos_key_t);
+				pposkey[n].frame = n;
+				pposkey[n].unused = 0;
+				VectorCopy(ppos ? ppos[n] : bonetable[j].pos, pposkey[n].pos);
 			}
-			ALIGN4(pAnimData);
+			pData += pboneanim[j].numposkeys * sizeof(mstudioposkey_t);
+			ALIGN4(pData);
 
-			rotCount = IsConstantRotTrack(rotTrack, frameCount) ? 1 : frameCount;
-			pBoneTable[j * 4 + 2] = rotCount;
-			pBoneTable[j * 4 + 3] = (pAnimData - pAnimStart);
+			// rotation keys
+			pboneanim[j].numrotkeys = IsConstantTrack(prot, numframes, ROT_EPSILON) ? 1 : numframes;
+			pboneanim[j].rotkeyindex = (pData - pStart);
 
-			for (n = 0; n < rotCount; ++n)
+			protkey = (mstudiorotkey_t*)pData;
+			for (n = 0; n < pboneanim[j].numrotkeys; n++)
 			{
-				int sourceFrame = (rotCount == 1) ? 0 : n;
-				vec3_t* source = rotTrack ? &rotTrack[sourceFrame] : defaultRot;
-				alpha_rot_key_t* key = reinterpret_cast<alpha_rot_key_t*>(pAnimData);
+				float* rot = prot ? prot[n] : bonetable[j].rot;
 
-				// Decoder mapping in HL Alpha:
-				// angle[0] <- key.pitch, angle[1] <- key.yaw, angle[2] <- key.roll
-				key->frame = static_cast<short>(sourceFrame);
-				key->roll = PackAngle100((*source)[2]);
-				key->pitch = PackAngle100((*source)[0]);
-				key->yaw = PackAngle100((*source)[1]);
-
-				pAnimData += sizeof(alpha_rot_key_t);
+				protkey[n].frame = n;
+				protkey[n].roll = AngleToKey(rot[2]);
+				protkey[n].pitch = AngleToKey(rot[0]);
+				protkey[n].yaw = AngleToKey(rot[1]);
 			}
-			ALIGN4(pAnimData);
+			pData += pboneanim[j].numrotkeys * sizeof(mstudiorotkey_t);
+			ALIGN4(pData);
 		}
 	}
 
-	return pAnimData;
+	return pData;
 }
 
 void WriteTextures()
@@ -428,7 +341,8 @@ void WriteTextures()
 	mstudiotexture_t* ptexture;
 	short* pref;
 
-	ptexture = reinterpret_cast<mstudiotexture_t*>(pData);
+	// save bone info
+	ptexture = (mstudiotexture_t*)pData;
 	phdr->numtextures = numtextures;
 	phdr->textureindex = (pData - pStart);
 	pData += numtextures * sizeof(mstudiotexture_t);
@@ -437,17 +351,17 @@ void WriteTextures()
 	phdr->skinindex = (pData - pStart);
 	phdr->numskinref = numskinref;
 	phdr->numskinfamilies = numskinfamilies;
-	pref = reinterpret_cast<short*>(pData);
+	pref = (short*)pData;
 
 	for (i = 0; i < phdr->numskinfamilies; i++)
 	{
 		for (j = 0; j < phdr->numskinref; j++)
 		{
-			*pref = static_cast<short>(skinref[i][j]);
+			*pref = skinref[i][j];
 			pref++;
 		}
 	}
-	pData = reinterpret_cast<byte*>(pref);
+	pData = (byte*)pref;
 	ALIGN4(pData);
 
 	phdr->texturedataindex = (pData - pStart);
@@ -455,7 +369,7 @@ void WriteTextures()
 	for (i = 0; i < numtextures; i++)
 	{
 		memset(&ptexture[i], 0, sizeof(mstudiotexture_t));
-		CopyStringTrunc(ptexture[i].name, sizeof(ptexture[i].name), texture[i].name);
+		StringCopy(ptexture[i].name, sizeof(ptexture[i].name), texture[i].name);
 		ptexture[i].flags = texture[i].flags;
 		ptexture[i].width = texture[i].skinwidth;
 		ptexture[i].height = texture[i].skinheight;
@@ -469,41 +383,41 @@ void WriteTextures()
 void WriteModel()
 {
 	int i, j, k;
-	int modelIndex = 0;
+	int cur = 0;
 
 	mstudiobodyparts_t* pbodypart;
 	mstudiomodel_t* pmodel;
 	mstudiomodeldata_t* pmodeldata;
 
-	pbodypart = reinterpret_cast<mstudiobodyparts_t*>(pData);
+	pbodypart = (mstudiobodyparts_t*)pData;
 	phdr->numbodyparts = numbodyparts;
 	phdr->bodypartindex = (pData - pStart);
 	pData += numbodyparts * sizeof(mstudiobodyparts_t);
 
-	pmodel = reinterpret_cast<mstudiomodel_t*>(pData);
+	pmodel = (mstudiomodel_t*)pData;
 	pData += nummodels * sizeof(mstudiomodel_t);
 
-	pmodeldata = reinterpret_cast<mstudiomodeldata_t*>(pData);
+	pmodeldata = (mstudiomodeldata_t*)pData;
 	pData += nummodels * sizeof(mstudiomodeldata_t);
 	ALIGN4(pData);
 
-	for (i = 0; i < numbodyparts; ++i)
+	for (i = 0; i < numbodyparts; i++)
 	{
 		memset(&pbodypart[i], 0, sizeof(mstudiobodyparts_t));
-		CopyStringTrunc(pbodypart[i].name, sizeof(pbodypart[i].name), bodypart[i].name);
+		StringCopy(pbodypart[i].name, sizeof(pbodypart[i].name), bodypart[i].name);
 		pbodypart[i].nummodels = bodypart[i].nummodels;
 		pbodypart[i].base = bodypart[i].base;
-		pbodypart[i].modelindex = reinterpret_cast<byte*>(&pmodel[modelIndex]) - pStart;
-		modelIndex += bodypart[i].nummodels;
+		pbodypart[i].modelindex = ((byte*)&pmodel[cur]) - pStart;
+		cur += bodypart[i].nummodels;
 	}
 
 	for (i = 0; i < nummodels; i++)
 	{
 		int n = 0;
-		int totalTris = 0;
+		int totaltris = 0;
 		int normmap[MAXSTUDIOVERTS];
 		int normimap[MAXSTUDIOVERTS];
-		int meshNormStart[MAXSTUDIOMESHES];
+		int meshnormindex[MAXSTUDIOMESHES];
 		byte* pbone;
 		vec3_t* pvert;
 		vec3_t* pnorm;
@@ -511,18 +425,19 @@ void WriteModel()
 
 		memset(normmap, 0, sizeof(normmap));
 		memset(normimap, 0, sizeof(normimap));
-		memset(meshNormStart, 0, sizeof(meshNormStart));
+		memset(meshnormindex, 0, sizeof(meshnormindex));
 
 		memset(&pmodel[i], 0, sizeof(mstudiomodel_t));
 		memset(&pmodeldata[i], 0, sizeof(mstudiomodeldata_t));
 
-		CopyStringTrunc(pmodel[i].name, sizeof(pmodel[i].name), model[i]->name);
+		StringCopy(pmodel[i].name, sizeof(pmodel[i].name), model[i]->name);
 		pmodel[i].type = STUDIO_HAS_NORMALS | STUDIO_HAS_VERTICES;
 		pmodel[i].boundingradius = model[i]->boundingradius;
 		pmodel[i].nummesh = model[i]->nummesh;
 		pmodel[i].numverts = model[i]->numverts;
-		pmodel[i].modeldataindex = reinterpret_cast<byte*>(&pmodeldata[i]) - pStart;
+		pmodel[i].modeldataindex = ((byte*)&pmodeldata[i]) - pStart;
 
+		// sort the normals by mesh
 		for (j = 0; j < model[i]->nummesh; j++)
 		{
 			model[i]->pmesh[j]->numnorms = 0;
@@ -530,7 +445,7 @@ void WriteModel()
 
 		for (j = 0; j < model[i]->nummesh; j++)
 		{
-			meshNormStart[j] = n;
+			meshnormindex[j] = n;
 			for (k = 0; k < model[i]->numnorms; k++)
 			{
 				if (model[i]->normal[k].skinref == model[i]->pmesh[j]->skinref)
@@ -543,29 +458,32 @@ void WriteModel()
 			}
 		}
 
+		// save vertice bones
 		pbone = pData;
 		pmodel[i].vertinfoindex = (pData - pStart);
 		for (j = 0; j < pmodel[i].numverts; j++)
 		{
-			*pbone++ = static_cast<byte>(model[i]->vert[j].bone);
+			*pbone++ = model[i]->vert[j].bone;
 		}
 		ALIGN4(pbone);
 
-		pmodel[i].norminfoindex = reinterpret_cast<byte*>(pbone) - pStart;
+		// save normal bones
+		pmodel[i].norminfoindex = (pbone - pStart);
 		for (j = 0; j < n; j++)
 		{
-			*pbone++ = static_cast<byte>(model[i]->normal[normimap[j]].bone);
+			*pbone++ = model[i]->normal[normimap[j]].bone;
 		}
 		ALIGN4(pbone);
 
-		pData = reinterpret_cast<byte*>(pbone);
+		pData = pbone;
 
-		pvert = reinterpret_cast<vec3_t*>(pData);
+		// save group info
+		pvert = (vec3_t*)pData;
 		pmodeldata[i].vertindex = (pData - pStart);
 		pData += model[i]->numverts * sizeof(vec3_t);
 		ALIGN4(pData);
 
-		pnorm = reinterpret_cast<vec3_t*>(pData);
+		pnorm = (vec3_t*)pData;
 		pmodeldata[i].normindex = (pData - pStart);
 		pData += n * sizeof(vec3_t);
 		ALIGN4(pData);
@@ -580,47 +498,45 @@ void WriteModel()
 			VectorCopy(model[i]->normal[normimap[j]].org, pnorm[j]);
 		}
 
-		pmesh = reinterpret_cast<mstudiomesh_t*>(pData);
+		// save mesh info
+		pmesh = (mstudiomesh_t*)pData;
 		pmodel[i].meshindex = (pData - pStart);
 		pData += pmodel[i].nummesh * sizeof(mstudiomesh_t);
 		ALIGN4(pData);
 
 		for (j = 0; j < model[i]->nummesh; j++)
 		{
-			int tri;
-			short* triOut;
-			s_trianglevert_t(*triangles)[3];
+			s_mesh_t* psrcmesh = model[i]->pmesh[j];
+			mstudiotrivert_t* ptrivert;
 
 			memset(&pmesh[j], 0, sizeof(mstudiomesh_t));
-			pmesh[j].numtris = model[i]->pmesh[j]->numtris;
-			pmesh[j].skinref = model[i]->pmesh[j]->skinref;
-			pmesh[j].numnorms = model[i]->pmesh[j]->numnorms;
-			pmesh[j].normindex = meshNormStart[j];
+			pmesh[j].numtris = psrcmesh->numtris;
+			pmesh[j].skinref = psrcmesh->skinref;
+			pmesh[j].numnorms = psrcmesh->numnorms;
+			pmesh[j].normindex = meshnormindex[j];
 			pmesh[j].triindex = (pData - pStart);
 
-			triOut = reinterpret_cast<short*>(pData);
-			triangles = model[i]->pmesh[j]->triangle;
-
-			for (tri = 0; tri < pmesh[j].numtris; ++tri)
+			ptrivert = (mstudiotrivert_t*)pData;
+			for (k = 0; k < pmesh[j].numtris; k++)
 			{
-				for (k = 0; k < 3; ++k)
+				for (int v = 0; v < 3; v++)
 				{
-					const s_trianglevert_t* tv = &triangles[tri][k];
-					int mappedNorm = normmap[tv->normindex];
+					s_trianglevert_t* psrc = &psrcmesh->triangle[k][v];
 
-					*triOut++ = static_cast<short>(tv->vertindex);
-					*triOut++ = static_cast<short>(mappedNorm);
-					*triOut++ = static_cast<short>(tv->s);
-					*triOut++ = static_cast<short>(tv->t);
+					ptrivert->vertindex = psrc->vertindex;
+					ptrivert->normindex = normmap[psrc->normindex];
+					ptrivert->s = psrc->s;
+					ptrivert->t = psrc->t;
+					ptrivert++;
 				}
 			}
-
-			pData = reinterpret_cast<byte*>(triOut);
+			pData = (byte*)ptrivert;
 			ALIGN4(pData);
-			totalTris += pmesh[j].numtris;
+
+			totaltris += pmesh[j].numtris;
 		}
 
-		printf("model %-16s %6d tris\n", pmodel[i].name, totalTris);
+		printf("model %-16s %6d tris\n", pmodel[i].name, totaltris);
 	}
 }
 
@@ -628,18 +544,15 @@ void WriteFile(void)
 {
 	FILE* modelouthandle;
 	int total = 0;
-	char finalName[1024];
+	char filename[1024];
 
-	pStart = reinterpret_cast<byte*>(kalloc(1, FILEBUFFER));
+	pStart = (byte*)kalloc(1, FILEBUFFER);
 
 	StripExtension(outname);
-	sprintf(finalName, "%s.mdl", outname);
+	sprintf(filename, "%s.mdl", outname);
 
 	if (numseqgroups > 1)
-	{
-		printf("WARNING: HL Alpha v6 does not use external sequence groups; embedding all sequences in %s.\n",
-			finalName);
-	}
+		printf("WARNING: HL Alpha v6 does not use external sequence groups; embedding all sequences in %s.\n", filename);
 
 	if (split_textures)
 	{
@@ -648,44 +561,38 @@ void WriteFile(void)
 	}
 
 	printf("---------------------\n");
-	printf("writing %s:\n", finalName);
-	modelouthandle = SafeOpenWrite(finalName);
+	printf("writing %s:\n", filename);
+	modelouthandle = SafeOpenWrite(filename);
 
-	phdr = reinterpret_cast<studiohdr_t*>(pStart);
+	phdr = (studiohdr_t*)pStart;
 	memset(phdr, 0, sizeof(studiohdr_t));
 
 	phdr->id = IDSTUDIOHEADER;
 	phdr->version = STUDIO_VERSION;
-	CopyStringTrunc(phdr->name, sizeof(phdr->name), finalName);
+	StringCopy(phdr->name, sizeof(phdr->name), filename);
 
-	pData = reinterpret_cast<byte*>(phdr) + sizeof(studiohdr_t);
+	pData = (byte*)phdr + sizeof(studiohdr_t);
 
 	WriteBoneInfo();
-	printf("bones     %6d bytes (%d)\n", static_cast<int>(pData - pStart - total), numbones);
-	total = static_cast<int>(pData - pStart);
+	printf("bones     %6d bytes (%d)\n", (int)(pData - pStart - total), numbones);
+	total = pData - pStart;
 
 	pData = WriteAnimations(pData, pStart);
 
 	WriteSequenceInfo();
-	printf("sequences %6d bytes (%d frames) [%d:%02d]\n",
-		static_cast<int>(pData - pStart - total),
-		totalframes,
-		(int)totalseconds / 60,
-		(int)totalseconds % 60);
-	total = static_cast<int>(pData - pStart);
+	printf("sequences %6d bytes (%d frames) [%d:%02d]\n", (int)(pData - pStart - total), totalframes, (int)totalseconds / 60, (int)totalseconds % 60);
+	total = pData - pStart;
 
 	WriteModel();
-	printf("models    %6d bytes\n", static_cast<int>(pData - pStart - total));
-	total = static_cast<int>(pData - pStart);
+	printf("models    %6d bytes\n", (int)(pData - pStart - total));
+	total = pData - pStart;
 
 	WriteTextures();
-	printf("textures  %6d bytes\n", static_cast<int>(pData - pStart - total));
+	printf("textures  %6d bytes\n", (int)(pData - pStart - total));
 
 	phdr->length = pData - pStart;
 	if (phdr->length > FILEBUFFER)
-	{
 		Error("model output exceeds FILEBUFFER (%d > %d)", phdr->length, FILEBUFFER);
-	}
 
 	printf("total     %6d\n", phdr->length);
 

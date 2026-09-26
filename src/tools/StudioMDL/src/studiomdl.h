@@ -12,19 +12,6 @@
 //
 
 
-#ifndef STUDIO_VERSION
-#define STUDIO_VERSION 6
-#endif
-
-#ifndef IDSTUDIOHEADER
-#define IDSTUDIOHEADER (('T' << 24) + ('S' << 16) + ('D' << 8) + 'I')
-#endif
-// little-endian "IDST"
-#ifndef IDSTUDIOSEQHEADER
-#define IDSTUDIOSEQHEADER (('Q' << 24) + ('S' << 16) + ('D' << 8) + 'I')
-#endif
-// little-endian "IDSQ"
-
 #ifndef EXTERN
 #define EXTERN extern
 #endif
