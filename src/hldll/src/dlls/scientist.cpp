@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,40 +12,47 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// Scientist - Scientist monster
+// Scientist - never attacks, follows the player
 //=========================================================
 
-#include <new>
-#include <string.h>
-#include "basemonster.h"
-#include "enginefuncs.h"
-#include "hl_exports.h"
+#include "extdll.h"
+#include "util.h"
+#include "cbase.h"
 #include "monsters.h"
-#include "utils.h"
-
-//=========================================================
-// Monster-specific constants
-//=========================================================
 
 #define SCIENTIST_THINK_INTERVAL	0.1f
+#define SCIENTIST_HEALTH			10.0f
+#define SCIENTIST_YAW_SPEED			10.0f
+#define SCIENTIST_CHASE_DIST		999999.0f	// never chases
+#define SCIENTIST_FOLLOW_DIST		128.0f		// distance kept to the player he follows
+#define SCIENTIST_DEATH_HOP_SPEED	200.0f		// a violent death throws the body up
+#define SCIENTIST_BODY_RANDOM		-1.0f		// pev->body set by the level designer: pick one
+#define SCIENTIST_NUM_BODIES		3
 
-#define SCIENTIST_VOL				1.0f
-#define SCIENTIST_ATTN_COMBAT		0.8f
+// SetDeathActivity types that no code passes, each plays MONSTERSTATE_DIE1 + type
+#define DEATH_TYPE3					2
+#define DEATH_TYPE4					3
+#define DEATH_TYPE5					4
 
-// pev->body lives at byte offset 136 in the alpha entvars_t and is not yet
-// named in utils.h. A value of -1.0 means "pick a random scientist body".
-#define PEV_BODY					136
+// scientist.mdl sequences, named by what SetActivity uses them for
+enum
+{
+	SCIENTIST_SEQ_IDLE = 0,			// also MONSTERSTATE_COMBAT_IDLE
+	SCIENTIST_SEQ_IDLE2,
+	SCIENTIST_SEQ_IDLE3,
+	SCIENTIST_SEQ_WALK,
+	SCIENTIST_SEQ_RUN = 5,			// MONSTERSTATE_CHASE and MONSTERSTATE_HUNT
+	SCIENTIST_SEQ_MELEE_ATTACK = 7,
+	SCIENTIST_SEQ_DIE2,
+	SCIENTIST_SEQ_DIE3,
+	SCIENTIST_SEQ_DIE1,				// also MONSTERSTATE_DIE4
+	SCIENTIST_SEQ_SPAWN,			// matches no state, so the first SetActivity always switches
+};
 
+static const char szScientistModel[] = "models/scientist.mdl";
 
-static const char kScientistModel[] = "models/scientist.mdl";
-
-//=========================================================
-// Sound Table
-//=========================================================
-
-static const char* pDieSounds[] =
+static const char *pDieSounds[] =
 {
 	"barney/ba_die1.wav",
 	"barney/ba_die2.wav",
@@ -53,14 +60,10 @@ static const char* pDieSounds[] =
 	"barney/ba_die4.wav",
 };
 
-static const char* pPainSounds[] =
+static const char *pPainSounds[] =
 {
 	"barney/ba_pain1.wav",
 };
-
-//=========================================================
-// CScientist
-//=========================================================
 
 class CScientist : public CBaseMonster
 {
@@ -69,19 +72,15 @@ public:
 
 	void Spawn();
 	int Classify();
-
-private:
 	void SetActivity(int activity);
+	void Pain(float flDamage);
+	void Death(int iDeathType);
+	void SetDeathActivity(int iDeathType);
 
-	void Pain(float flDamage);		// vtable slot 13
-	void Death(int gibType);		// vtable slot 14
-	void SetDeathActivity(int type);
-
-private:
-	float m_flFollowDist;
+	float	m_flFollowDist;
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CScientist) <= 336, CScientist_private_data_size);
+LINK_ENTITY_TO_CLASS(monster_scientist, CScientist);
 
 CScientist::CScientist()
 {
@@ -95,54 +94,40 @@ void CScientist::Spawn()
 {
 	int i;
 
-	for (i = 0; i < (int)ARRAYSIZE(pDieSounds); ++i)
-		EnginePrecacheSound(pDieSounds[i]);
+	for (i = 0; i < ARRAYSIZE(pDieSounds); i++)
+		PRECACHE_SOUND(pDieSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pPainSounds); ++i)
-		EnginePrecacheSound(pPainSounds[i]);
+	for (i = 0; i < ARRAYSIZE(pPainSounds); i++)
+		PRECACHE_SOUND(pPainSounds[i]);
 
-	EnginePrecacheModel(kScientistModel);
+	PRECACHE_MODEL(szScientistModel);
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineSetModel(edict, kScientistModel);
+	SET_MODEL(ENT(pev), szScientistModel);
+	UTIL_SetSize(pev, Vector(-16.0f, -16.0f, 0.0f), Vector(16.0f, 16.0f, 64.0f));
 
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 16.0f, 16.0f, 64.0f);
-		VecSet(mins, -16.0f, -16.0f, 0.0f);
-		if (edict)
-			EngineSetSize(edict, mins, maxs);
-	}
+	pev->solid = SOLID_SLIDEBOX;
+	pev->movetype = MOVETYPE_STEP;
+	pev->effects = 0;
+	pev->health = SCIENTIST_HEALTH;
+	pev->yaw_speed = SCIENTIST_YAW_SPEED;
+	pev->sequence = SCIENTIST_SEQ_SPAWN;
 
-	PevFloat(pev, PEV_SOLID) = 3.0f;
-	PevFloat(pev, PEV_MOVETYPE) = 4.0f;
-	PevFloat(pev, PEV_STUCK) = 0.0f;
-	PevFloat(pev, PEV_HEALTH) = 10.0f;
-	PevFloat(pev, PEV_YAWSPEED) = 10.0f;
-	PevInt(pev, PEV_SEQUENCE) = 11;
+	m_flDistTooFar = SCIENTIST_CHASE_DIST;
+	m_flFollowDist = SCIENTIST_FOLLOW_DIST;
+	m_bloodColor = BLOOD_COLOR_RED;
 
-	m_flDistTooFar = 999999.0f;
-	m_flFollowDist = 128.0f;
-	m_bloodColor = 70;
+	pev->nextthink += 1.0f;
 
-	PevFloat(pev, PEV_NEXTTHINK) = PevFloat(pev, PEV_NEXTTHINK) + 1.0f;
-
-	// pev->body == -1 selects a random scientist body (0..2).
-	if (PevFloat(pev, PEV_BODY) == -1.0f)
-		PevFloat(pev, PEV_BODY) = (float)(rand() % 3);
+	if (pev->body == SCIENTIST_BODY_RANDOM)
+		pev->body = RANDOM_LONG(0, SCIENTIST_NUM_BODIES - 1);
 
 	SetThink(&CBaseMonster::WalkMonsterStart);
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 0.5f;
+	pev->nextthink = gpGlobals->time + 0.5f;
 }
 
-//=========================================================
-// Classify
-//=========================================================
 int CScientist::Classify()
 {
-	return 5;
+	return CLASS_PLAYER_ALLY;
 }
 
 //=========================================================
@@ -154,109 +139,105 @@ void CScientist::SetActivity(int activity)
 
 	switch (activity)
 	{
-	case 1:
-		sequence = 0;
+	case MONSTERSTATE_IDLE:
+		sequence = SCIENTIST_SEQ_IDLE;
 		break;
 
-	case 2:
-		sequence = 1;
+	case MONSTERSTATE_IDLE2:
+		sequence = SCIENTIST_SEQ_IDLE2;
 		break;
 
-	case 3:
-		sequence = 2;
+	case MONSTERSTATE_IDLE3:
+		sequence = SCIENTIST_SEQ_IDLE3;
 		break;
 
-	case 4:
-		sequence = 3;
+	case MONSTERSTATE_WALK:
+		sequence = SCIENTIST_SEQ_WALK;
 		break;
 
-	case 6:
-		sequence = 0;
+	case MONSTERSTATE_COMBAT_IDLE:
+		sequence = SCIENTIST_SEQ_IDLE;
 		break;
 
-	case 8:
-	case 9:
-		sequence = 5;
+	case MONSTERSTATE_CHASE:
+	case MONSTERSTATE_HUNT:
+		sequence = SCIENTIST_SEQ_RUN;
 		break;
 
-	case 10:
+	case MONSTERSTATE_FOLLOW:
 		{
-			Vector vecDelta;
-			vecDelta.x = PevVector(pev, PEV_ORIGIN).x - PevVector(m_pMoveTarget, PEV_ORIGIN).x;
-			vecDelta.y = PevVector(pev, PEV_ORIGIN).y - PevVector(m_pMoveTarget, PEV_ORIGIN).y;
-			vecDelta.z = PevVector(pev, PEV_ORIGIN).z - PevVector(m_pMoveTarget, PEV_ORIGIN).z;
-
-			float flDist = (float)sqrt(vecDelta.x * vecDelta.x + vecDelta.y * vecDelta.y + vecDelta.z * vecDelta.z);
+			// stand close to the player, walk to keep up, run when far behind
+			Vector vecDelta = pev->origin - m_pMoveTarget->origin;
+			float flDist = (float)sqrt(DotProduct(vecDelta, vecDelta));
 
 			if (m_flFollowDist * 2.0f > flDist)
 			{
 				if (m_flFollowDist < flDist)
-					sequence = 3;
+					sequence = SCIENTIST_SEQ_WALK;
 				else
-					sequence = 0;
+					sequence = SCIENTIST_SEQ_IDLE;
 			}
 			else
 			{
-				sequence = 5;
+				sequence = SCIENTIST_SEQ_RUN;
 			}
 		}
 		break;
 
-	case 29:
-		sequence = 7;
+	case MONSTERSTATE_MELEE_ATTACK:
+		sequence = SCIENTIST_SEQ_MELEE_ATTACK;
 		break;
 
-	case 35:
-	case 38:
-		sequence = 10;
+	case MONSTERSTATE_DIE1:
+	case MONSTERSTATE_DIE4:
+		sequence = SCIENTIST_SEQ_DIE1;
 		break;
 
-	case 36:
-		sequence = 8;
+	case MONSTERSTATE_DIE2:
+		sequence = SCIENTIST_SEQ_DIE2;
 		break;
 
-	case 37:
-		sequence = 9;
+	case MONSTERSTATE_DIE3:
+		sequence = SCIENTIST_SEQ_DIE3;
 		break;
 
 	default:
-		EngineAlertMessage(3, "Scientist's monster state is bogus: %d", activity);
+		ALERT(at_error, "Scientist's monster state is bogus: %d", activity);
 		return;
 	}
 
-	if (PevInt(pev, PEV_SEQUENCE) == sequence)
+	if (pev->sequence == sequence)
 		return;
 
 	{
-		int oldSequence = PevInt(pev, PEV_SEQUENCE);
+		int oldSequence = pev->sequence;
 
-		if ((sequence == 5 || sequence == 3) && (oldSequence == 5 || oldSequence == 3))
-			PevFloat(pev, PEV_FRAME) = PevFloat(pev, PEV_FRAME) + 1.0f;
+		// keep the walk/run cycle going when switching between the two
+		if ((sequence == SCIENTIST_SEQ_RUN || sequence == SCIENTIST_SEQ_WALK)
+			&& (oldSequence == SCIENTIST_SEQ_RUN || oldSequence == SCIENTIST_SEQ_WALK))
+			pev->frame += 1.0f;
 		else
-			PevFloat(pev, PEV_FRAME) = 0.0f;
+			pev->frame = 0;
 	}
 
-	PevInt(pev, PEV_SEQUENCE) = sequence;
+	pev->sequence = sequence;
 	ResetSequenceInfo(SCIENTIST_THINK_INTERVAL);
 
-	// The original validates the resolved sequence after ResetSequenceInfo.
-	// The switch above never produces the bad values (4 or 6), but keep the
-	// error arm for binary-behavior parity.
 	switch (sequence)
 	{
-	case 0:
-	case 1:
-	case 2:
-	case 3:
-	case 5:
-	case 7:
-	case 8:
-	case 9:
-	case 10:
+	case SCIENTIST_SEQ_IDLE:
+	case SCIENTIST_SEQ_IDLE2:
+	case SCIENTIST_SEQ_IDLE3:
+	case SCIENTIST_SEQ_WALK:
+	case SCIENTIST_SEQ_RUN:
+	case SCIENTIST_SEQ_MELEE_ATTACK:
+	case SCIENTIST_SEQ_DIE2:
+	case SCIENTIST_SEQ_DIE3:
+	case SCIENTIST_SEQ_DIE1:
 		break;
 
 	default:
-		EngineAlertMessage(3, "Bogus scientist anim: %d", sequence);
+		ALERT(at_error, "Bogus scientist anim: %d", sequence);
 		m_flFrameRate = 0.0f;
 		m_flGroundSpeed = 0.0f;
 		break;
@@ -264,150 +245,80 @@ void CScientist::SetActivity(int activity)
 }
 
 //=========================================================
-// Pain - vtable slot 13
+// Pain
 //=========================================================
 void CScientist::Pain(float flDamage)
 {
-	HL_UNUSED(flDamage);
-
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, pPainSounds[0], SCIENTIST_VOL, SCIENTIST_ATTN_COMBAT);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pPainSounds[0], VOL_NORM, ATTN_NORM);
 }
 
 //=========================================================
 // SetDeathActivity
 //=========================================================
-void CScientist::SetDeathActivity(int type)
+void CScientist::SetDeathActivity(int iDeathType)
 {
-	switch (type)
+	switch (iDeathType)
 	{
-	case 0:
-		m_MonsterState = 35;
+	case DEATH_NORMAL:
+		m_MonsterState = MONSTERSTATE_DIE1;
 		break;
-	case 1:
-		m_MonsterState = 36;
+	case DEATH_VIOLENT:
+		m_MonsterState = MONSTERSTATE_DIE2;
 		break;
-	case 2:
-		m_MonsterState = 37;
+	case DEATH_TYPE3:
+		m_MonsterState = MONSTERSTATE_DIE3;
 		break;
-	case 3:
-		m_MonsterState = 38;
+	case DEATH_TYPE4:
+		m_MonsterState = MONSTERSTATE_DIE4;
 		break;
-	case 4:
-		m_MonsterState = 39;
+	case DEATH_TYPE5:
+		m_MonsterState = MONSTERSTATE_DIE5;
 		break;
 	default:
-		// The binary default arm the binary alerts and leaves m_MonsterState at its
-		// prior value (no write); it does NOT force activity 35.
-		EngineAlertMessage(1, "Unknown death type!\n");
+		ALERT(at_console, "Unknown death type!\n");
 		break;
 	}
 
-	PevFloat(pev, PEV_IDEAL_YAW) = PevVector(pev, PEV_ANGLES).y;
+	pev->ideal_yaw = pev->angles.y;
 	SetActivity(m_MonsterState);
 	SetThink(&CBaseMonster::MonsterThink);
-	SetNextThink(SCIENTIST_THINK_INTERVAL);
+	pev->nextthink = gpGlobals->time + SCIENTIST_THINK_INTERVAL;
 }
 
 //=========================================================
-// Death - vtable slot 14
+// Death
 //=========================================================
-void CScientist::Death(int gibType)
+void CScientist::Death(int iDeathType)
 {
-	HL_UNUSED(gibType);
-
-	switch (rand() % 4)
+	switch (RANDOM_LONG(0, 3))
 	{
 	case 0:
-		{
-			edict_t* edict = EdictFromEntvars(pev);
-			if (edict)
-				EngineEmitSound(edict, 2, pDieSounds[0], SCIENTIST_VOL, SCIENTIST_ATTN_COMBAT);
-		}
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pDieSounds[0], VOL_NORM, ATTN_NORM);
 		break;
 	case 1:
-		{
-			edict_t* edict = EdictFromEntvars(pev);
-			if (edict)
-				EngineEmitSound(edict, 2, pDieSounds[1], SCIENTIST_VOL, SCIENTIST_ATTN_COMBAT);
-		}
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pDieSounds[1], VOL_NORM, ATTN_NORM);
 		break;
 	case 2:
-		{
-			edict_t* edict = EdictFromEntvars(pev);
-			if (edict)
-				EngineEmitSound(edict, 2, pDieSounds[2], SCIENTIST_VOL, SCIENTIST_ATTN_COMBAT);
-		}
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pDieSounds[2], VOL_NORM, ATTN_NORM);
 		break;
 	case 3:
-		{
-			edict_t* edict = EdictFromEntvars(pev);
-			if (edict)
-				EngineEmitSound(edict, 2, pDieSounds[3], SCIENTIST_VOL, SCIENTIST_ATTN_COMBAT);
-		}
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pDieSounds[3], VOL_NORM, ATTN_NORM);
 		break;
 	}
 
-	// The original compares the raw HEALTH bit pattern as an unsigned dword
-	// against -30.0f, which for negative health is equivalent to HEALTH > -30.0.
-	// A scientist that is only lightly dead drops into the standard death
-	// animation; a more heavily gibbed one (HEALTH <= -30) hops first.
-	if (PevFloat(pev, PEV_HEALTH) > -30.0f)
+	if (pev->health > GIB_HEALTH)
 	{
-		SetDeathActivity(0);
+		SetDeathActivity(DEATH_NORMAL);
 		return;
 	}
 
-	PevVector(pev, PEV_ORIGIN).z = PevVector(pev, PEV_ORIGIN).z + 1.0f;
+	pev->origin.z += 1.0f;
 
-	// pev->flags is stored as a float but tested/cleared as an integer bit
-	// mask, matching the original alpha behavior.
-	if (((int)PevFloat(pev, PEV_FLAGS) & FL_ONGROUND) != 0)
+	if ((int)pev->flags & FL_ONGROUND)
 	{
-		PevFloat(pev, PEV_FLAGS) = PevFloat(pev, PEV_FLAGS) - (float)FL_ONGROUND;
-
-		PevVector(pev, PEV_VELOCITY).x = 0.0f;
-		PevVector(pev, PEV_VELOCITY).y = 0.0f;
-		PevVector(pev, PEV_VELOCITY).z = 200.0f;
+		pev->flags -= FL_ONGROUND;
+		pev->velocity = Vector(0.0f, 0.0f, SCIENTIST_DEATH_HOP_SPEED);
 	}
 
-	SetDeathActivity(1);
-}
-
-//=========================================================
-// TakeDamage routes through the shared CBaseMonster::TakeDamage
-// (vtable slot 17), which raises Pain
-// Death.
-//=========================================================
-
-//=========================================================
-// monster_scientist
-//=========================================================
-DLLEXPORT void monster_scientist(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 336);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 336);
-
-		CScientist* monster = new (privateData) CScientist();
-		monster->pev = entvars;
-		gpGlobals = entvars->pSystemGlobals;
-	}
+	SetDeathActivity(DEATH_VIOLENT);
 }

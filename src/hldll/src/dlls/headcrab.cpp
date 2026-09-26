@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,97 +12,74 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// Headcrab - Headcrab monster
+// Headcrab - leaps at the enemy, the bite is lethal
 //=========================================================
 
-#include <new>
-#include <string.h>
-#include "basemonster.h"
-#include "enginefuncs.h"
-#include "hl_exports.h"
+#include "extdll.h"
+#include "util.h"
+#include "cbase.h"
 #include "monsters.h"
-#include "utils.h"
 
 //=========================================================
-// Monster's Anim Events Go Here
+// monster-specific DEFINE's
 //=========================================================
+#define HEADCRAB_HEALTH				12.0f
+#define HEADCRAB_BLOOD_COLOR		54
+#define HEADCRAB_THINK_INTERVAL		0.1f
+#define HEADCRAB_MAX_ATTACK_DIST	1024.0f
+#define HEADCRAB_LEAP_SPEED			250.0f
+#define HEADCRAB_ATTACK_DELAY		4.0f	// between two leaps
+#define HEADCRAB_PAIN_DAMAGE		5.0f	// lighter hits interrupt the current action
+#define HEADCRAB_BITE_STREAMS		4		// blood streams sprayed by a bite
 
-#define HC_AE_LEAP 2
+// headcrab.mdl sequences
+enum
+{
+	HC_SEQ_IDLE = 0,
+	HC_SEQ_WALK,
+	HC_SEQ_RUN,
+	HC_SEQ_LEAP = 4,
+	HC_SEQ_PAIN,
+	HC_SEQ_DIE,
+	HC_SEQ_LAST,				// highest sequence SetActivity accepts
+	HC_SEQ_SPAWN,				// set by Spawn, until the first think
+};
 
-#define HEADCRAB_THINK_INTERVAL	0.1f
-#define HEADCRAB_ATTACK_DIST	1024.0f
-
-#define HEADCRAB_SOUND_VOL		1.0f
-#define HEADCRAB_ATTN_IDLE		2.0f
-#define HEADCRAB_ATTN_COMBAT	0.8f
-
-
-#define TE_BLOODSPRITE 101
-
-
-static const char kHeadcrabModel[] = "models/headcrab.mdl";
-
-//=========================================================
-// Sound Table
-//=========================================================
-
-static const char* pAttackSounds[] =
+static const char *pAttackSounds[] =
 {
 	"headcrab/hc_attack1.wav",
 };
 
-static const char* pAlertSounds[] =
+static const char *pAlertSounds[] =
 {
 	"headcrab/hc_alert1.wav",
 };
 
-static const char* pDieSounds[] =
+static const char *pDieSounds[] =
 {
 	"headcrab/hc_die1.wav",
 	"headcrab/hc_die2.wav",
 };
 
-static const char* pPainSounds[] =
+static const char *pPainSounds[] =
 {
 	"headcrab/hc_pain1.wav",
 	"headcrab/hc_pain2.wav",
 	"headcrab/hc_pain3.wav",
 };
 
-static const char* pIdleSounds[] =
+static const char *pIdleSounds[] =
 {
 	"headcrab/hc_idle1.wav",
 	"headcrab/hc_idle2.wav",
 	"headcrab/hc_idle3.wav",
 };
 
-static const char* pBiteSounds[] =
+static const char *pBiteSounds[] =
 {
 	"headcrab/hc_headbite.wav",
 };
-
-//=========================================================
-// Helpers
-//=========================================================
-
-static entvars_t* EnemyVars(entvars_t* pevSelf)
-{
-	if (!pevSelf)
-		return NULL;
-
-	int enemyIndex = PevInt(pevSelf, PEV_ENEMY);
-	if (!enemyIndex)
-		return NULL;
-
-	edict_t* pEdict = EnginePEntityOfEntIndex(enemyIndex);
-	return pEdict ? EngineGetVarsOfEnt(pEdict) : NULL;
-}
-
-//=========================================================
-// CHCHeadcrab
-//=========================================================
 
 class CHCHeadcrab : public CBaseMonster
 {
@@ -111,21 +88,16 @@ public:
 
 	void Spawn();
 	int Classify();
-
-private:
 	void SetActivity(int activity);
-	void IdleSound();
+	void Pain(float flDamage);
+	void Death(int iDeathType);
 	void AlertSound();
-	int CheckAttacks(entvars_t* pevEnemy, float flDist);
+	void IdleSound();
+	int CheckAttacks(entvars_t *pevEnemy, float flDist);
 
-	void Pain(float flDamage);		// vtable slot 13
-	void Death(int gibType);		// vtable slot 14
-
-	void LeapAttackThink(CBaseEntity* pOther);
-	void LeapAttackTouch(CBaseEntity* pOther);
+	void LeapAttackThink(CBaseEntity *pOther);
+	void LeapAttackTouch(CBaseEntity *pOther);
 };
-
-HL_COMPILE_TIME_ASSERT(sizeof(CHCHeadcrab) <= 336, CHCHeadcrab_private_data_size);
 
 CHCHeadcrab::CHCHeadcrab()
 {
@@ -138,52 +110,40 @@ void CHCHeadcrab::Spawn()
 {
 	int i;
 
-	for (i = 0; i < (int)ARRAYSIZE(pAttackSounds); ++i)
-		EnginePrecacheSound(pAttackSounds[i]);
+	for (i = 0; i < (int)ARRAYSIZE(pAttackSounds); i++)
+		PRECACHE_SOUND(pAttackSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pAlertSounds); ++i)
-		EnginePrecacheSound(pAlertSounds[i]);
+	for (i = 0; i < (int)ARRAYSIZE(pAlertSounds); i++)
+		PRECACHE_SOUND(pAlertSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pDieSounds); ++i)
-		EnginePrecacheSound(pDieSounds[i]);
+	for (i = 0; i < (int)ARRAYSIZE(pDieSounds); i++)
+		PRECACHE_SOUND(pDieSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pPainSounds); ++i)
-		EnginePrecacheSound(pPainSounds[i]);
+	for (i = 0; i < (int)ARRAYSIZE(pPainSounds); i++)
+		PRECACHE_SOUND(pPainSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pIdleSounds); ++i)
-		EnginePrecacheSound(pIdleSounds[i]);
+	for (i = 0; i < (int)ARRAYSIZE(pIdleSounds); i++)
+		PRECACHE_SOUND(pIdleSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pBiteSounds); ++i)
-		EnginePrecacheSound(pBiteSounds[i]);
+	for (i = 0; i < (int)ARRAYSIZE(pBiteSounds); i++)
+		PRECACHE_SOUND(pBiteSounds[i]);
 
-	EnginePrecacheModel(kHeadcrabModel);
+	PRECACHE_MODEL("models/headcrab.mdl");
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineSetModel(edict, kHeadcrabModel);
+	SET_MODEL(ENT(pev), "models/headcrab.mdl");
+	UTIL_SetSize(pev, Vector(-12, -12, 0), Vector(12, 12, 24));
 
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 12.0f, 12.0f, 24.0f);
-		VecSet(mins, -12.0f, -12.0f, 0.0f);
-		if (edict)
-			EngineSetSize(edict, mins, maxs);
-	}
+	pev->solid = SOLID_SLIDEBOX;
+	pev->movetype = MOVETYPE_STEP;
+	pev->effects = 0;
+	pev->health = HEADCRAB_HEALTH;
+	pev->yaw_speed = 10.0f;
+	pev->sequence = HC_SEQ_SPAWN;
 
-	PevFloat(pev, PEV_SOLID) = 3.0f;
-	PevFloat(pev, PEV_MOVETYPE) = 4.0f;
-	PevFloat(pev, PEV_STUCK) = 0.0f;
-	PevFloat(pev, PEV_HEALTH) = 12.0f;
-	PevFloat(pev, PEV_YAWSPEED) = 10.0f;
-	PevInt(pev, PEV_SEQUENCE) = 8;
-
-	m_bloodColor = 54;
+	m_bloodColor = HEADCRAB_BLOOD_COLOR;
 	m_flDistTooFar = 256.0f;
 
-	// The binary adds the random delay onto the existing nextthink field
-	// (pev->nextthink += RandomFloat(0,0.5) + 0.5), it does not reset from time.
-	PevFloat(pev, PEV_NEXTTHINK) = PevFloat(pev, PEV_NEXTTHINK) + RandomFloat(0.0f, 0.5f) + 0.5f;
+	pev->nextthink = pev->nextthink + RANDOM_FLOAT(0.0f, 0.5f) + 0.5f;
 	SetThink(&CBaseMonster::WalkMonsterStart);
 }
 
@@ -192,114 +152,96 @@ void CHCHeadcrab::Spawn()
 //=========================================================
 int CHCHeadcrab::Classify()
 {
-	return 8;
+	return CLASS_HEADCRAB;
 }
 
 //=========================================================
-// SetActivity
+// SetActivity - plays the sequence for a monster state
 //=========================================================
 void CHCHeadcrab::SetActivity(int activity)
 {
-	int sequence;
+	int iSequence;
 
 	switch (activity)
 	{
-	case 1:
-	case 2:
-	case 3:
-	case 6:
-	case 7:
-		sequence = 0;
+	case MONSTERSTATE_IDLE:
+	case MONSTERSTATE_IDLE2:
+	case MONSTERSTATE_IDLE3:
+	case MONSTERSTATE_COMBAT_IDLE:
+	case MONSTERSTATE_COMBAT:
+		iSequence = HC_SEQ_IDLE;
 		break;
 
-	case 4:
-		sequence = 1;
+	case MONSTERSTATE_WALK:
+		iSequence = HC_SEQ_WALK;
 		break;
 
-	case 8:
-	case 9:
-		sequence = 2;
+	case MONSTERSTATE_CHASE:
+	case MONSTERSTATE_HUNT:
+		iSequence = HC_SEQ_RUN;
 		break;
 
-	case 18:
-	case 33:
-		sequence = 5;
+	case MONSTERSTATE_PAIN:
+	case MONSTERSTATE_HEAVY_PAIN:
+		iSequence = HC_SEQ_PAIN;
 		break;
 
-	case 30:
-		sequence = 4;
+	case MONSTERSTATE_RANGE_ATTACK:
+		iSequence = HC_SEQ_LEAP;
 		break;
 
-	case 31:
+	case MONSTERSTATE_ATTACK:
 		return;
 
-	case 35:
-		sequence = 6;
-		break;
-
-	case 41:
-		sequence = 7;
+	case MONSTERSTATE_DIE1:
+		iSequence = HC_SEQ_DIE;
 		break;
 
 	default:
-		EngineAlertMessage(1, "Headcrab's monster state is bogus: %d", activity);
+		ALERT(at_console, "Headcrab's monster state is bogus: %d", activity);
 		return;
 	}
 
-	if (PevInt(pev, PEV_SEQUENCE) == sequence)
+	if (pev->sequence == iSequence)
 		return;
 
-	PevInt(pev, PEV_SEQUENCE) = sequence;
-	PevFloat(pev, PEV_FRAME) = 0.0f;
+	pev->sequence = iSequence;
+	pev->frame = 0;
 	ResetSequenceInfo(HEADCRAB_THINK_INTERVAL);
 
-	volatile int validatedSequence = sequence;
-	if (validatedSequence < 0 || validatedSequence > 7)
+	if (pev->sequence < 0 || pev->sequence > HC_SEQ_LAST)
 	{
-		EngineAlertMessage(1, "Bogus headcrab anim: %d", validatedSequence);
-		m_flFrameRate = 0.0f;
-		m_flGroundSpeed = 0.0f;
+		ALERT(at_console, "Bogus headcrab anim: %d", pev->sequence);
+		m_flFrameRate = 0;
+		m_flGroundSpeed = 0;
 	}
 }
 
 //=========================================================
-// Pain - vtable slot 13
+// Pain
 //=========================================================
 void CHCHeadcrab::Pain(float flDamage)
 {
-	edict_t* edict = EdictFromEntvars(pev);
-	int soundIndex = RandomLong(0, 2);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pPainSounds[RANDOM_LONG(0, ARRAYSIZE(pPainSounds) - 1)], VOL_NORM, ATTN_NORM);
 
-	if (edict)
-		EngineEmitSound(edict, 2, pPainSounds[soundIndex], HEADCRAB_SOUND_VOL, HEADCRAB_ATTN_COMBAT);
-
-	if (flDamage < 5.0f)
+	if (flDamage < HEADCRAB_PAIN_DAMAGE)
 	{
 		SetThink(&CBaseMonster::MonsterThink);
-		if (PevInt(pev, PEV_ENEMY))
-			m_MonsterState = 6;
+		if (!FNullEnt(pev->enemy))
+			m_MonsterState = MONSTERSTATE_COMBAT_IDLE;
 	}
 }
 
 //=========================================================
-// Death - vtable slot 14
+// Death
 //=========================================================
-void CHCHeadcrab::Death(int gibType)
+void CHCHeadcrab::Death(int iDeathType)
 {
-	HL_UNUSED(gibType);
+	// no death cry when gibbed
+	if (pev->health > GIB_HEALTH)
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pDieSounds[RANDOM_LONG(0, ARRAYSIZE(pDieSounds) - 1)], VOL_NORM, ATTN_NORM);
 
-	// Binary compares the raw health bits unsigned against 0xC1F00000 (-30.0):
-	// the death gurgle only plays when the corpse has NOT been gibbed below -30.
-	if (PevFloat(pev, PEV_HEALTH) > -30.0f)
-	{
-		int soundIndex = RandomLong(0, 1);
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineEmitSound(edict, 2, pDieSounds[soundIndex], HEADCRAB_SOUND_VOL, HEADCRAB_ATTN_COMBAT);
-	}
-
-	// The binary tail-calls the shared CBaseMonster::SetDeathActivity.
-	SetDeathActivity(0);
+	SetDeathActivity(DEATH_NORMAL);
 }
 
 //=========================================================
@@ -307,12 +249,11 @@ void CHCHeadcrab::Death(int gibType)
 //=========================================================
 void CHCHeadcrab::AlertSound()
 {
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, pAlertSounds[0], HEADCRAB_SOUND_VOL, HEADCRAB_ATTN_COMBAT);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pAlertSounds[0], VOL_NORM, ATTN_NORM);
 
-	m_MonsterState = 31;
-	m_flNextAttack = GlobalTime() + 1.0f;
+	// leap after a second
+	m_MonsterState = MONSTERSTATE_ATTACK;
+	m_flNextAttack = gpGlobals->time + 1.0f;
 }
 
 //=========================================================
@@ -320,209 +261,133 @@ void CHCHeadcrab::AlertSound()
 //=========================================================
 void CHCHeadcrab::IdleSound()
 {
-	float rnd = RandomFloat(0.0f, 1.0f);
-	const char* sound;
+	float flRand = RANDOM_FLOAT(0.0f, 1.0f);
+	const char *pszSound;
 
-	if (rnd <= 0.33f)
-	{
-		sound = pIdleSounds[0];
-	}
-	else if (rnd <= 0.66f)
-	{
-		sound = pIdleSounds[1];
-	}
+	if (flRand <= 0.33f)
+		pszSound = pIdleSounds[0];
+	else if (flRand <= 0.66f)
+		pszSound = pIdleSounds[1];
 	else
-	{
-		sound = pIdleSounds[2];
-	}
+		pszSound = pIdleSounds[2];
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, sound, HEADCRAB_SOUND_VOL, HEADCRAB_ATTN_IDLE);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSound, VOL_NORM, ATTN_IDLE);
 
-	m_flNextSoundTime = GlobalTime() + RandomFloat(0.0f, 2.0f) + 3.0f;
+	m_flNextSoundTime = gpGlobals->time + RANDOM_FLOAT(0.0f, 2.0f) + 3.0f;
 }
 
 //=========================================================
-// CheckAttacks
+// CheckAttacks - leaps when the enemy is in range
 //=========================================================
-int CHCHeadcrab::CheckAttacks(entvars_t* pevEnemy, float flDist)
+int CHCHeadcrab::CheckAttacks(entvars_t *pevEnemy, float flDist)
 {
 	if (!pevEnemy)
-		return 0;
+		return FALSE;
 
-	if (!CheckRangeAttack(pevEnemy) || flDist > HEADCRAB_ATTACK_DIST)
-		return 0;
+	if (!CheckRangeAttack(pevEnemy) || flDist > HEADCRAB_MAX_ATTACK_DIST)
+		return FALSE;
 
-	m_IdealMonsterState = 7;
+	m_IdealMonsterState = MONSTERSTATE_COMBAT;
 	SetThink(&CHCHeadcrab::LeapAttackThink);
-	return 1;
+	return TRUE;
 }
 
 //=========================================================
-// LeapAttackTouch
-//
-// Installed via SetTouch by LeapAttackThink while the headcrab is
-// airborne.  The base Touch dispatcher (CBaseEntity::Touch) forwards
-// the entity that was hit to this callback.
+// LeapAttackTouch - bites whatever the leap hits
 //=========================================================
-void CHCHeadcrab::LeapAttackTouch(CBaseEntity* pOther)
+void CHCHeadcrab::LeapAttackTouch(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
-
-	void* globals = gpGlobals;
-	if (!globals)
+	// gpGlobals->other is the entity we ran into
+	if (FNullEnt(gpGlobals->other))
 		return;
 
-	int otherIndex = *GlobalsInt(globals, GLOBALS_OTHER_ENTINDEX);
-	edict_t* otherEdict = otherIndex ? EnginePEntityOfEntIndex(otherIndex) : NULL;
-	entvars_t* pevOther = otherEdict ? EngineGetVarsOfEnt(otherEdict) : NULL;
-	if (!pevOther)
+	edict_t *pentOther = ENT(gpGlobals->other);
+	entvars_t *pevOther = VARS(pentOther);
+	if (pevOther->takedamage == DAMAGE_NO)
 		return;
 
-	if ((PevInt(pevOther, PEV_TAKEDAMAGE) & 0x7FFFFFFF) == 0)
-		return;
-
-	CBaseEntity* pHit = (CBaseEntity*)EngineGetPrivateData(otherEdict);
+	CBaseEntity *pHit = CBaseEntity::Instance(pentOther);
 	if (!pHit)
 		return;
 
 	if (pHit->Classify() == Classify())
 		return;
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, pBiteSounds[0], HEADCRAB_SOUND_VOL, HEADCRAB_ATTN_COMBAT);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pBiteSounds[0], VOL_NORM, ATTN_NORM);
 
-	pHit->TakeDamage(pev, pev, PevFloat(pevOther, PEV_HEALTH));
+	// the bite takes all the victim's health
+	pHit->TakeDamage(pev, pev, pevOther->health);
 
+	const Vector &vecOrigin = pev->origin;
+
+	for (int i = 0; i < HEADCRAB_BITE_STREAMS; i++)
 	{
-		const Vector& vecOrigin = PevVector(pev, PEV_ORIGIN);
-
-		for (int i = 0; i < 4; ++i)
-		{
-			EngineWriteByte(0, SVC_TEMPENTITY);
-			EngineWriteByte(0, TE_BLOODSPRITE);
-			EngineWriteCoord(0, vecOrigin.x);
-			EngineWriteCoord(0, vecOrigin.y);
-			EngineWriteCoord(0, vecOrigin.z);
-			EngineWriteCoord(0, RandomFloat(-1.0f, 1.0f));
-			EngineWriteCoord(0, RandomFloat(-1.0f, 1.0f));
-			EngineWriteCoord(0, RandomFloat(0.0f, 1.0f));
-			EngineWriteByte(0, pHit->BloodColor());
-			EngineWriteByte(0, RandomLong(80, 150));
-		}
+		WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+		WRITE_BYTE(MSG_BROADCAST, TE_BLOODSTREAM);
+		WRITE_COORD(MSG_BROADCAST, vecOrigin.x);
+		WRITE_COORD(MSG_BROADCAST, vecOrigin.y);
+		WRITE_COORD(MSG_BROADCAST, vecOrigin.z);
+		WRITE_COORD(MSG_BROADCAST, RANDOM_FLOAT(-1.0f, 1.0f));	// random upward direction
+		WRITE_COORD(MSG_BROADCAST, RANDOM_FLOAT(-1.0f, 1.0f));
+		WRITE_COORD(MSG_BROADCAST, RANDOM_FLOAT(0.0f, 1.0f));
+		WRITE_BYTE(MSG_BROADCAST, pHit->BloodColor());
+		WRITE_BYTE(MSG_BROADCAST, RANDOM_LONG(80, 150));		// speed
 	}
 }
 
 //=========================================================
-// LeapAttackThink
+// LeapAttackThink - jumps at the enemy and flies until it
+// lands, biting on touch
 //=========================================================
-void CHCHeadcrab::LeapAttackThink(CBaseEntity* pOther)
+void CHCHeadcrab::LeapAttackThink(CBaseEntity *pOther)
 {
-	SetNextThink(HEADCRAB_THINK_INTERVAL);
+	pev->nextthink = gpGlobals->time + HEADCRAB_THINK_INTERVAL;
 
-	if (m_MonsterState != 30)
+	if (m_MonsterState != MONSTERSTATE_RANGE_ATTACK)
 	{
-		m_MonsterState = 30;
-		SetActivity(30);
+		m_MonsterState = MONSTERSTATE_RANGE_ATTACK;
+		SetActivity(MONSTERSTATE_RANGE_ATTACK);
 
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineEmitSound(edict, 1, pAttackSounds[0], HEADCRAB_SOUND_VOL, HEADCRAB_ATTN_COMBAT);
+		EMIT_SOUND(ENT(pev), CHAN_WEAPON, pAttackSounds[0], VOL_NORM, ATTN_NORM);
 
-		EngineMakeVectors((const float*)&PevVector(pev, PEV_ANGLES));
+		UTIL_MakeVectors(pev->angles);
 
-		// FL_ONGROUND lives in the float-typed flags field; clear it by
-		// subtracting the bit value (matches the original).
-		PevFloat(pev, PEV_FLAGS) = PevFloat(pev, PEV_FLAGS) - 512.0f;
+		// take off
+		pev->flags -= FL_ONGROUND;
 
-		if (edict)
+		Vector vecOrigin = pev->origin;
+		vecOrigin.z += 1.0f;
+		UTIL_SetOrigin(pev, vecOrigin);
+
+		// jump up and towards the enemy
+		Vector vecJumpDir = g_vecZero;
+		if (!FNullEnt(pev->enemy))
 		{
-			Vector vecOrigin = PevVector(pev, PEV_ORIGIN);
-			vecOrigin.z = vecOrigin.z + 1.0f;
-			EngineSetOrigin(edict, (const float*)&vecOrigin);
+			vecJumpDir = VARS(pev->enemy)->origin - pev->origin;
+
+			float flLength = vecJumpDir.Length();
+			if (flLength != 0.0f)
+				vecJumpDir = vecJumpDir * (1.0f / flLength);
 		}
 
-		Vector vecJumpDir;
-		vecJumpDir.x = 0.0f;
-		vecJumpDir.y = 0.0f;
-		vecJumpDir.z = 0.0f;
-
-		entvars_t* pevEnemy = EnemyVars(pev);
-		if (pevEnemy)
-		{
-			vecJumpDir.x = PevVector(pevEnemy, PEV_ORIGIN).x - PevVector(pev, PEV_ORIGIN).x;
-			vecJumpDir.y = PevVector(pevEnemy, PEV_ORIGIN).y - PevVector(pev, PEV_ORIGIN).y;
-			vecJumpDir.z = PevVector(pevEnemy, PEV_ORIGIN).z - PevVector(pev, PEV_ORIGIN).z;
-			VecNormalize((float*)&vecJumpDir);
-		}
-
-		void* globals = gpGlobals;
-		const float* up = GlobalsUp(globals);
-
-		PevVector(pev, PEV_VELOCITY).x = ((up ? up[0] : 0.0f) + vecJumpDir.x) * 250.0f;
-		PevVector(pev, PEV_VELOCITY).y = ((up ? up[1] : 0.0f) + vecJumpDir.y) * 250.0f;
-		PevVector(pev, PEV_VELOCITY).z = ((up ? up[2] : 0.0f) + vecJumpDir.z) * 250.0f;
+		pev->velocity = (gpGlobals->v_up + vecJumpDir) * HEADCRAB_LEAP_SPEED;
 
 		SetTouch(&CHCHeadcrab::LeapAttackTouch);
 	}
 
 	AdvanceAnimation(HEADCRAB_THINK_INTERVAL);
 
-	{
-		entvars_t* pevEnemy = EnemyVars(pev);
-		if (pevEnemy)
-			UpdateEnemyInfo(pevEnemy);
-	}
+	if (!FNullEnt(pev->enemy))
+		UpdateEnemyInfo(VARS(pev->enemy));
 
-	if ((((int)PevFloat(pev, PEV_FLAGS)) & FL_ONGROUND) != 0)
+	// landed
+	if (((int)pev->flags & FL_ONGROUND) != 0)
 	{
 		SetTouch(&CBaseEntity::SUB_DoNothing);
 		SetThink(&CBaseMonster::MonsterThink);
-		m_flNextAttack = GlobalTime() + 4.0f;
+		m_flNextAttack = gpGlobals->time + HEADCRAB_ATTACK_DELAY;
 		m_MonsterState = m_IdealMonsterState;
 	}
 }
 
-//=========================================================
-// Death tail-calls the shared CBaseMonster::SetDeathActivity
-// which is implemented in basemonster.cpp; there is no
-// headcrab-specific copy in the binary, so we reuse the inherited helper.
-//=========================================================
-
-//=========================================================
-// TakeDamage routes through the shared CBaseMonster::TakeDamage
-// (vtable slot 17), which raises Pain / Death.
-//=========================================================
-
-//=========================================================
-// monster_headcrab
-//=========================================================
-DLLEXPORT void monster_headcrab(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 336);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 336);
-
-		CHCHeadcrab* monster = new (privateData) CHCHeadcrab();
-		monster->pev = entvars;
-		gpGlobals = entvars->pSystemGlobals;
-	}
-}
+LINK_ENTITY_TO_CLASS(monster_headcrab, CHCHeadcrab);

@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,44 +12,54 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// Bullchicken - Bullsquid monster
+// Bullchicken - spits at its enemies
 //=========================================================
 
-#include <stdlib.h>
-#include <string.h>
-#include <new>
-#include "basemonster.h"
-#include "enginefuncs.h"
-#include "hl_exports.h"
+#include "extdll.h"
+#include "util.h"
+#include "cbase.h"
 #include "monsters.h"
-#include "utils.h"
 
 //=========================================================
 // monster-specific DEFINE's
 //=========================================================
-
+#define BULLCHICKEN_HEALTH			50.0f
+#define BULLCHICKEN_BLOOD_COLOR		22
 #define BULLCHICKEN_THINK_INTERVAL	0.1f
 #define BULLCHICKEN_MAX_ATTACK_DIST	1024.0f
+#define BULLCHICKEN_ATTACK_DELAY	4.0f	// between two spits
 
+// where the spit leaves the mouth, from the origin
+#define BULLCHICKEN_MOUTH_DIST		64.0f
+#define BULLCHICKEN_MOUTH_HEIGHT	48.0f
+
+#define BULLCHICKEN_SPIT_SPEED		600.0f
+#define BULLCHICKEN_SPIT_LIFT		200.0f	// upward speed added to the spit
 #define BULLCHICKEN_SPIT_DAMAGE		15.0f
 
-#define BULLCHICKEN_VOL				1.0f
-#define BULLCHICKEN_ATTN_IDLE		2.0f
-#define BULLCHICKEN_ATTN_COMBAT		0.8f
+// the spray of goo that goes with the spit
+#define BULLCHICKEN_SPRAY_STREAMS	4
+#define BULLCHICKEN_SPRAY_SPREAD	0.6f
+#define BULLCHICKEN_SPRAY_COLOR		22
+#define BULLCHICKEN_SPRAY_SPEED		400		// WRITE_BYTE sends the low byte: 144
 
+// anim events
+#define BC_AE_SPIT					1
 
-#define TE_SPRITE_SPRAY				101
+// bullchik.mdl sequences
+enum
+{
+	BC_SEQ_WALK = 0,			// also the other idles
+	BC_SEQ_RUN,
+	BC_SEQ_FLINCH,
+	BC_SEQ_IDLE,
+	BC_SEQ_SPIT,
+	BC_SEQ_DIE = 6,
+	BC_SEQ_SPAWN,				// set by Spawn, until the first think
+};
 
-static const char kBullchickenModel[] = "models/bullchik.mdl";
-static const char kSpitModel[] = "models/spit.mdl";
-
-//=========================================================
-// Sound Table
-//=========================================================
-
-static const char* pPainSounds[] =
+static const char *pPainSounds[] =
 {
 	"bullchicken/bc_pain1.wav",
 	"bullchicken/bc_pain2.wav",
@@ -57,7 +67,7 @@ static const char* pPainSounds[] =
 	"bullchicken/bc_pain4.wav",
 };
 
-static const char* pIdleSounds[] =
+static const char *pIdleSounds[] =
 {
 	"bullchicken/bc_idle1.wav",
 	"bullchicken/bc_idle2.wav",
@@ -66,14 +76,14 @@ static const char* pIdleSounds[] =
 	"bullchicken/bc_idle5.wav",
 };
 
-static const char* pAttackSounds[] =
+static const char *pAttackSounds[] =
 {
 	"bullchicken/bc_attack1.wav",
 	"bullchicken/bc_attack2.wav",
 	"bullchicken/bc_attack3.wav",
 };
 
-static const char* pDieSounds[] =
+static const char *pDieSounds[] =
 {
 	"bullchicken/bc_die1.wav",
 	"bullchicken/bc_die2.wav",
@@ -83,152 +93,101 @@ static const char* pDieSounds[] =
 //=========================================================
 // Bullchicken's spit projectile
 //=========================================================
-
 class CSquidSpit : public CBaseMonster
 {
 public:
-	void Init(entvars_t* pevOwner);
-	void Touch(CBaseEntity* pOther);
+	void Init(entvars_t *pevOwner);
+	void Touch(CBaseEntity *pOther);
 
-private:
-	void SpitThink(CBaseEntity* pOther);
+	void SpitThink(CBaseEntity *pOther);
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CSquidSpit) <= 336, CSquidSpit_private_data_size);
-
 //=========================================================
-// Init
+// Init - launches the spit from pevOwner's mouth
 //=========================================================
-void CSquidSpit::Init(entvars_t* pevOwner)
+void CSquidSpit::Init(entvars_t *pevOwner)
 {
-	if (!pev || !pevOwner)
+	if (!pevOwner)
 		return;
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (!edict)
-		return;
+	UTIL_MakeVectors(pevOwner->angles);
 
-	EngineMakeVectors(VecPtr(PevVector(pevOwner, PEV_ANGLES)));
+	pev->movetype = MOVETYPE_TOSS;
+	pev->solid = SOLID_BBOX;
+	SET_MODEL(ENT(pev), "models/spit.mdl");
+	UTIL_SetSize(pev, Vector(-6, -6, -6), Vector(6, 6, 6));
 
-	PevFloat(pev, PEV_MOVETYPE) = 6.0f;
-	PevFloat(pev, PEV_SOLID) = 2.0f;
-	EngineSetModel(edict, kSpitModel);
+	pev->owner = OFFSET(pevOwner);
 
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 6.0f, 6.0f, 6.0f);
-		VecSet(mins, -6.0f, -6.0f, -6.0f);
-		EngineSetSize(edict, mins, maxs);
-	}
+	Vector vecOrigin = pevOwner->origin;
+	vecOrigin.z += BULLCHICKEN_MOUTH_HEIGHT;
+	vecOrigin += gpGlobals->v_forward * BULLCHICKEN_MOUTH_DIST;
+	pev->origin = vecOrigin;
 
-	PevInt(pev, PEV_OWNER_ENTINDEX) = EngineIndexOfEdict(EdictFromEntvars(pevOwner));
-
-	void* globals = gpGlobals;
-	const float* forward = GlobalsForward(globals);
-	const float* up = GlobalsUp(globals);
-
-	const float* ownerOrigin = VecPtr(PevVector(pevOwner, PEV_ORIGIN));
-	float spitOrigin[3];
-	spitOrigin[0] = (forward ? forward[0] : 0.0f) * 64.0f + ownerOrigin[0];
-	spitOrigin[1] = (forward ? forward[1] : 0.0f) * 64.0f + ownerOrigin[1];
-	spitOrigin[2] = ownerOrigin[2] + 48.0f + (forward ? forward[2] : 0.0f) * 64.0f;
-	VecCopy(VecPtr(PevVector(pev, PEV_ORIGIN)), spitOrigin);
-
-	float* velocity = VecPtr(PevVector(pev, PEV_VELOCITY));
-	velocity[0] = (forward ? forward[0] : 0.0f) * 600.0f + (up ? up[0] : 0.0f) * 200.0f;
-	velocity[1] = (forward ? forward[1] : 0.0f) * 600.0f + (up ? up[1] : 0.0f) * 200.0f;
-	velocity[2] = (up ? up[2] : 0.0f) * 200.0f + (forward ? forward[2] : 0.0f) * 600.0f;
-
-	{
-		float angles[3];
-		EngineVecToAngles(velocity, angles);
-		VecCopy(VecPtr(PevVector(pev, PEV_ANGLES)), angles);
-	}
+	pev->velocity = gpGlobals->v_forward * BULLCHICKEN_SPIT_SPEED + gpGlobals->v_up * BULLCHICKEN_SPIT_LIFT;
+	pev->angles = UTIL_VecToAngles(pev->velocity);
 
 	SetThink(&CSquidSpit::SpitThink);
-	PevInt(pev, PEV_SEQUENCE) = 0;
-	ResetSequenceInfo(0.1f);
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
+	pev->sequence = 0;
+	ResetSequenceInfo(BULLCHICKEN_THINK_INTERVAL);
+	pev->nextthink = gpGlobals->time + BULLCHICKEN_THINK_INTERVAL;
 
 	SetTouch(&CSquidSpit::Touch);
 }
 
 //=========================================================
-// SpitThink
+// SpitThink - animates and points along the flight path
 //=========================================================
-void CSquidSpit::SpitThink(CBaseEntity* pOther)
+void CSquidSpit::SpitThink(CBaseEntity *pOther)
 {
-	if (!pev)
-		return;
+	pev->nextthink = gpGlobals->time + BULLCHICKEN_THINK_INTERVAL;
+	AdvanceAnimation(BULLCHICKEN_THINK_INTERVAL);
 
-	void* globals = gpGlobals;
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
-	AdvanceAnimation(0.1f);
-
-	float angles[3];
-	EngineVecToAngles(VecPtr(PevVector(pev, PEV_VELOCITY)), angles);
-	VecCopy(VecPtr(PevVector(pev, PEV_ANGLES)), angles);
+	pev->angles = UTIL_VecToAngles(pev->velocity);
 }
 
 //=========================================================
-// Touch
+// Touch - hurts what it hits, then goes away
 //=========================================================
-void CSquidSpit::Touch(CBaseEntity* pOther)
+void CSquidSpit::Touch(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
+	// gpGlobals->other is the entity we ran into
+	EOFFSET eoffsetOther = gpGlobals->other;
+	edict_t *pentOther = ENT(eoffsetOther);
+	entvars_t *pevOther = VARS(pentOther);
 
-	if (!pev)
+	// passes through the bullchicken that spat it
+	if (eoffsetOther == pev->owner)
 		return;
 
-	void* globals = gpGlobals;
-	if (!globals)
-		return;
-
-	int otherIndex = *GlobalsInt(globals, GLOBALS_OTHER_ENTINDEX);
-	edict_t* otherEdict = EnginePEntityOfEntIndex(otherIndex);
-	entvars_t* pevOther = otherEdict ? EngineGetVarsOfEnt(otherEdict) : NULL;
-
-	if (otherIndex == PevInt(pev, PEV_OWNER_ENTINDEX))
-		return;
-
-	if (pevOther && (PevInt(pevOther, PEV_TAKEDAMAGE) & 0x7FFFFFFF) != 0)
+	if (pevOther->takedamage != DAMAGE_NO)
 	{
-		CBaseEntity* pHit = (CBaseEntity*)EngineGetPrivateData(otherEdict);
+		CBaseEntity *pHit = CBaseEntity::Instance(pentOther);
 		if (pHit)
 			pHit->TakeDamage(pev, pev, BULLCHICKEN_SPIT_DAMAGE);
 	}
 
-	PevInt(pev, PEV_MODELINDEX) = 0;
+	// hide it, remove it on the next think
+	pev->modelindex = 0;
 	SetThink(&CBaseEntity::SUB_Remove);
-
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
+	pev->nextthink = gpGlobals->time + BULLCHICKEN_THINK_INTERVAL;
 }
-
-//=========================================================
-// CBullchicken
-//=========================================================
 
 class CBullchicken : public CBaseMonster
 {
 public:
 	void Spawn();
 	int Classify();
-
-private:
 	void SetActivity(int activity);
 	void AlertSound();
 	void IdleSound();
-	int CheckAttacks(entvars_t* pevEnemy, float flDist);
+	int CheckAttacks(entvars_t *pevEnemy, float flDist);
+	void Pain(float flDamage);
+	void Death(int iDeathType);
 
-	void Pain(float flDamage);		// vtable slot 13
-	void BigFlinchThink(CBaseEntity* pOther);
-	void Death(int gibType);		// vtable slot 14
-
-	void SpitAttackThink(CBaseEntity* pOther);
+	void BigFlinchThink(CBaseEntity *pOther);
+	void SpitAttackThink(CBaseEntity *pOther);
 };
-
-HL_COMPILE_TIME_ASSERT(sizeof(CBullchicken) <= 336, CBullchicken_private_data_size);
 
 //=========================================================
 // Spawn
@@ -237,47 +196,35 @@ void CBullchicken::Spawn()
 {
 	int i;
 
-	for (i = 0; i < (int)ARRAYSIZE(pDieSounds); ++i)
-		EnginePrecacheSound(pDieSounds[i]);
+	for (i = 0; i < (int)ARRAYSIZE(pDieSounds); i++)
+		PRECACHE_SOUND(pDieSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pAttackSounds); ++i)
-		EnginePrecacheSound(pAttackSounds[i]);
+	for (i = 0; i < (int)ARRAYSIZE(pAttackSounds); i++)
+		PRECACHE_SOUND(pAttackSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pIdleSounds); ++i)
-		EnginePrecacheSound(pIdleSounds[i]);
+	for (i = 0; i < (int)ARRAYSIZE(pIdleSounds); i++)
+		PRECACHE_SOUND(pIdleSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pPainSounds); ++i)
-		EnginePrecacheSound(pPainSounds[i]);
+	for (i = 0; i < (int)ARRAYSIZE(pPainSounds); i++)
+		PRECACHE_SOUND(pPainSounds[i]);
 
-	EnginePrecacheModel(kBullchickenModel);
-	EnginePrecacheModel(kSpitModel);
+	PRECACHE_MODEL("models/bullchik.mdl");
+	PRECACHE_MODEL("models/spit.mdl");
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineSetModel(edict, kBullchickenModel);
+	SET_MODEL(ENT(pev), "models/bullchik.mdl");
+	UTIL_SetSize(pev, Vector(-32, -32, 0), Vector(32, 32, 64));
 
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 32.0f, 32.0f, 64.0f);
-		VecSet(mins, -32.0f, -32.0f, 0.0f);
-		if (edict)
-			EngineSetSize(edict, mins, maxs);
-	}
-
-	PevFloat(pev, PEV_SOLID) = 3.0f;
-	PevFloat(pev, PEV_MOVETYPE) = 4.0f;
-	PevFloat(pev, PEV_STUCK) = 0.0f;
-	PevFloat(pev, PEV_HEALTH) = 50.0f;
-	PevFloat(pev, PEV_YAWSPEED) = 5.0f;
-	PevInt(pev, PEV_SEQUENCE) = 7;
+	pev->solid = SOLID_SLIDEBOX;
+	pev->movetype = MOVETYPE_STEP;
+	pev->effects = 0;
+	pev->health = BULLCHICKEN_HEALTH;
+	pev->yaw_speed = 5.0f;
+	pev->sequence = BC_SEQ_SPAWN;
 
 	m_flDistTooFar = 512.0f;
-	m_bloodColor = 22;
+	m_bloodColor = BULLCHICKEN_BLOOD_COLOR;
 
-	// The binary: pev->nextthink = RandomFloat(0,0.5) + pev->nextthink + 0.5
-	// (adds the EXISTING nextthink value, not gpGlobals->time).
-	PevFloat(pev, PEV_NEXTTHINK) = RandomFloat(0.0f, 0.5f) + PevFloat(pev, PEV_NEXTTHINK) + 0.5f;
+	pev->nextthink = RANDOM_FLOAT(0.0f, 0.5f) + pev->nextthink + 0.5f;
 	SetThink(&CBaseMonster::WalkMonsterStart);
 }
 
@@ -286,78 +233,67 @@ void CBullchicken::Spawn()
 //=========================================================
 int CBullchicken::Classify()
 {
-	return 7;
+	return CLASS_BULLCHICKEN;
 }
 
 //=========================================================
-// SetActivity
+// SetActivity - plays the sequence for a monster state
 //=========================================================
 void CBullchicken::SetActivity(int activity)
 {
-	int sequence;
+	int iSequence;
 
 	switch (activity)
 	{
-	case 1:
-		sequence = 3;
+	case MONSTERSTATE_IDLE:
+	case MONSTERSTATE_COMBAT_IDLE:
+	case MONSTERSTATE_COMBAT:
+		iSequence = BC_SEQ_IDLE;
 		break;
-	case 2:
-		sequence = 0;
+	case MONSTERSTATE_IDLE2:
+	case MONSTERSTATE_IDLE3:
+	case MONSTERSTATE_WALK:
+	case MONSTERSTATE_MELEE_ATTACK:
+		iSequence = BC_SEQ_WALK;
 		break;
-	case 3:
-		sequence = 0;
+	case MONSTERSTATE_CHASE:
+		iSequence = BC_SEQ_RUN;
 		break;
-	case 4:
-		sequence = 0;
+	case MONSTERSTATE_RANGE_ATTACK:
+		iSequence = BC_SEQ_SPIT;
 		break;
-	case 6:
-		sequence = 3;
+	case MONSTERSTATE_FLINCH:
+		iSequence = BC_SEQ_FLINCH;
 		break;
-	case 7:
-		sequence = 3;
-		break;
-	case 8:
-		sequence = 1;
-		break;
-	case 29:
-		sequence = 0;
-		break;
-	case 30:
-		sequence = 4;
-		break;
-	case 34:
-		sequence = 2;
-		break;
-	case 35:
-		sequence = 6;
+	case MONSTERSTATE_DIE1:
+		iSequence = BC_SEQ_DIE;
 		break;
 	default:
-		EngineAlertMessage(1, "BullChicken's monster state is bogus: %d", activity);
+		ALERT(at_console, "BullChicken's monster state is bogus: %d", activity);
 		return;
 	}
 
-	if (PevInt(pev, PEV_SEQUENCE) == sequence)
+	if (pev->sequence == iSequence)
 		return;
 
-	PevInt(pev, PEV_SEQUENCE) = sequence;
-	PevFloat(pev, PEV_FRAME) = 0.0f;
-	ResetSequenceInfo(0.1f);
+	pev->sequence = iSequence;
+	pev->frame = 0;
+	ResetSequenceInfo(BULLCHICKEN_THINK_INTERVAL);
 
-	volatile int validatedSequence = sequence;
-	if (validatedSequence < 0 || validatedSequence > 6)
+	if (pev->sequence < 0 || pev->sequence > BC_SEQ_DIE)
 	{
-		EngineAlertMessage(1, "Bogus BullChicken anim: %d", validatedSequence);
-		m_flFrameRate = 0.0f;
-		m_flGroundSpeed = 0.0f;
+		ALERT(at_console, "Bogus BullChicken anim: %d", pev->sequence);
+		m_flFrameRate = 0;
+		m_flGroundSpeed = 0;
 	}
 }
 
 //=========================================================
-// AlertSound
+// AlertSound - no sound, just gets ready to fight
 //=========================================================
 void CBullchicken::AlertSound()
 {
-	m_MonsterState = 6;
+	m_MonsterState = MONSTERSTATE_COMBAT_IDLE;
 }
 
 //=========================================================
@@ -365,83 +301,59 @@ void CBullchicken::AlertSound()
 //=========================================================
 void CBullchicken::IdleSound()
 {
-	const char* sound;
-
-	switch (rand() % 5)
+	switch (RANDOM_LONG(0, 4))
 	{
 	case 0:
-		sound = pIdleSounds[0];
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pIdleSounds[0], VOL_NORM, ATTN_IDLE);
 		break;
 	case 1:
-		sound = pIdleSounds[1];
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pIdleSounds[1], VOL_NORM, ATTN_IDLE);
 		break;
 	case 2:
-		sound = pIdleSounds[2];
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pIdleSounds[2], VOL_NORM, ATTN_IDLE);
 		break;
 	case 3:
-		sound = pIdleSounds[3];
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pIdleSounds[3], VOL_NORM, ATTN_IDLE);
 		break;
 	case 4:
-		sound = pIdleSounds[4];
-		break;
-	default:
-		sound = NULL;
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pIdleSounds[4], VOL_NORM, ATTN_IDLE);
 		break;
 	}
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (sound && edict)
-		EngineEmitSound(edict, 2, sound, BULLCHICKEN_VOL, BULLCHICKEN_ATTN_IDLE);
-
-	m_flNextSoundTime = RandomFloat(0.0f, 2.0f) + GlobalTime() + 3.0f;
+	m_flNextSoundTime = RANDOM_FLOAT(0.0f, 2.0f) + gpGlobals->time + 3.0f;
 }
 
 //=========================================================
-// Pain - vtable slot 13
-// invoked from the shared TakeDamage
+// Pain - a pain sound, then maybe a flinch
 //=========================================================
 void CBullchicken::Pain(float flDamage)
 {
-	HL_UNUSED(flDamage);
+	pev->nextthink = gpGlobals->time + BULLCHICKEN_THINK_INTERVAL;
 
-	if (!pev)
-		return;
-
-	void* globals = gpGlobals;
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
-
-	if (m_MonsterState == 1 || m_MonsterState == 4)
+	if (m_MonsterState == MONSTERSTATE_IDLE || m_MonsterState == MONSTERSTATE_WALK)
 		AlertSound();
 
-	if (m_MonsterState != 18)
+	if (m_MonsterState != MONSTERSTATE_PAIN)
 	{
-		const char* sound;
-		switch (rand() % 4)
+		switch (RANDOM_LONG(0, 3))
 		{
 		case 0:
-			sound = pPainSounds[0];
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, pPainSounds[0], VOL_NORM, ATTN_NORM);
 			break;
 		case 1:
-			sound = pPainSounds[1];
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, pPainSounds[1], VOL_NORM, ATTN_NORM);
 			break;
 		case 2:
-			sound = pPainSounds[2];
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, pPainSounds[2], VOL_NORM, ATTN_NORM);
 			break;
 		case 3:
-			sound = pPainSounds[3];
-			break;
-		default:
-			sound = NULL;
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, pPainSounds[3], VOL_NORM, ATTN_NORM);
 			break;
 		}
 
-		edict_t* edict = EdictFromEntvars(pev);
-		if (sound && edict)
-			EngineEmitSound(edict, 2, sound, BULLCHICKEN_VOL, BULLCHICKEN_ATTN_COMBAT);
-
-		if ((abs(rand()) & 0xFF) % 2 == 1)
+		if (RANDOM_LONG(0, 1))
 		{
-			m_MonsterState = 7;
+			m_MonsterState = MONSTERSTATE_COMBAT;
 			SetThink(&CBaseMonster::MonsterThink);
 			return;
 		}
@@ -449,234 +361,162 @@ void CBullchicken::Pain(float flDamage)
 		SetThink(&CBullchicken::BigFlinchThink);
 	}
 
-	AdvanceAnimation(0.1f);
+	AdvanceAnimation(BULLCHICKEN_THINK_INTERVAL);
 
 	if (m_fSequenceFinished)
 		SetThink(&CBaseMonster::MonsterThink);
 }
 
 //=========================================================
-// BigFlinchThink
+// BigFlinchThink - maybe plays the flinch animation, then
+// goes back to the normal AI
 //=========================================================
-void CBullchicken::BigFlinchThink(CBaseEntity* pOther)
+void CBullchicken::BigFlinchThink(CBaseEntity *pOther)
 {
-	if (!pev)
-		return;
+	pev->nextthink = gpGlobals->time + BULLCHICKEN_THINK_INTERVAL;
 
-	void* globals = gpGlobals;
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
-
-	if (m_MonsterState != 34)
+	if (m_MonsterState != MONSTERSTATE_FLINCH)
 	{
-		const char* sound;
-		switch (rand() % 4)
+		switch (RANDOM_LONG(0, 3))
 		{
 		case 0:
-			sound = pPainSounds[0];
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, pPainSounds[0], VOL_NORM, ATTN_NORM);
 			break;
 		case 1:
-			sound = pPainSounds[1];
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, pPainSounds[1], VOL_NORM, ATTN_NORM);
 			break;
 		case 2:
-			sound = pPainSounds[2];
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, pPainSounds[2], VOL_NORM, ATTN_NORM);
 			break;
 		case 3:
-			sound = pPainSounds[3];
-			break;
-		default:
-			sound = NULL;
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, pPainSounds[3], VOL_NORM, ATTN_NORM);
 			break;
 		}
 
-		edict_t* edict = EdictFromEntvars(pev);
-		if (sound && edict)
-			EngineEmitSound(edict, 2, sound, BULLCHICKEN_VOL, BULLCHICKEN_ATTN_COMBAT);
-
-		if ((abs(rand()) & 0xFF) % 2 == 1)
+		if (RANDOM_LONG(0, 1))
 		{
 			SetThink(&CBaseMonster::MonsterThink);
 			return;
 		}
 
-		m_MonsterState = 34;
-		SetActivity(34);
+		m_MonsterState = MONSTERSTATE_FLINCH;
+		SetActivity(MONSTERSTATE_FLINCH);
 	}
 
-	GetAnimationEventFlags(0.1f);
-	AdvanceAnimation(0.1f);
+	GetAnimationEventFlags(BULLCHICKEN_THINK_INTERVAL);
+	AdvanceAnimation(BULLCHICKEN_THINK_INTERVAL);
 
 	if (m_fSequenceFinished)
 	{
-		m_MonsterState = 7;
-		SetActivity(7);
+		m_MonsterState = MONSTERSTATE_COMBAT;
+		SetActivity(MONSTERSTATE_COMBAT);
 		SetThink(&CBaseMonster::MonsterThink);
 	}
 }
 
 //=========================================================
-// Death - vtable slot 14
+// Death
 //=========================================================
-void CBullchicken::Death(int gibType)
+void CBullchicken::Death(int iDeathType)
 {
-	HL_UNUSED(gibType);
-
-	const char* sound;
-
-	switch (rand() % 3)
+	switch (RANDOM_LONG(0, 2))
 	{
 	case 0:
-		sound = pDieSounds[0];
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pDieSounds[0], VOL_NORM, ATTN_NORM);
 		break;
 	case 1:
-		sound = pDieSounds[1];
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pDieSounds[1], VOL_NORM, ATTN_NORM);
 		break;
 	case 2:
-		sound = pDieSounds[2];
-		break;
-	default:
-		sound = NULL;
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pDieSounds[2], VOL_NORM, ATTN_NORM);
 		break;
 	}
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (sound && edict)
-		EngineEmitSound(edict, 2, sound, BULLCHICKEN_VOL, BULLCHICKEN_ATTN_COMBAT);
+	// stop, then play the death animation
+	pev->velocity = g_vecZero;
 
-	// The binary copies the 3-dword.data constant at the binary
-	// (all bytes 0x00000000, i.e. g_vecZero) into pev->velocity, so the
-	// corpse stops moving before the death animation plays.
-	PevVector(pev, PEV_VELOCITY).x = 0.0f;
-	PevVector(pev, PEV_VELOCITY).y = 0.0f;
-	PevVector(pev, PEV_VELOCITY).z = 0.0f;
-
-	// The binary(this, 0): set the death activity and fall back to MonsterThink.
-	m_MonsterState = 35;
-	PevFloat(pev, PEV_IDEAL_YAW) = PevVector(pev, PEV_ANGLES).y;
+	m_MonsterState = MONSTERSTATE_DIE1;
+	pev->ideal_yaw = pev->angles.y;
 	SetActivity(m_MonsterState);
 	SetThink(&CBaseMonster::MonsterThink);
 
-	void* globals = gpGlobals;
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
+	pev->nextthink = gpGlobals->time + BULLCHICKEN_THINK_INTERVAL;
 }
 
 //=========================================================
-// CheckAttacks / CheckRangeAttack1
+// CheckAttacks - spits when the enemy is in range
 //=========================================================
-int CBullchicken::CheckAttacks(entvars_t* pevEnemy, float flDist)
+int CBullchicken::CheckAttacks(entvars_t *pevEnemy, float flDist)
 {
 	if (!CheckRangeAttack(pevEnemy) || flDist > BULLCHICKEN_MAX_ATTACK_DIST)
-		return 0;
+		return FALSE;
 
-	m_IdealMonsterState = 7;
+	m_IdealMonsterState = MONSTERSTATE_COMBAT;
 	SetThink(&CBullchicken::SpitAttackThink);
-	return 1;
+	return TRUE;
 }
 
 //=========================================================
-// SpitAttackThink
+// SpitAttackThink - plays the spit animation and launches
+// the spit on its anim event
 //=========================================================
-void CBullchicken::SpitAttackThink(CBaseEntity* pOther)
+void CBullchicken::SpitAttackThink(CBaseEntity *pOther)
 {
-	if (!pev)
-		return;
+	pev->nextthink = gpGlobals->time + BULLCHICKEN_THINK_INTERVAL;
 
-	void* globals = gpGlobals;
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
-
-	if (m_MonsterState != 30)
+	if (m_MonsterState != MONSTERSTATE_RANGE_ATTACK)
 	{
-		m_MonsterState = 30;
-		SetActivity(30);
+		m_MonsterState = MONSTERSTATE_RANGE_ATTACK;
+		SetActivity(MONSTERSTATE_RANGE_ATTACK);
 	}
 
-	int events = GetAnimationEventFlags(0.1f);
-	AdvanceAnimation(0.1f);
+	int iEvents = GetAnimationEventFlags(BULLCHICKEN_THINK_INTERVAL);
+	AdvanceAnimation(BULLCHICKEN_THINK_INTERVAL);
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineChangeYaw(edict);
+	CHANGE_YAW(ENT(pev));
 
-	if ((events & (1 << 1)) != 0)
+	if (iEvents & (1 << BC_AE_SPIT))
 	{
-		const char* sound;
-		switch (rand() % 3)
+		switch (RANDOM_LONG(0, 2))
 		{
 		case 0:
-			sound = pAttackSounds[0];
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, pAttackSounds[0], VOL_NORM, ATTN_NORM);
 			break;
 		case 1:
-			sound = pAttackSounds[1];
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, pAttackSounds[1], VOL_NORM, ATTN_NORM);
 			break;
 		case 2:
-			sound = pAttackSounds[2];
-			break;
-		default:
-			sound = NULL;
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, pAttackSounds[2], VOL_NORM, ATTN_NORM);
 			break;
 		}
 
-		if (sound && edict)
-			EngineEmitSound(edict, 2, sound, BULLCHICKEN_VOL, BULLCHICKEN_ATTN_COMBAT);
+		CSquidSpit *pSpit = GetClassPtr((CSquidSpit *)NULL);
+		pSpit->Init(pev);
 
+		// spray some goo from the mouth, halfway between forward and up
+		UTIL_MakeVectors(pev->angles);
+
+		Vector vecDir = gpGlobals->v_forward * 400.0f + gpGlobals->v_up * 400.0f;
+		float flLength = vecDir.Length();
+		if (flLength != 0.0f)
+			vecDir = vecDir * (1.0f / flLength);
+
+		Vector vecSrc = pev->origin;
+		vecSrc.z += BULLCHICKEN_MOUTH_HEIGHT;
+		vecSrc += gpGlobals->v_forward * BULLCHICKEN_MOUTH_DIST;
+
+		for (int i = 0; i < BULLCHICKEN_SPRAY_STREAMS; i++)
 		{
-			edict_t* created = EngineCreateEntity();
-			entvars_t* spitVars = created ? EngineGetVarsOfEnt(created) : NULL;
-			CSquidSpit* spit = NULL;
-
-			if (created && spitVars)
-			{
-				void* privateData = EngineGetPrivateData(created);
-				if (!privateData)
-				{
-					privateData = EngineAllocPrivateData(created, 336);
-					if (privateData)
-					{
-						memset(privateData, 0, 336);
-						spit = new (privateData) CSquidSpit();
-					}
-				}
-				else
-				{
-					spit = (CSquidSpit*)privateData;
-				}
-
-				if (spit)
-				{
-					spit->pev = spitVars;
-					spit->Init(pev);
-				}
-			}
-		}
-
-		EngineMakeVectors(VecPtr(PevVector(pev, PEV_ANGLES)));
-		globals = gpGlobals;
-		const float* forward = GlobalsForward(globals);
-		const float* up = GlobalsUp(globals);
-
-		float dir[3];
-		dir[0] = (forward ? forward[0] : 0.0f) * 400.0f + (up ? up[0] : 0.0f) * 400.0f;
-		dir[1] = (up ? up[1] : 0.0f) * 400.0f + (forward ? forward[1] : 0.0f) * 400.0f;
-		dir[2] = (up ? up[2] : 0.0f) * 400.0f + (forward ? forward[2] : 0.0f) * 400.0f;
-		VecNormalize(dir);
-
-		const float* origin = VecPtr(PevVector(pev, PEV_ORIGIN));
-		float start[3];
-		start[0] = (forward ? forward[0] : 0.0f) * 64.0f + origin[0];
-		start[1] = (forward ? forward[1] : 0.0f) * 64.0f + origin[1];
-		start[2] = origin[2] + 48.0f + (forward ? forward[2] : 0.0f) * 64.0f;
-
-		for (int i = 0; i < 4; ++i)
-		{
-			EngineWriteByte(0, SVC_TEMPENTITY);
-			EngineWriteByte(0, TE_SPRITE_SPRAY);
-			EngineWriteCoord(0, start[0]);
-			EngineWriteCoord(0, start[1]);
-			EngineWriteCoord(0, start[2]);
-			EngineWriteCoord(0, RandomFloat(-0.6f, 0.6f) + dir[0]);
-			EngineWriteCoord(0, RandomFloat(-0.6f, 0.6f) + dir[1]);
-			EngineWriteCoord(0, RandomFloat(-0.6f, 0.6f) + dir[2]);
-			EngineWriteByte(0, 22);
-			EngineWriteByte(0, 400);
+			WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+			WRITE_BYTE(MSG_BROADCAST, TE_BLOODSTREAM);
+			WRITE_COORD(MSG_BROADCAST, vecSrc.x);
+			WRITE_COORD(MSG_BROADCAST, vecSrc.y);
+			WRITE_COORD(MSG_BROADCAST, vecSrc.z);
+			WRITE_COORD(MSG_BROADCAST, RANDOM_FLOAT(-BULLCHICKEN_SPRAY_SPREAD, BULLCHICKEN_SPRAY_SPREAD) + vecDir.x);
+			WRITE_COORD(MSG_BROADCAST, RANDOM_FLOAT(-BULLCHICKEN_SPRAY_SPREAD, BULLCHICKEN_SPRAY_SPREAD) + vecDir.y);
+			WRITE_COORD(MSG_BROADCAST, RANDOM_FLOAT(-BULLCHICKEN_SPRAY_SPREAD, BULLCHICKEN_SPRAY_SPREAD) + vecDir.z);
+			WRITE_BYTE(MSG_BROADCAST, BULLCHICKEN_SPRAY_COLOR);
+			WRITE_BYTE(MSG_BROADCAST, BULLCHICKEN_SPRAY_SPEED);
 		}
 	}
 
@@ -684,44 +524,8 @@ void CBullchicken::SpitAttackThink(CBaseEntity* pOther)
 	{
 		m_MonsterState = m_IdealMonsterState;
 		SetThink(&CBaseMonster::MonsterThink);
-		m_flNextAttack = GlobalTime() + 4.0f;
+		m_flNextAttack = gpGlobals->time + BULLCHICKEN_ATTACK_DELAY;
 	}
 }
 
-//=========================================================
-// TakeDamage - bullchicken does NOT override the damage slot; the shared
-// CBaseMonster::TakeDamage (vtable slot 17) handles it and
-// on HP <= 0, routes through Killed to the Death virtual
-// (slot 14). On survival it raises the Pain virtual (slot 13).
-//=========================================================
-
-//=========================================================
-// monster_bullchicken (export)
-//=========================================================
-DLLEXPORT void monster_bullchicken(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 336);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 336);
-
-		CBullchicken* monster = new (privateData) CBullchicken();
-		monster->pev = entvars;
-		gpGlobals = entvars->pSystemGlobals;
-	}
-}
+LINK_ENTITY_TO_CLASS(monster_bullchicken, CBullchicken);

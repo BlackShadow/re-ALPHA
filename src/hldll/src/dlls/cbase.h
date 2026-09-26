@@ -61,7 +61,6 @@ class CBaseEntity
 {
 public:
 	entvars_t		*pev;			// the engine's variables for this entity
-	void			*m_pReserved;	// transitional: keeps the object layout until raw offsets are gone
 
 	ENTITYFUNCPTR	m_pfnThink;
 	ENTITYFUNCPTR	m_pfnTouch;
@@ -89,7 +88,7 @@ public:
 	virtual int		CheckAttacks(entvars_t *pevEnemy, float flDist);
 	virtual int		TakeDamage(entvars_t *pevInflictor, entvars_t *pevAttacker, float flDamage);
 
-	void FireBullets(int cShots, const float *vecDirShooting, float flSpreadRight, float flSpreadUp, int iBulletType, float flDistance);
+	void FireBullets(int cShots, const Vector &vecDirShooting, float flSpreadRight, float flSpreadUp, int iBulletType, float flDistance);
 
 	// common think/touch/use functions
 	void SUB_Remove(CBaseEntity *pOther);
@@ -106,10 +105,6 @@ public:
 	void SetUse(ENTITYFUNCPTR pfn)		{ m_pfnUse = pfn; }
 	void SetBlocked(ENTITYFUNCPTR pfn)	{ m_pfnBlocked = pfn; }
 
-	// transitional helpers, replaced by gpGlobals->time and pev->nextthink
-	float GlobalTime() const				{ return gpGlobals->time; }
-	void SetNextThink(float delay)			{ pev->nextthink = gpGlobals->time + delay; }
-
 	static CBaseEntity *Instance(edict_t *pent)		{ return (CBaseEntity *)GET_PRIVATE(pent); }
 	static CBaseEntity *Instance(entvars_t *pev)	{ return Instance(ENT(pev)); }
 	static CBaseEntity *Instance(EOFFSET eoffset)	{ return Instance(ENT(eoffset)); }
@@ -117,10 +112,6 @@ public:
 	// private data is allocated by the engine, which zero fills it
 	void *operator new(size_t stAllocateBlock, entvars_t *pev)	{ return ALLOC_PRIVATE(ENT(pev), (int)stAllocateBlock); }
 	void operator delete(void *pMem, entvars_t *pev)			{ }
-
-	// transitional: placement new for code not yet using GetClassPtr
-	void *operator new(size_t stAllocateBlock, void *pMem)		{ return pMem; }
-	void operator delete(void *pMem, void *pPlace)				{ }
 };
 
 //

@@ -20,18 +20,34 @@
 // m_afPhysicsFlags
 #define PFLAG_ONLADDER		(1<<0)
 
+// Player state carried across level changes in gpGlobals->pSpawnParms
+typedef struct
+{
+	float	items;
+	float	unused[2];
+	float	health;
+	float	armorvalue;
+	float	ammo[4];
+	float	weapon;
+	float	armortype;				// armortype * 100
+	int		iFlags;					// FL_DUCKING when the player was ducked
+	int		fLandmark;				// the level change found an info_landmark
+	char	szLandmarkName[20];
+	Vector	vecLandmarkOffset;		// player origin relative to the landmark
+	Vector	velocity;
+	Vector	angles;
+	Vector	v_angle;
+} SPAWNPARMS;
+
 class CBasePlayer : public CBaseMonster
 {
 public:
-	unsigned char	m_padding1[68];				// transitional: removed with the layout placeholders
 	float			m_flPlayerFrameRate;		// the player animates with its own sequence info
 	float			m_flPlayerGroundSpeed;
 	float			m_flAttackFinished;			// cannot fire again until this time
-	unsigned char	m_padding2[16];
 	float			m_flPauseTime;				// velocity is held at zero until this time
-	unsigned char	m_padding3[4];
+	unsigned char	m_bBloodColor;				// set at spawn, never read
 	int				m_fPlayerSequenceFinished;
-	unsigned char	m_padding4[28];
 	float			m_flNextGrenadeTime;
 	float			m_flFlashLightTime;
 	float			m_flNextUseTime;
@@ -43,43 +59,36 @@ public:
 	float			m_flTimeStepSound;
 	float			m_flTimeWeaponIdle;
 	int				m_afPhysicsFlags;
-	unsigned char	m_padding5[64];
-	int				m_iLadderStepCount;
-	int				m_iLadderPunchSide;
+	int				m_iLadderStepCount;			// climbing frames since the last climbing sound
+	int				m_iLadderPunchSide;			// the climbing view punch alternates sides
 	short			m_iLadderClimbSpeed;
 
 	CBasePlayer();
 
 	void Spawn();
 	int Classify();
-	void SetActivity(int playerAnim);
+	void SetActivity(int activity);
 	void Death(int iDeathType);
 
 	int SetAnimation(int playerAnim);
-	virtual void WaterMove();
-	virtual void UpdateWaterLevel();
+	virtual void Jump();
+	virtual void Duck();
 	virtual void PreThink();
 	virtual void PostThink();
-	int TimeBasedDamage();
 
-	void WaterMoveSplash();
+	void WaterMove();
 	void CheckWaterJump();
 	void DeadThink(CBaseEntity *pOther);
 	void PlayerClimb();
-	void FlashlightThink();
-	void FlashlightToggle();
+	void WeaponIdle();
 	void PlayerUse();
-	void PlayerImpulseCommands();
-	void ItemPreFrame();
 	void ItemPostFrame();
-	void ApplyFallDamage(float fallVel);
+	void ImpulseCommands();
+	void PrimaryAttack();
+	void ApplyFallDamage(float flFallVelocity);
 	void SwitchWeaponModel();
-	void SelectWeapon(int id);
-	void SelectWeaponReverse(int id);
-	void StudioFrameAdvance();
-	void PlayerRespawn();
+	void SelectWeapon(int iWeapon);
+	void SelectWeaponReverse(int iWeapon);
 };
-
-float GlobalsFrameTime(void *globals);
 
 #endif // PLAYER_H

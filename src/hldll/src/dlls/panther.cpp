@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,78 +12,61 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// Panther - Panther melee predator monster
+// Panther - walks around, has no attacks and no death
+// animation
 //=========================================================
 
-#include <new>
-#include <string.h>
-#include "basemonster.h"
-#include "enginefuncs.h"
-#include "hl_exports.h"
+#include "extdll.h"
+#include "util.h"
+#include "cbase.h"
 #include "monsters.h"
-#include "utils.h"
 
 //=========================================================
-// monster-specific constants
+// monster-specific DEFINE's
 //=========================================================
+#define PANTHER_HEALTH				50.0f
+#define PANTHER_BLOOD_COLOR			146
+#define PANTHER_THINK_INTERVAL		0.1f
 
-#define PANTHER_THINK_INTERVAL	0.1f
-
-static const char kPantherModel[] = "models/panther.mdl";
-
-//=========================================================
-// CPanther
-//=========================================================
+// panther.mdl sequences
+enum
+{
+	PANTHER_SEQ_WALK = 0,		// the only one SetActivity uses
+	PANTHER_SEQ_SPAWN = 2,		// set by Spawn, until the first think
+};
 
 class CPanther : public CBaseMonster
 {
 public:
 	void Spawn();
 	int Classify();
-
-private:
 	void SetActivity(int activity);
-	void Death(int gibType);		// vtable slot 14
+	void Death(int iDeathType);
 
-	void RemoveThink(CBaseEntity* pOther);
+	void RemoveThink(CBaseEntity *pOther);
 };
-
-HL_COMPILE_TIME_ASSERT(sizeof(CPanther) <= 336, CPanther_private_data_size);
 
 //=========================================================
 // Spawn
 //=========================================================
 void CPanther::Spawn()
 {
-	EnginePrecacheModel(kPantherModel);
+	PRECACHE_MODEL("models/panther.mdl");
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineSetModel(edict, kPantherModel);
+	SET_MODEL(ENT(pev), "models/panther.mdl");
+	UTIL_SetSize(pev, Vector(-32, -32, 0), Vector(32, 32, 64));
 
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 32.0f, 32.0f, 64.0f);
-		VecSet(mins, -32.0f, -32.0f, 0.0f);
-		if (edict)
-			EngineSetSize(edict, mins, maxs);
-	}
+	pev->solid = SOLID_SLIDEBOX;
+	pev->movetype = MOVETYPE_STEP;
+	pev->effects = 0;
+	pev->health = PANTHER_HEALTH;
+	pev->yaw_speed = 10.0f;
+	pev->sequence = PANTHER_SEQ_SPAWN;
 
-	PevFloat(pev, PEV_SOLID) = 3.0f;
-	PevFloat(pev, PEV_MOVETYPE) = 4.0f;
-	PevFloat(pev, PEV_STUCK) = 0.0f;
-	PevFloat(pev, PEV_HEALTH) = 50.0f;
-	PevFloat(pev, PEV_YAWSPEED) = 10.0f;
-	PevInt(pev, PEV_SEQUENCE) = 2;
+	m_bloodColor = PANTHER_BLOOD_COLOR;
 
-	m_bloodColor = 146;
-
-	// nextthink = nextthink + RandomFloat(0,0.5) + 0.5 (additive on the
-	// engine-seeded nextthink, NOT GlobalTime()+delay).
-	PevFloat(pev, PEV_NEXTTHINK) = PevFloat(pev, PEV_NEXTTHINK) + RandomFloat(0.0f, 0.5f) + 0.5f;
+	pev->nextthink = pev->nextthink + RANDOM_FLOAT(0.0f, 0.5f) + 0.5f;
 	SetThink(&CBaseMonster::WalkMonsterStart);
 }
 
@@ -92,96 +75,61 @@ void CPanther::Spawn()
 //=========================================================
 int CPanther::Classify()
 {
-	return 9;
+	return CLASS_PANTHER;
 }
 
 //=========================================================
-// SetActivity
+// SetActivity - plays the sequence for a monster state
 //=========================================================
 void CPanther::SetActivity(int activity)
 {
-	int sequence;
+	int iSequence;
 
 	switch (activity)
 	{
-	case 1:
-	case 2:
-	case 3:
-	case 4:
-	case 8:
-	case 29:
-		sequence = 0;
+	case MONSTERSTATE_IDLE:
+	case MONSTERSTATE_IDLE2:
+	case MONSTERSTATE_IDLE3:
+	case MONSTERSTATE_WALK:
+	case MONSTERSTATE_CHASE:
+	case MONSTERSTATE_MELEE_ATTACK:
+		iSequence = PANTHER_SEQ_WALK;
 		break;
 
 	default:
-		EngineAlertMessage(3, "Panther's monster state is bogus: %d", activity);
+		ALERT(at_error, "Panther's monster state is bogus: %d", activity);
 		return;
 	}
 
-	if (PevInt(pev, PEV_SEQUENCE) == sequence)
+	if (pev->sequence == iSequence)
 		return;
 
-	PevInt(pev, PEV_SEQUENCE) = sequence;
-	PevFloat(pev, PEV_FRAME) = 0.0f;
+	pev->sequence = iSequence;
+	pev->frame = 0;
 	ResetSequenceInfo(PANTHER_THINK_INTERVAL);
 
-	volatile int validatedSequence = sequence;
-	if (validatedSequence != 0)
+	if (pev->sequence != PANTHER_SEQ_WALK)
 	{
-		EngineAlertMessage(3, "Bogus Panther anim: %d", validatedSequence);
-		m_flFrameRate = 0.0f;
-		m_flGroundSpeed = 0.0f;
+		ALERT(at_error, "Bogus Panther anim: %d", pev->sequence);
+		m_flFrameRate = 0;
+		m_flGroundSpeed = 0;
 	}
 }
 
 //=========================================================
-// Death - vtable slot 14
-// The panther has no death animation; it just removes itself.
+// Death - no death animation, removed on the next think
 //=========================================================
-void CPanther::Death(int gibType)
+void CPanther::Death(int iDeathType)
 {
-	HL_UNUSED(gibType);
-
 	SetThink(&CBaseEntity::SUB_Remove);
 }
 
 //=========================================================
-// RemoveThink
+// RemoveThink - not used
 //=========================================================
-void CPanther::RemoveThink(CBaseEntity* pOther)
+void CPanther::RemoveThink(CBaseEntity *pOther)
 {
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineRemoveEntity(edict);
+	REMOVE_ENTITY(ENT(pev));
 }
 
-//=========================================================
-// monster_panther
-//=========================================================
-DLLEXPORT void monster_panther(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 336);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 336);
-
-		CPanther* monster = new (privateData) CPanther();
-		monster->pev = entvars;
-		gpGlobals = entvars->pSystemGlobals;
-	}
-}
+LINK_ENTITY_TO_CLASS(monster_panther, CPanther);
