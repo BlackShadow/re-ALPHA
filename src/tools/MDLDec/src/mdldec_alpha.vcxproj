@@ -172,7 +172,7 @@
   <ItemGroup>
     <ClInclude Include="mdldec.h" />
     <ClInclude Include="..\hlsdk\mathlib.h" />
-    <ClInclude Include="..\hlsdk\studio_alpha.h" />
+    <ClInclude Include="..\hlsdk\studio.h" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

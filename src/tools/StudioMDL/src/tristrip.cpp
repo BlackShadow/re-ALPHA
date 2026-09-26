@@ -20,6 +20,7 @@
 #include <string.h>
 #include <time.h>
 #include "cmdlib.h"
+#include "mathlib.h"
 
 #define Vector vec3_t
 #include "studio.h"

@@ -42,7 +42,7 @@
     <ClInclude Include="..\hlsdk\mathlib.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\hlsdk\studio_alpha.h">
+    <ClInclude Include="..\hlsdk\studio.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
