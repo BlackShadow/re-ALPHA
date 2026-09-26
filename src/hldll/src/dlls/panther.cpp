@@ -142,7 +142,7 @@ void CPanther::Death(int gibType)
 {
 	HL_UNUSED(gibType);
 
-	SetRemoveThink();
+	SetThink(&CBaseEntity::SUB_Remove);
 }
 
 //=========================================================
@@ -182,6 +182,6 @@ DLLEXPORT void monster_panther(entvars_t* pev)
 
 		CPanther* monster = new (privateData) CPanther();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

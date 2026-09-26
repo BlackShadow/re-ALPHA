@@ -61,10 +61,10 @@ enum
 //=========================================================
 enum
 {
-	MOVETYPE_NONE	= 0,
-	MOVETYPE_PUSH	= 7,
-	SOLID_NOT	= 0,
-	SOLID_BSP	= 4,
+
+
+
+
 };
 
 //=========================================================
@@ -966,7 +966,7 @@ DLLEXPORT void func_wall(entvars_t* pev)
 
 		CFuncWall* self = new (privateData) CFuncWall();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -997,7 +997,7 @@ DLLEXPORT void func_illusionary(entvars_t* pev)
 
 		CFuncIllusionary* self = new (privateData) CFuncIllusionary();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -1028,7 +1028,7 @@ DLLEXPORT void func_rotating(entvars_t* pev)
 
 		CFuncRotating* self = new (privateData) CFuncRotating();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -1059,6 +1059,6 @@ DLLEXPORT void func_pendulum(entvars_t* pev)
 
 		CFuncPendulum* self = new (privateData) CFuncPendulum();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

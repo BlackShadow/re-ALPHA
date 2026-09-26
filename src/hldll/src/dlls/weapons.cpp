@@ -38,19 +38,19 @@
 
 enum
 {
-	SVC_TEMPENTITY		= 23,
-	TE_EXPLOSION		= 3,
-	TE_DECAL			= 104,
+
+
+
 	TE_ALPHABREAKMODEL	= 107,
 };
 
 enum
 {
-	CONTENTS_SOLID		= -2,
-	MOVETYPE_TOSS		= 6,
-	MOVETYPE_BOUNCE		= 10,
-	SOLID_NOT			= 0,
-	SOLID_BBOX			= 2,
+
+
+
+
+
 };
 
 // entvars_t byte offsets used here that have no named PEV_ constant yet.
@@ -274,12 +274,12 @@ void CSprayerRepeat::RepeatThink(CBaseEntity* pOther)
 	if (!pev)
 		return;
 
-	SprayerPaintDecal(pev, m_pGlobals, m_iSprayCount + 6);
+	SprayerPaintDecal(pev, gpGlobals, m_iSprayCount + 6);
 
 	unsigned char prev = m_iSprayCount;
 	m_iSprayCount = (unsigned char)(prev + 1);
 	if (prev >= 5)
-		SetRemoveThink();
+		SetThink(&CBaseEntity::SUB_Remove);
 
 	SetNextThink(0.1f);
 }
@@ -311,9 +311,9 @@ void CSprayerSingle::SingleThink(CBaseEntity* pOther)
 	if (!pev)
 		return;
 
-	SprayerPaintDecal(pev, m_pGlobals, rand() % 6 + 14);
+	SprayerPaintDecal(pev, gpGlobals, rand() % 6 + 14);
 
-	SetRemoveThink();
+	SetThink(&CBaseEntity::SUB_Remove);
 	SetNextThink(0.1f);
 }
 
@@ -362,7 +362,6 @@ static CSatchel* CreateSatchel()
 
 	CSatchel* pSatchel = new (privateData) CSatchel();
 	pSatchel->pev = pev;
-	pSatchel->m_pGlobals = GlobalsFromEntvars(pev);
 	return pSatchel;
 }
 
@@ -424,10 +423,10 @@ void CSatchel::Touch(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	if (!pev || !m_pGlobals)
+	if (!pev || !gpGlobals)
 		return;
 
-	int otherIndex = *GlobalsInt(m_pGlobals, GLOBALS_OTHER_ENTINDEX);
+	int otherIndex = *GlobalsInt(gpGlobals, GLOBALS_OTHER_ENTINDEX);
 	edict_t* pOtherEdict = otherIndex ? EnginePEntityOfEntIndex(otherIndex) : NULL;
 	entvars_t* pevOther = pOtherEdict ? EngineGetVarsOfEnt(pOtherEdict) : NULL;
 	if (!pevOther)
@@ -442,7 +441,7 @@ void CSatchel::Touch(CBaseEntity* pOther)
 	else
 		PevInt(pevOther, PEV_ITEMS_LOW) |= (1 << m_iItem);
 
-	SetRemoveThink();
+	SetThink(&CBaseEntity::SUB_Remove);
 	SetNextThink(0.1f);
 }
 
@@ -482,7 +481,6 @@ void DeploySprayerRepeat(entvars_t* pevOwner)
 
 	CSprayerRepeat* pSprayer = new (priv) CSprayerRepeat();
 	pSprayer->pev = pev;
-	pSprayer->m_pGlobals = GlobalsFromEntvars(pev);
 	pSprayer->Init(pevOwner);
 }
 
@@ -498,7 +496,6 @@ void DeploySprayerSingle(entvars_t* pevOwner)
 
 	CSprayerSingle* pSprayer = new (priv) CSprayerSingle();
 	pSprayer->pev = pev;
-	pSprayer->m_pGlobals = GlobalsFromEntvars(pev);
 	pSprayer->Init(pevOwner);
 }
 

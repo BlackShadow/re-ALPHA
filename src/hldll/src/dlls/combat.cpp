@@ -28,18 +28,18 @@ static int g_iTracerCount = 0;
 
 enum
 {
-	SVC_TEMPENTITY = 23,
-	TE_GUNSHOT = 2,
-	TE_TRACER = 6,
-	TE_BLOODSTREAM = 101,
-	TE_BLOOD = 103,
-	TE_DECAL = 104,
+
+
+
+
+
+
 };
 
 static int g_multiDamageTarget = 0;
 static float g_multiDamageAmount = 0.0f;
 
-float g_vecAttackDir[3] = {0.0f, 0.0f, 0.0f};
+Vector g_vecAttackDir;
 
 //=========================================================
 // multi-damage
@@ -286,7 +286,7 @@ void CBaseEntity::FireBullets(int cShots, const float *vecDirShooting, float flS
 		return;
 
 	pEdict = EdictFromEntvars(pev);
-	globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	globals = gpGlobals;
 
 	EngineMakeVectors((const float *)((uint8_t *)pev + 352));
 

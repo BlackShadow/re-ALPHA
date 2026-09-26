@@ -247,7 +247,7 @@ void CCineMonster::PlayThink(CBaseEntity* pOther)
 void CCineMonster::Death(int gibType)
 {
 	HL_UNUSED(gibType);
-	SetRemoveThink();
+	SetThink(&CBaseEntity::SUB_Remove);
 }
 
 //=========================================================
@@ -370,7 +370,7 @@ void CCineBlood::SpurtThink(CBaseEntity* pOther)
 	// Three quarters of the time, splatter a gunshot decal.
 	if (RandomFloat(0.0f, 1.0f) < 0.75f)
 	{
-		void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+		void* globals = gpGlobals;
 
 		// Random downward-biased ray: a (0,0,-1) base plus
 		// jittered forward and right spread, each scaled by a
@@ -445,7 +445,7 @@ DLLEXPORT void cine_blood(entvars_t* pev)
 
 		CCineBlood* blood = new (privateData) CCineBlood();
 		blood->pev = entvars;
-		blood->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -483,7 +483,7 @@ static T* CineAlloc(entvars_t* pev)
 
 	T* cine = new (privateData) T();
 	cine->pev = entvars;
-	cine->m_pGlobals = GlobalsFromEntvars(entvars);
+	gpGlobals = entvars->pSystemGlobals;
 	return cine;
 }
 

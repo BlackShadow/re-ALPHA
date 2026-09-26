@@ -27,9 +27,9 @@
 
 enum
 {
-	SVC_TEMPENTITY = 23,
-	TE_EXPLOSION = 3,
-	TE_DECAL = 104,
+
+
+
 	TE_ALPHABREAKMODEL = 107,
 };
 
@@ -239,7 +239,6 @@ static CGrenade* CreateGrenadeEntity()
 
 		CGrenade* pGrenade = new (privateData) CGrenade();
 		pGrenade->pev = pev;
-		pGrenade->m_pGlobals = GlobalsFromEntvars(pev);
 		return pGrenade;
 	}
 
@@ -319,7 +318,7 @@ void CGrenade::Init(entvars_t* pevOwner, const float* start, const float* veloci
 	const char* ownerClass = pevOwner ? EngineStringFromIndex(PevInt(pevOwner, PEV_CLASSNAME)) : NULL;
 	if (ownerClass && strcmp(ownerClass, kPlayerClassname) == 0)
 	{
-		SetDoNothingThink();
+		SetThink(&CBaseEntity::SUB_DoNothing);
 		PevVector(pev, PEV_AVELOCITY).x = RandomFloat(-100.0f, -500.0f);
 	}
 	else
@@ -341,10 +340,10 @@ void CGrenade::Touch(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	if (!pev || !m_pGlobals)
+	if (!pev || !gpGlobals)
 		return;
 
-	int otherIndex = *GlobalsInt(m_pGlobals, GLOBALS_OTHER_ENTINDEX);
+	int otherIndex = *GlobalsInt(gpGlobals, GLOBALS_OTHER_ENTINDEX);
 	edict_t* pOtherEdict = otherIndex ? EnginePEntityOfEntIndex(otherIndex) : NULL;
 	entvars_t* pevOther = pOtherEdict ? EngineGetVarsOfEnt(pOtherEdict) : NULL;
 
@@ -506,7 +505,7 @@ void CGrenade::ExplodeThink(CBaseEntity* pOther)
 			EngineEmitSound(edict, 2, sound, 1.0f, 0.8f);
 	}
 
-	SetRemoveThink();
+	SetThink(&CBaseEntity::SUB_Remove);
 	SetNextThink(2.0f);
 }
 

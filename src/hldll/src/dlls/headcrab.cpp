@@ -38,9 +38,9 @@
 #define HEADCRAB_ATTN_IDLE		2.0f
 #define HEADCRAB_ATTN_COMBAT	0.8f
 
-#define SVC_TEMPENTITY 23
+
 #define TE_BLOODSPRITE 101
-#define FL_ONGROUND 0x200
+
 
 static const char kHeadcrabModel[] = "models/headcrab.mdl";
 
@@ -277,7 +277,7 @@ void CHCHeadcrab::Pain(float flDamage)
 	{
 		SetThink(&CBaseMonster::MonsterThink);
 		if (PevInt(pev, PEV_ENEMY))
-			m_Activity = 6;
+			m_MonsterState = 6;
 	}
 }
 
@@ -311,7 +311,7 @@ void CHCHeadcrab::AlertSound()
 	if (edict)
 		EngineEmitSound(edict, 2, pAlertSounds[0], HEADCRAB_SOUND_VOL, HEADCRAB_ATTN_COMBAT);
 
-	m_Activity = 31;
+	m_MonsterState = 31;
 	m_flNextAttack = GlobalTime() + 1.0f;
 }
 
@@ -354,7 +354,7 @@ int CHCHeadcrab::CheckAttacks(entvars_t* pevEnemy, float flDist)
 	if (!CheckRangeAttack(pevEnemy) || flDist > HEADCRAB_ATTACK_DIST)
 		return 0;
 
-	m_IdealActivity = 7;
+	m_IdealMonsterState = 7;
 	SetThink(&CHCHeadcrab::LeapAttackThink);
 	return 1;
 }
@@ -370,7 +370,7 @@ void CHCHeadcrab::LeapAttackTouch(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	if (!globals)
 		return;
 
@@ -422,9 +422,9 @@ void CHCHeadcrab::LeapAttackThink(CBaseEntity* pOther)
 {
 	SetNextThink(HEADCRAB_THINK_INTERVAL);
 
-	if (m_Activity != 30)
+	if (m_MonsterState != 30)
 	{
-		m_Activity = 30;
+		m_MonsterState = 30;
 		SetActivity(30);
 
 		edict_t* edict = EdictFromEntvars(pev);
@@ -458,7 +458,7 @@ void CHCHeadcrab::LeapAttackThink(CBaseEntity* pOther)
 			VecNormalize((float*)&vecJumpDir);
 		}
 
-		void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+		void* globals = gpGlobals;
 		const float* up = GlobalsUp(globals);
 
 		PevVector(pev, PEV_VELOCITY).x = ((up ? up[0] : 0.0f) + vecJumpDir.x) * 250.0f;
@@ -478,10 +478,10 @@ void CHCHeadcrab::LeapAttackThink(CBaseEntity* pOther)
 
 	if ((((int)PevFloat(pev, PEV_FLAGS)) & FL_ONGROUND) != 0)
 	{
-		SetDoNothingTouch();
+		SetTouch(&CBaseEntity::SUB_DoNothing);
 		SetThink(&CBaseMonster::MonsterThink);
 		m_flNextAttack = GlobalTime() + 4.0f;
-		m_Activity = m_IdealActivity;
+		m_MonsterState = m_IdealMonsterState;
 	}
 }
 
@@ -523,6 +523,6 @@ DLLEXPORT void monster_headcrab(entvars_t* pev)
 
 		CHCHeadcrab* monster = new (privateData) CHCHeadcrab();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

@@ -185,7 +185,7 @@ void CHSarge::SargeThink(CBaseEntity* pOther)
 		EngineEmitSound(edict, 2, kPain3Sound, 1.0f, 0.8f);
 
 	// The original runs the cover/retreat searches here (their result
-	// vectors are discarded; FindCover sets m_Activity as a side effect).
+	// vectors are discarded; FindCover sets m_MonsterState as a side effect).
 	FindCover(pevClient);
 	FindRetreat(pevClient);
 
@@ -295,6 +295,6 @@ DLLEXPORT void monster_human_sarge(entvars_t* pev)
 
 		CHSarge* monster = new (privateData) CHSarge();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

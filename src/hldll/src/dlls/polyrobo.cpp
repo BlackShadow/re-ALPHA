@@ -158,7 +158,7 @@ void CPolyRobo::Pain(float flDamage)
 void CPolyRobo::Think(CBaseEntity* pOther)
 {
 	PevFloat(pev, PEV_NEXTTHINK) =
-		GlobalsTime(m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev)) + POLYROBO_THINK_INTERVAL;
+		GlobalsTime(gpGlobals) + POLYROBO_THINK_INTERVAL;
 
 	if (m_fSequenceFinished)
 	{
@@ -176,7 +176,7 @@ void CPolyRobo::Think(CBaseEntity* pOther)
 	AdvanceAnimation(POLYROBO_THINK_INTERVAL);
 
 	{
-		float flTime = GlobalsTime(m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev));
+		float flTime = GlobalsTime(gpGlobals);
 		int frac = (int)(flTime * 10.0f) % 45;
 		SetBoneController(pev, 0, (float)frac);
 	}
@@ -229,6 +229,6 @@ DLLEXPORT void monster_polyrobo(entvars_t* pev)
 
 		CPolyRobo* monster = new (privateData) CPolyRobo();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

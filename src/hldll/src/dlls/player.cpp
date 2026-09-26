@@ -107,11 +107,11 @@ enum
 //=========================================================
 enum
 {
-	FL_ONGROUND				= 0x200,
-	FL_INWATER				= 0x10,
-	FL_WATERJUMP			= 0x800,
+
+
+
 	FL_ONGROUND_HINT		= 0x1000,	// engine "want ground" bit toggled each frame
-	FL_DUCKING				= 0x4000,
+
 };
 
 //=========================================================
@@ -247,9 +247,9 @@ static void PlayerUseEntity(CBasePlayer* pPlayer, CBaseEntity* pEntity, int setT
 	int playerIndex = EngineIndexOfEdict(EdictFromEntvars(pPlayer->pev));
 
 	if (setToggleActivator)
-		((CBaseToggle*)pEntity)->SetActivator(playerIndex);
+		((CBaseToggle*)pEntity)->m_hActivator = playerIndex;
 
-	void* globals = pPlayer->m_pGlobals;
+	void* globals = gpGlobals;
 	if (!globals)
 	{
 		pEntity->Use(pPlayer);
@@ -277,7 +277,6 @@ HL_COMPILE_TIME_ASSERT(sizeof(CBasePlayer) <= 452, CBasePlayer_private_data_size
 // CBasePlayer ctor
 //=========================================================
 CBasePlayer::CBasePlayer()
-	: m_playerData()	// zero the trailing private-data filler (already memset(0) before placement-new; satisfies C26495)
 {
 }
 
@@ -369,7 +368,7 @@ static void PlayerResetSequenceInfo(CBasePlayer* pPlayer, float intervalScale)
 	pModel = EngineGetModelPtr(EdictFromEntvars(pev));
 
 	PlayerGetSequenceInfo(pModel, pev, pFrameRate, pGroundSpeed);
-	PevFloat(pev, PEV_ANIMTIME) = GlobalsTime(pPlayer->m_pGlobals);
+	PevFloat(pev, PEV_ANIMTIME) = GlobalsTime(gpGlobals);
 	PevFloat(pev, PEV_FRAMERATE) = 1.0f;
 	SelfFloat(self, PLR_300) = 0.0f;
 	*pGroundSpeed = *pGroundSpeed * intervalScale;
@@ -379,7 +378,7 @@ static void PlayerStudioFrame(CBasePlayer* pPlayer, float interval)
 {
 	entvars_t* pev = pPlayer->pev;
 	void* self = (void*)pPlayer;
-	void* globals = pPlayer->m_pGlobals;
+	void* globals = gpGlobals;
 	float now = GlobalsTime(globals);
 
 	// integrate yaw toward ideal
@@ -594,7 +593,7 @@ void CBasePlayer::WaterMove()
 
 		PevFloat(pev, PEV_VELOCITY + 8) = depthVel;	// velocity.z
 
-		float now = GlobalsTime(this->m_pGlobals);
+		float now = GlobalsTime(gpGlobals);
 		if (SelfFloat(self, PLR_WATER_SOUND_TIME) < now)
 		{
 			SelfFloat(self, PLR_WATER_SOUND_TIME) = now + 1.0f;
@@ -737,7 +736,7 @@ void CBasePlayer::Spawn()
 {
 	entvars_t* pev = this->pev;
 	void* self = (void*)this;
-	void* globals = this->m_pGlobals;
+	void* globals = gpGlobals;
 
 	// landmark/transition parms left for us by the engine (globals+176)
 	void* parms = *(void**)((unsigned char*)globals + 176);
@@ -915,7 +914,7 @@ void CBasePlayer::CheckWaterJump()
 {
 	entvars_t* pev = this->pev;
 	void* self = (void*)this;
-	void* globals = this->m_pGlobals;
+	void* globals = gpGlobals;
 
 	float origin[3];
 	VecCopy(origin, VecPtr(PevVector(pev, PEV_ORIGIN)));
@@ -1004,7 +1003,7 @@ void CBasePlayer::PlayerClimb()
 {
 	entvars_t* pev = this->pev;
 	void* self = (void*)this;
-	void* globals = this->m_pGlobals;
+	void* globals = gpGlobals;
 
 	// The binary re-derives the aim vectors from pev->angles (pev+76)
 	// before the ladder trace, NOT from the v_angle used at the top of
@@ -1160,7 +1159,7 @@ void CBasePlayer::PreThink()
 {
 	entvars_t* pev = this->pev;
 	void* self = (void*)this;
-	void* globals = this->m_pGlobals;
+	void* globals = gpGlobals;
 
 	// The binary runs the think body only while the player is
 	// in the world: it returns when pev->view_ofs (pev+328) equals
@@ -1243,7 +1242,7 @@ void CBasePlayer::FlashlightThink()
 	void* self = (void*)this;
 	if (PevInt(pev, PLR_VIEWMODEL) == 4)	// flashlight item active
 	{
-		void* globals = this->m_pGlobals;
+		void* globals = gpGlobals;
 		*(int*)((unsigned char*)globals + 328) = EngineIndexOfEdict(EdictFromEntvars(pev));
 		EngineWriteByte(1, 35);
 		EngineWriteByte(1, 1);
@@ -1260,7 +1259,7 @@ void CBasePlayer::WaterMoveSplash()
 {
 	entvars_t* pev = this->pev;
 	void* self = (void*)this;
-	void* globals = this->m_pGlobals;
+	void* globals = gpGlobals;
 	float now = GlobalsTime(globals);
 
 	if (PevInt(pev, PEV_MOVETYPE) == 1090519040			// MOVETYPE_NOCLIP (8.0f)
@@ -1365,7 +1364,7 @@ void CBasePlayer::PlayerUse()
 	edict_t* pEnt = EngineFindEntityInSphere(origin, 64.0f);	// 0x42800000
 	EngineMakeVectors(VecPtr(PevVector(pev, PEV_ANGLES)));
 
-	const float* fwd = GlobalsForward(this->m_pGlobals);
+	const float* fwd = GlobalsForward(gpGlobals);
 
 	while (pEnt && EngineIndexOfEdict(pEnt))
 	{
@@ -1396,7 +1395,7 @@ void CBasePlayer::PlayerUse()
 					// buttons only fire when not already locked/busy
 					if ((PevInt(pevEnt, PEV_TAKEDAMAGE) & 0x7FFFFFFF) != 0)
 						return;
-					CBaseEntity* pEntity = GetEntity(pEnt);
+					CBaseEntity* pEntity = CBaseEntity::Instance(pEnt);
 					if (pEntity)
 					{
 						// The binary stores the player
@@ -1412,7 +1411,7 @@ void CBasePlayer::PlayerUse()
 					// only USE-able doors (spawnflag 0x100) respond
 					if (((int)PevFloat(pevEnt, PEV_SPAWNFLAGS) & 0x100) != 0)
 					{
-						CBaseEntity* pEntity = GetEntity(pEnt);
+						CBaseEntity* pEntity = CBaseEntity::Instance(pEnt);
 						if (pEntity)
 							PlayerUseEntity(this, pEntity, 1);
 					}
@@ -1422,7 +1421,7 @@ void CBasePlayer::PlayerUse()
 						|| strcmp(cls, kMonsterBarney) == 0))
 				{
 					// talk-monster follow toggle handled by the monster
-					CBaseEntity* pEntity = GetEntity(pEnt);
+					CBaseEntity* pEntity = CBaseEntity::Instance(pEnt);
 					if (pEntity)
 						((CBaseMonster*)pEntity)->TogglePlayerUse(pev);
 					return;
@@ -1442,7 +1441,7 @@ void CBasePlayer::PlayerImpulseCommands()
 {
 	entvars_t* pev = this->pev;
 	void* self = (void*)this;
-	void* globals = this->m_pGlobals;
+	void* globals = gpGlobals;
 
 	int viewmodel = PevInt(pev, PLR_VIEWMODEL);
 
@@ -1603,9 +1602,9 @@ static void RemoveAimedDamageable(entvars_t* pev, void* globals)
 	entvars_t* pevHit = pHit ? EngineGetVarsOfEnt(pHit) : NULL;
 	if (pevHit && (PevInt(pevHit, PEV_TAKEDAMAGE) & 0x7FFFFFFF) != 0)
 	{
-		CBaseEntity* pEntity = GetEntity(pHit);
+		CBaseEntity* pEntity = CBaseEntity::Instance(pHit);
 		if (pEntity)
-			pEntity->SetRemoveThink();
+			pEntity->SetThink(&CBaseEntity::SUB_Remove);
 	}
 }
 
@@ -1616,7 +1615,7 @@ void CBasePlayer::ItemPreFrame()
 {
 	entvars_t* pev = this->pev;
 	void* self = (void*)this;
-	void* globals = this->m_pGlobals;
+	void* globals = gpGlobals;
 
 	// IN_USE (button & 0x20): scan for a nearby entity to activate
 	if ((PevInt(pev, PEV_BUTTON) & 0x20) != 0
@@ -1705,7 +1704,7 @@ void CBasePlayer::ItemPreFrame()
 enum
 {
 	PEV_EFFECTS			= 140,	// pev+0x8c  effects bitfield (FLOAT-encoded int)
-	EF_MUZZLEFLASH		= 2,	// pev->effects |= 2 on every weapon fire
+
 
 	// per-weapon view-model SetAnimation activity argument
 	PLAYER_ATTACK1		= 30,	// vtable SetAnimation(0x1e) after each fire
@@ -1740,7 +1739,7 @@ static void PlayerWeaponEvent(entvars_t* pev, void* globals, int animValue)
 static void FireGlock(CBasePlayer* pPlayer)
 {
 	entvars_t* pev = pPlayer->pev;
-	void* globals = pPlayer->m_pGlobals;
+	void* globals = gpGlobals;
 
 	// pev->effects |= EF_MUZZLEFLASH (FLOAT-encoded int, ftol round-trip)
 	PevFloat(pev, PEV_EFFECTS) = (float)((int)PevFloat(pev, PEV_EFFECTS) | EF_MUZZLEFLASH);
@@ -1770,7 +1769,7 @@ static void FireGlock(CBasePlayer* pPlayer)
 static void FireCrowbar(CBasePlayer* pPlayer)
 {
 	entvars_t* pev = pPlayer->pev;
-	void* globals = pPlayer->m_pGlobals;
+	void* globals = gpGlobals;
 
 	// swing-direction byte = (rand & 1) ? 1: 2 (parity test)
 	int swing = ((rand() & 1) == 1) ? 1 : 2;
@@ -1798,7 +1797,7 @@ static void FireCrowbar(CBasePlayer* pPlayer)
 static void FireMP5(CBasePlayer* pPlayer)
 {
 	entvars_t* pev = pPlayer->pev;
-	void* globals = pPlayer->m_pGlobals;
+	void* globals = gpGlobals;
 
 	PevFloat(pev, PEV_EFFECTS) = (float)((int)PevFloat(pev, PEV_EFFECTS) | EF_MUZZLEFLASH);
 

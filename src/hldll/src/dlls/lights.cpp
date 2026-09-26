@@ -169,7 +169,7 @@ DLLEXPORT void light(entvars_t* pev)
 
 		CLight* self = new (privateData) CLight();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -202,6 +202,6 @@ DLLEXPORT void light_spot(entvars_t* pev)
 
 		CLight* self = new (privateData) CLight();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

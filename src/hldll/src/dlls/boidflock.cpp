@@ -156,6 +156,6 @@ DLLEXPORT void monster_boid_flock(entvars_t* pev)
 
 		CFlockingFlyerFlock* monster = new (privateData) CFlockingFlyerFlock();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

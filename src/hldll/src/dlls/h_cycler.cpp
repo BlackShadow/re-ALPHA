@@ -483,7 +483,7 @@ static T* CyclerAlloc(entvars_t* pev)
 
 	T* cycler = new (privateData) T();
 	cycler->pev = entvars;
-	cycler->m_pGlobals = GlobalsFromEntvars(entvars);
+	gpGlobals = entvars->pSystemGlobals;
 	return cycler;
 }
 

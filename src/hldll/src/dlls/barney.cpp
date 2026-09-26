@@ -274,14 +274,14 @@ int CBarney::CheckAttacks(entvars_t* pevEnemy, float flDist)
 {
 	if (flDist <= BARNEY_MELEE_DIST && CheckMeleeAttack(pevEnemy))
 	{
-		m_IdealActivity = 7;
+		m_IdealMonsterState = 7;
 		SetThink(&CBarney::ShootThink);
 		return 1;
 	}
 
 	if (CheckRangeAttack(pevEnemy) && flDist <= BARNEY_RANGE_DIST)
 	{
-		m_IdealActivity = 7;
+		m_IdealMonsterState = 7;
 		SetThink(&CBarney::ShootThink);
 		return 1;
 	}
@@ -298,7 +298,7 @@ void CBarney::AlertSound()
 	if (edict)
 		EngineEmitSound(edict, 2, pAttackSounds[0], BARNEY_VOL, BARNEY_ATTN_COMBAT);
 
-	m_Activity = 6;
+	m_MonsterState = 6;
 	m_flNextAttack = GlobalTime() + 1.0f;
 }
 
@@ -369,9 +369,9 @@ void CBarney::ShootThink(CBaseEntity* pOther)
 {
 	SetNextThink(BARNEY_THINK_INTERVAL);
 
-	if (m_Activity != 30)
+	if (m_MonsterState != 30)
 	{
-		m_Activity = 30;
+		m_MonsterState = 30;
 		SetActivity(30);
 		m_flNextAttack = RandomFloat(0.5f, 1.5f) + GlobalTime();
 	}
@@ -390,7 +390,7 @@ void CBarney::ShootThink(CBaseEntity* pOther)
 
 		EngineMakeVectors((const float*)&PevVector(pev, PEV_ANGLES));
 
-		void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+		void* globals = gpGlobals;
 		const float* forward = GlobalsForward(globals);
 
 		float dir[3];
@@ -408,7 +408,7 @@ void CBarney::ShootThink(CBaseEntity* pOther)
 	if (m_fSequenceFinished)
 	{
 		SetThink(&CBaseMonster::MonsterThink);
-		m_Activity = m_IdealActivity;
+		m_MonsterState = m_IdealMonsterState;
 	}
 }
 
@@ -439,6 +439,6 @@ DLLEXPORT void monster_barney(entvars_t* pev)
 
 		CBarney* monster = new (privateData) CBarney();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

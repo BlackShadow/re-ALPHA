@@ -29,9 +29,9 @@
 //=========================================================
 
 #define MONSTER_THINK_INTERVAL 0.1f
-#define MSG_BROADCAST 0
-#define SVC_TEMPENTITY 23
-#define TE_SHOWLINE 102
+
+
+
 
 void DrawDebugLine(const Vector &start, const Vector &end)
 {
@@ -85,10 +85,6 @@ static float VectorNormalize(Vector &v)
 	return length;
 }
 
-static float DotProduct(const Vector &a, const Vector &b)
-{
-	return a.x * b.x + a.y * b.y + a.z * b.z;
-}
 
 //=========================================================
 // FVisible
@@ -452,7 +448,7 @@ Vector CBaseMonster::FindCover(entvars_t *pevEnemy)
 	Vector angles = PevVector(pev, PEV_ANGLES);
 	EngineMakeVectors((const float *)&angles);
 
-	void *globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void *globals = gpGlobals;
 	const float *right = GlobalsRight(globals);
 	if (!right)
 		return bestRight;
@@ -577,13 +573,13 @@ Vector CBaseMonster::FindCover(entvars_t *pevEnemy)
 
 	if (bestRight.x == origin.x && bestRight.y == origin.y && bestRight.z == origin.z)
 	{
-		m_Activity = 11;
+		m_MonsterState = 11;
 		return bestLeft;
 	}
 
 	if (bestLeft.x == origin.x && bestLeft.y == origin.y && bestLeft.z == origin.z)
 	{
-		m_Activity = 12;
+		m_MonsterState = 12;
 		return bestRight;
 	}
 
@@ -595,11 +591,11 @@ Vector CBaseMonster::FindCover(entvars_t *pevEnemy)
 
 	if (VectorLength(deltaLeft) > VectorLength(deltaRight))
 	{
-		m_Activity = 12;
+		m_MonsterState = 12;
 		return bestRight;
 	}
 
-	m_Activity = 11;
+	m_MonsterState = 11;
 	return bestLeft;
 }
 
@@ -626,7 +622,7 @@ Vector CBaseMonster::FindRetreat(entvars_t *pevEnemy)
 	Vector angles = PevVector(pev, PEV_ANGLES);
 	EngineMakeVectors((const float *)&angles);
 
-	void *globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void *globals = gpGlobals;
 	const float *forward = GlobalsForward(globals);
 	const float *right = GlobalsRight(globals);
 	if (!forward || !right)
@@ -705,7 +701,7 @@ Vector CBaseMonster::FindShootPosition(entvars_t *pevEnemy)
 	Vector angles = PevVector(pev, PEV_ANGLES);
 	EngineMakeVectors((const float *)&angles);
 
-	void *globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void *globals = gpGlobals;
 	const float *forward = GlobalsForward(globals);
 	const float *right = GlobalsRight(globals);
 	if (!forward || !right)
@@ -749,8 +745,8 @@ Vector CBaseMonster::FindShootPosition(entvars_t *pevEnemy)
 			EngineTraceLine((const float *)&candidate, (const float *)&start, 1, EdictFromEntvars(pev), &tr2);
 			if (tr2.flFraction == 1.0f)
 			{
-				m_Activity = 12;
-				m_IdealActivity = 7;
+				m_MonsterState = 12;
+				m_IdealMonsterState = 7;
 
 				float shift = PevVector(pev, PEV_SIZE).x * 0.75f;
 				Vector shifted;
@@ -785,12 +781,12 @@ Vector CBaseMonster::FindShootPosition(entvars_t *pevEnemy)
 
 	if (!foundLeft)
 	{
-		m_Activity = m_IdealActivity;
+		m_MonsterState = m_IdealMonsterState;
 		return origin;
 	}
 
-	m_Activity = 11;
-	m_IdealActivity = 7;
+	m_MonsterState = 11;
+	m_IdealMonsterState = 7;
 
 	float shift = PevVector(pev, PEV_SIZE).x * 0.75f;
 	Vector shifted;
@@ -856,7 +852,7 @@ void CBaseMonster::WalkMonsterStart(CBaseEntity* pOther)
 	if (!pev)
 		return;
 
-	void *globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void *globals = gpGlobals;
 	if (globals)
 	{
 		if ((*(int *)((unsigned char *)globals + 144) & 0x7FFFFFFF) != 0)
@@ -892,7 +888,7 @@ void CBaseMonster::WalkMonsterStart(CBaseEntity* pOther)
 	m_iRouteGoal = 0;
 	m_iRouteIndex = 0;
 	SetThink(&CBaseMonster::MonsterThink);
-	m_Activity = 1;
+	m_MonsterState = 1;
 
 	int targetNameIndex = PevInt(pev, PEV_TARGET);
 	if (targetNameIndex)
@@ -917,7 +913,7 @@ void CBaseMonster::WalkMonsterStart(CBaseEntity* pOther)
 						EngineAlertMessage(2, "WalkMonsterStart--monster's initial goal '%s' is not a path_corner", targetName);
 					}
 
-					m_Activity = 4;
+					m_MonsterState = 4;
 				}
 			}
 			else
@@ -943,7 +939,7 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 
 	Vector oldOrigin = PevVector(pev, PEV_ORIGIN);
 
-	SetActivity(m_Activity);
+	SetActivity(m_MonsterState);
 	AdvanceAnimation(MONSTER_THINK_INTERVAL);
 
 	entvars_t *pevEnemy = NULL;
@@ -957,7 +953,7 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 		if (!pevEnemy || PevFloat(pevEnemy, PEV_HEALTH) <= 0.0f)
 		{
 			PevInt(pev, PEV_ENEMY) = 0;
-			m_Activity = 1;
+			m_MonsterState = 1;
 			return;
 		}
 
@@ -992,7 +988,7 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 		}
 	}
 
-	switch (m_Activity)
+	switch (m_MonsterState)
 	{
 	case 1:
 	case 2:
@@ -1004,11 +1000,11 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 		{
 			int n = rand() % 10;
 			if (n == 0)
-				m_Activity = 2;
+				m_MonsterState = 2;
 			else if (n == 1)
-				m_Activity = 3;
+				m_MonsterState = 3;
 			else
-				m_Activity = 1;
+				m_MonsterState = 1;
 		}
 		break;
 
@@ -1043,7 +1039,7 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 		if (!CheckAttacks(pevEnemy, flDist))
 		{
 			if ((m_afEnemyFlags & 3) == 3)
-				m_Activity = 7;
+				m_MonsterState = 7;
 		}
 		break;
 
@@ -1054,7 +1050,7 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 			&& (m_afEnemyFlags & 2) != 0
 			&& EngineWalkMove(EdictFromEntvars(pev), PevFloat(pev, PEV_IDEAL_YAW), 15.0f) != 0.0f)
 		{
-			m_Activity = 8;
+			m_MonsterState = 8;
 		}
 		break;
 
@@ -1070,11 +1066,11 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 			Vector newOrigin = PevVector(pev, PEV_ORIGIN);
 			if (newOrigin.x == oldOrigin.x && newOrigin.y == oldOrigin.y && newOrigin.z == oldOrigin.z)
 			{
-				m_Activity = 7;
+				m_MonsterState = 7;
 			}
 			else if (m_flDistTooFar > flDist && (m_afEnemyFlags & 2) != 0)
 			{
-				m_Activity = 7;
+				m_MonsterState = 7;
 			}
 		}
 		break;
@@ -1097,9 +1093,9 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 				EngineMoveToOrigin(EdictFromEntvars(pev), (const float *)&m_vecEnemyLKP, dist, 1);
 				EngineAlertMessage(1, "there!\n");
 				if ((m_afEnemyFlags & 2) != 0)
-					m_Activity = 8;
+					m_MonsterState = 8;
 				else
-					m_Activity = 1;
+					m_MonsterState = 1;
 			}
 			else
 			{
@@ -1139,7 +1135,7 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 			{
 				moveDist = dist;
 				EngineMoveToOrigin(EdictFromEntvars(pev), (const float *)&m_vecMoveGoal, moveDist, 0);
-				m_Activity = m_IdealActivity;
+				m_MonsterState = m_IdealMonsterState;
 			}
 			else
 			{
@@ -1150,13 +1146,13 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 			if (newOrigin.x == oldOrigin.x && newOrigin.y == oldOrigin.y && newOrigin.z == oldOrigin.z)
 			{
 				EngineAlertMessage(1, "Inhibited!\n");
-				m_Activity = m_IdealActivity;
+				m_MonsterState = m_IdealMonsterState;
 			}
 		}
 		break;
 
 	case 20:
-		m_Activity = 31;
+		m_MonsterState = 31;
 		EngineChangeYaw(EdictFromEntvars(pev));
 		break;
 
@@ -1175,7 +1171,7 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 			}
 			else
 			{
-				m_Activity = 5;
+				m_MonsterState = 5;
 			}
 		}
 		break;
@@ -1188,7 +1184,7 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 				&& goal.y == PevVector(pev, PEV_ORIGIN).y
 				&& goal.z == PevVector(pev, PEV_ORIGIN).z)
 			{
-				m_Activity = m_IdealActivity;
+				m_MonsterState = m_IdealMonsterState;
 			}
 		}
 		break;
@@ -1201,11 +1197,11 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 				|| goal.y != PevVector(pev, PEV_ORIGIN).y
 				|| goal.z != PevVector(pev, PEV_ORIGIN).z)
 			{
-				m_Activity = 23;
+				m_MonsterState = 23;
 			}
 			else
 			{
-				m_Activity = 7;
+				m_MonsterState = 7;
 			}
 		}
 		break;
@@ -1218,7 +1214,7 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 				&& goal.y == PevVector(pev, PEV_ORIGIN).y
 				&& goal.z == PevVector(pev, PEV_ORIGIN).z)
 			{
-				m_Activity = 6;
+				m_MonsterState = 6;
 			}
 		}
 		break;
@@ -1230,7 +1226,7 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 
 	case 31:
 		if (!CheckAttacks(pevEnemy, flDist))
-			m_Activity = 6;
+			m_MonsterState = 6;
 		break;
 
 	case 35:
@@ -1242,17 +1238,17 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 		{
 			PevFloat(pev, PEV_FRAMERATE) = 0.0f;
 			PevFloat(pev, PEV_SOLID) = 0.0f;
-			m_Activity = 42;
-			SetDoNothingThink();
+			m_MonsterState = 42;
+			SetThink(&CBaseEntity::SUB_DoNothing);
 		}
 		break;
 
 	case 42:
-		SetDoNothingThink();
+		SetThink(&CBaseEntity::SUB_DoNothing);
 		break;
 
 	default:
-		EngineAlertMessage(3, "Monster's state is bogus: %d", m_Activity);
+		EngineAlertMessage(3, "Monster's state is bogus: %d", m_MonsterState);
 		break;
 	}
 

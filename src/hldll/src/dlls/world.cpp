@@ -338,6 +338,6 @@ DLLEXPORT void worldspawn(entvars_t* pev)
 
 		CWorld* world = new (privateData) CWorld();
 		world->pev = entvars;
-		world->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "hl_types.h"
+
+struct client_t;
 #include "../public/edict.h"
 #include "../public/eiface.h"
 

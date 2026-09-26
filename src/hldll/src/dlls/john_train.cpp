@@ -33,8 +33,8 @@
 //=========================================================
 // brush mover constants (pev floats), matching plats.cpp.
 //=========================================================
-#define SOLID_BSP			4.0f	// pev->solid
-#define MOVETYPE_PUSH		7.0f	// pev->movetype
+
+
 
 //=========================================================
 // pev field offset not named in utils.h.
@@ -132,6 +132,6 @@ DLLEXPORT void john_train(entvars_t* pev)
 
 		CJohnTrain* self = new (privateData) CJohnTrain();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

@@ -326,7 +326,7 @@ DLLEXPORT void monster_tentacle(entvars_t* pev)
 
 		CTentacle* monster = new (privateData) CTentacle();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -357,6 +357,6 @@ DLLEXPORT void monster_tentacle_beak(entvars_t* pev)
 
 		CTentacleBeak* monster = new (privateData) CTentacleBeak();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

@@ -144,7 +144,7 @@ void CHornet::Init(entvars_t* pevOwner)
 
 	PevInt(pev, PEV_OWNER_ENTINDEX) = EngineIndexOfEdict(EdictFromEntvars(pevOwner));
 
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	const float* forward = GlobalsForward(globals);
 	const float* right = GlobalsRight(globals);
 
@@ -206,7 +206,7 @@ void CHornet::Death(int gibType)
 	if (!pev)
 		return;
 
-	SetRemoveThink();
+	SetThink(&CBaseEntity::SUB_Remove);
 	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime();
 }
 
@@ -220,7 +220,7 @@ void CHornet::Touch(CBaseEntity* pOther)
 	if (!pev)
 		return;
 
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	if (!globals)
 		return;
 
@@ -259,7 +259,7 @@ void CHornet::Touch(CBaseEntity* pOther)
 	PevInt(pev, PEV_MODELINDEX) = 0;
 	PevFloat(pev, PEV_SOLID) = 0.0f;
 
-	SetRemoveThink();
+	SetThink(&CBaseEntity::SUB_Remove);
 	SetNextThink(AGRUNT_THINK_INTERVAL);
 }
 
@@ -276,7 +276,7 @@ void CHornet::HornetThink(CBaseEntity* pOther)
 
 	if (!enemyVars || PevFloat(enemyVars, PEV_HEALTH) <= 0.0f)
 	{
-		SetRemoveThink();
+		SetThink(&CBaseEntity::SUB_Remove);
 		PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 0.1f;
 		if (!enemyVars)
 			return;
@@ -568,7 +568,7 @@ void CAGrunt::AlertSound()
 	if (!pev)
 		return;
 
-	m_Activity = 8;
+	m_MonsterState = 8;
 
 	const char* sample;
 	int n = rand() % 3;
@@ -623,7 +623,7 @@ void CAGrunt::Pain(float flDamage)
 	PevFloat(pev, PEV_PAIN_FINISHED) = GlobalTime() + 1.0f;
 
 	// Original calls vtable slot 12 (AlertSound) when idling/walking.
-	if (m_Activity == 1 || m_Activity == 4)
+	if (m_MonsterState == 1 || m_MonsterState == 4)
 		AlertSound();
 }
 
@@ -651,9 +651,9 @@ void CAGrunt::Death(int gibType)
 		EngineEmitSound(edict, 2, sample, AGRUNT_VOL, AGRUNT_ATTN_COMBAT);
 
 	// SetDeathState(0) - die forwards.
-	m_Activity = 35;
+	m_MonsterState = 35;
 	PevFloat(pev, PEV_IDEAL_YAW) = PevVector(pev, PEV_ANGLES).y;
-	SetActivity(m_Activity);
+	SetActivity(m_MonsterState);
 	SetThink(&CBaseMonster::MonsterThink);
 	SetNextThink(AGRUNT_THINK_INTERVAL);
 }
@@ -670,14 +670,14 @@ int CAGrunt::CheckAttacks(entvars_t* pevEnemy, float flDist)
 {
 	if (flDist <= AGRUNT_MELEE_DIST && CheckMeleeAttack(pevEnemy))
 	{
-		m_IdealActivity = 7;
+		m_IdealMonsterState = 7;
 		SetThink(&CAGrunt::MeleeAttack);
 		return 1;
 	}
 
 	if (CheckRangeAttack(pevEnemy) && flDist <= AGRUNT_RANGE_DIST)
 	{
-		m_IdealActivity = 7;
+		m_IdealMonsterState = 7;
 		m_iHornetCount = RandomLong(4, 6);
 		SetThink(&CAGrunt::HornetAttack);
 		return 1;
@@ -696,9 +696,9 @@ void CAGrunt::MeleeAttack(CBaseEntity* pOther)
 
 	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 0.1f;
 
-	if (m_Activity != 29)
+	if (m_MonsterState != 29)
 	{
-		m_Activity = 29;
+		m_MonsterState = 29;
 		SetActivity(29);
 		m_flNextAttack = GlobalTime() + 2.0f;
 	}
@@ -722,7 +722,7 @@ void CAGrunt::MeleeAttack(CBaseEntity* pOther)
 	if (PevFloat(pev, PEV_FRAME) >= 255.0f)	// 0x437F0000
 	{
 		SetThink(&CBaseMonster::MonsterThink);
-		m_Activity = m_IdealActivity;
+		m_MonsterState = m_IdealMonsterState;
 		m_flNextAttack = GlobalTime() + 1.0f;
 	}
 }
@@ -748,13 +748,11 @@ CHornet* CAGrunt::CreateHornet()
 
 		CHornet* hornet = new (privateData) CHornet();
 		hornet->pev = hornetVars;
-		hornet->m_pGlobals = GlobalsFromEntvars(hornetVars);
 		return hornet;
 	}
 
 	CHornet* hornet = (CHornet*)privateData;
 	hornet->pev = hornetVars;
-	hornet->m_pGlobals = GlobalsFromEntvars(hornetVars);
 	return hornet;
 }
 
@@ -768,10 +766,10 @@ void CAGrunt::HornetAttack(CBaseEntity* pOther)
 
 	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 0.1f;
 
-	if (m_Activity != 30)
+	if (m_MonsterState != 30)
 	{
 		float next = GlobalTime() + 2.0f;
-		m_Activity = 30;
+		m_MonsterState = 30;
 		m_flNextAttack = next;
 		SetActivity(30);
 	}
@@ -804,7 +802,7 @@ void CAGrunt::HornetAttack(CBaseEntity* pOther)
 
 	if (m_fSequenceFinished)
 	{
-		m_Activity = m_IdealActivity;
+		m_MonsterState = m_IdealMonsterState;
 		m_flNextAttack = RandomFloat(0.0f, 2.0f) + GlobalTime() + 1.0f;
 		SetThink(&CBaseMonster::MonsterThink);
 	}
@@ -837,6 +835,6 @@ DLLEXPORT void monster_alien_grunt(entvars_t* pev)
 
 		CAGrunt* monster = new (privateData) CAGrunt();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

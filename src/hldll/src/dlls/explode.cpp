@@ -287,6 +287,6 @@ DLLEXPORT void explode(entvars_t* pev)
 
 		CExplode* self = new (privateData) CExplode();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

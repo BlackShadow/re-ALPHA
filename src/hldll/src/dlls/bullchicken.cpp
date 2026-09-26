@@ -39,7 +39,7 @@
 #define BULLCHICKEN_ATTN_IDLE		2.0f
 #define BULLCHICKEN_ATTN_COMBAT		0.8f
 
-#define SVC_TEMPENTITY				23
+
 #define TE_SPRITE_SPRAY				101
 
 static const char kBullchickenModel[] = "models/bullchik.mdl";
@@ -124,7 +124,7 @@ void CSquidSpit::Init(entvars_t* pevOwner)
 
 	PevInt(pev, PEV_OWNER_ENTINDEX) = EngineIndexOfEdict(EdictFromEntvars(pevOwner));
 
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	const float* forward = GlobalsForward(globals);
 	const float* up = GlobalsUp(globals);
 
@@ -162,7 +162,7 @@ void CSquidSpit::SpitThink(CBaseEntity* pOther)
 	if (!pev)
 		return;
 
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
 	AdvanceAnimation(0.1f);
 
@@ -181,7 +181,7 @@ void CSquidSpit::Touch(CBaseEntity* pOther)
 	if (!pev)
 		return;
 
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	if (!globals)
 		return;
 
@@ -200,7 +200,7 @@ void CSquidSpit::Touch(CBaseEntity* pOther)
 	}
 
 	PevInt(pev, PEV_MODELINDEX) = 0;
-	SetRemoveThink();
+	SetThink(&CBaseEntity::SUB_Remove);
 
 	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
 }
@@ -357,7 +357,7 @@ void CBullchicken::SetActivity(int activity)
 //=========================================================
 void CBullchicken::AlertSound()
 {
-	m_Activity = 6;
+	m_MonsterState = 6;
 }
 
 //=========================================================
@@ -407,13 +407,13 @@ void CBullchicken::Pain(float flDamage)
 	if (!pev)
 		return;
 
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
 
-	if (m_Activity == 1 || m_Activity == 4)
+	if (m_MonsterState == 1 || m_MonsterState == 4)
 		AlertSound();
 
-	if (m_Activity != 18)
+	if (m_MonsterState != 18)
 	{
 		const char* sound;
 		switch (rand() % 4)
@@ -441,7 +441,7 @@ void CBullchicken::Pain(float flDamage)
 
 		if ((abs(rand()) & 0xFF) % 2 == 1)
 		{
-			m_Activity = 7;
+			m_MonsterState = 7;
 			SetThink(&CBaseMonster::MonsterThink);
 			return;
 		}
@@ -463,10 +463,10 @@ void CBullchicken::BigFlinchThink(CBaseEntity* pOther)
 	if (!pev)
 		return;
 
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
 
-	if (m_Activity != 34)
+	if (m_MonsterState != 34)
 	{
 		const char* sound;
 		switch (rand() % 4)
@@ -498,7 +498,7 @@ void CBullchicken::BigFlinchThink(CBaseEntity* pOther)
 			return;
 		}
 
-		m_Activity = 34;
+		m_MonsterState = 34;
 		SetActivity(34);
 	}
 
@@ -507,7 +507,7 @@ void CBullchicken::BigFlinchThink(CBaseEntity* pOther)
 
 	if (m_fSequenceFinished)
 	{
-		m_Activity = 7;
+		m_MonsterState = 7;
 		SetActivity(7);
 		SetThink(&CBaseMonster::MonsterThink);
 	}
@@ -550,12 +550,12 @@ void CBullchicken::Death(int gibType)
 	PevVector(pev, PEV_VELOCITY).z = 0.0f;
 
 	// The binary(this, 0): set the death activity and fall back to MonsterThink.
-	m_Activity = 35;
+	m_MonsterState = 35;
 	PevFloat(pev, PEV_IDEAL_YAW) = PevVector(pev, PEV_ANGLES).y;
-	SetActivity(m_Activity);
+	SetActivity(m_MonsterState);
 	SetThink(&CBaseMonster::MonsterThink);
 
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
 }
 
@@ -567,7 +567,7 @@ int CBullchicken::CheckAttacks(entvars_t* pevEnemy, float flDist)
 	if (!CheckRangeAttack(pevEnemy) || flDist > BULLCHICKEN_MAX_ATTACK_DIST)
 		return 0;
 
-	m_IdealActivity = 7;
+	m_IdealMonsterState = 7;
 	SetThink(&CBullchicken::SpitAttackThink);
 	return 1;
 }
@@ -580,12 +580,12 @@ void CBullchicken::SpitAttackThink(CBaseEntity* pOther)
 	if (!pev)
 		return;
 
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
 
-	if (m_Activity != 30)
+	if (m_MonsterState != 30)
 	{
-		m_Activity = 30;
+		m_MonsterState = 30;
 		SetActivity(30);
 	}
 
@@ -643,14 +643,13 @@ void CBullchicken::SpitAttackThink(CBaseEntity* pOther)
 				if (spit)
 				{
 					spit->pev = spitVars;
-					spit->m_pGlobals = GlobalsFromEntvars(spitVars);
 					spit->Init(pev);
 				}
 			}
 		}
 
 		EngineMakeVectors(VecPtr(PevVector(pev, PEV_ANGLES)));
-		globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+		globals = gpGlobals;
 		const float* forward = GlobalsForward(globals);
 		const float* up = GlobalsUp(globals);
 
@@ -683,7 +682,7 @@ void CBullchicken::SpitAttackThink(CBaseEntity* pOther)
 
 	if (m_fSequenceFinished)
 	{
-		m_Activity = m_IdealActivity;
+		m_MonsterState = m_IdealMonsterState;
 		SetThink(&CBaseMonster::MonsterThink);
 		m_flNextAttack = GlobalTime() + 4.0f;
 	}
@@ -723,6 +722,6 @@ DLLEXPORT void monster_bullchicken(entvars_t* pev)
 
 		CBullchicken* monster = new (privateData) CBullchicken();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

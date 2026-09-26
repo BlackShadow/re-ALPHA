@@ -170,7 +170,6 @@ static CGib* CreateGib()
 
 	CGib* pGib = new (privateData) CGib();
 	pGib->pev = pev;
-	pGib->m_pGlobals = GlobalsFromEntvars(pev);
 	return pGib;
 }
 
@@ -277,7 +276,7 @@ void CGib::BounceThink(CBaseEntity* pOther)
 	else
 	{
 		SetNextThink(5.0f);
-		SetRemoveThink();
+		SetThink(&CBaseEntity::SUB_Remove);
 	}
 }
 
@@ -485,8 +484,8 @@ CBaseMonster::CBaseMonster()
 {
 	int i;
 
-	m_Activity = 0;
-	m_IdealActivity = 0;
+	m_MonsterState = 0;
+	m_IdealMonsterState = 0;
 	m_flNextAttack = 0.0f;
 	m_bloodColor = 0;
 
@@ -520,10 +519,10 @@ CBaseMonster::CBaseMonster()
 	m_iRouteIndex = 0;
 	m_iRouteGoal = 0;
 
-	m_hActivator = NULL;
-	m_vecDeathGoal.x = 0.0f;
-	m_vecDeathGoal.y = 0.0f;
-	m_vecDeathGoal.z = 0.0f;
+	m_pevAttacker = NULL;
+	m_vecAttackerLKP.x = 0.0f;
+	m_vecAttackerLKP.y = 0.0f;
+	m_vecAttackerLKP.z = 0.0f;
 }
 
 //=========================================================
@@ -534,12 +533,12 @@ void CBaseMonster::TogglePlayerUse(entvars_t* pevPlayer)
 	if (m_pMoveTarget == pevPlayer)
 	{
 		m_pMoveTarget = pev;
-		m_Activity = 1;
+		m_MonsterState = 1;
 	}
 	else
 	{
 		m_pMoveTarget = pevPlayer;
-		m_Activity = 10;
+		m_MonsterState = 10;
 	}
 }
 
@@ -658,7 +657,7 @@ int CBaseMonster::TakeDamage(entvars_t* inflictor, entvars_t* attacker, float da
 	{
 		const char* classname = EngineStringFromIndex(PevInt(pev, PEV_CLASSNAME));
 		BOOL notPlayer = !(classname && strcmp(classname, "player") == 0);
-		void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+		void* globals = gpGlobals;
 		float friendlyFire = globals ? *(float*)((unsigned char*)globals + 152) : 0.0f;
 		BOOL applyDamage;
 
@@ -695,17 +694,17 @@ int CBaseMonster::TakeDamage(entvars_t* inflictor, entvars_t* attacker, float da
 				int attackerIndex = EntIndexFromEdictPtr(attackerEdict);
 				PevInt(pev, PEV_GOALENTINDEX) = attackerIndex;
 				PevInt(pev, PEV_ENEMY) = PevInt(pev, PEV_GOALENTINDEX);
-				m_hActivator = attacker;
+				m_pevAttacker = attacker;
 
-				m_vecDeathGoal.x = g_vecAttackDir[0] * 64.0f + PevVector(pev, PEV_ORIGIN).x;
-				m_vecDeathGoal.y = g_vecAttackDir[1] * 64.0f + PevVector(pev, PEV_ORIGIN).y;
-				m_vecDeathGoal.z = g_vecAttackDir[2] * 64.0f + PevVector(pev, PEV_ORIGIN).z;
+				m_vecAttackerLKP.x = g_vecAttackDir[0] * 64.0f + PevVector(pev, PEV_ORIGIN).x;
+				m_vecAttackerLKP.y = g_vecAttackDir[1] * 64.0f + PevVector(pev, PEV_ORIGIN).y;
+				m_vecAttackerLKP.z = g_vecAttackDir[2] * 64.0f + PevVector(pev, PEV_ORIGIN).z;
 
 				{
 					float toGoal[3];
-					toGoal[0] = m_vecDeathGoal.x - PevVector(pev, PEV_ORIGIN).x;
-					toGoal[1] = m_vecDeathGoal.y - PevVector(pev, PEV_ORIGIN).y;
-					toGoal[2] = m_vecDeathGoal.z - PevVector(pev, PEV_ORIGIN).z;
+					toGoal[0] = m_vecAttackerLKP.x - PevVector(pev, PEV_ORIGIN).x;
+					toGoal[1] = m_vecAttackerLKP.y - PevVector(pev, PEV_ORIGIN).y;
+					toGoal[2] = m_vecAttackerLKP.z - PevVector(pev, PEV_ORIGIN).z;
 					PevFloat(pev, PEV_IDEAL_YAW) = EngineVecToYaw(toGoal);
 				}
 			}
@@ -732,19 +731,19 @@ void CBaseMonster::SetDeathActivity(int type)
 	switch (type)
 	{
 	case 0:
-		m_Activity = 35;
+		m_MonsterState = 35;
 		break;
 	case 1:
-		m_Activity = 36;
+		m_MonsterState = 36;
 		break;
 	case 2:
-		m_Activity = 37;
+		m_MonsterState = 37;
 		break;
 	case 3:
-		m_Activity = 38;
+		m_MonsterState = 38;
 		break;
 	case 4:
-		m_Activity = 39;
+		m_MonsterState = 39;
 		break;
 	default:
 		EngineAlertMessage(1, "Unknown death type!\n");
@@ -752,7 +751,7 @@ void CBaseMonster::SetDeathActivity(int type)
 	}
 
 	PevFloat(pev, PEV_IDEAL_YAW) = PevVector(pev, PEV_ANGLES).y;
-	SetActivity(m_Activity);
+	SetActivity(m_MonsterState);
 	SetThink(&CBaseMonster::MonsterThink);
 	SetNextThink(0.1f);
 }
@@ -785,7 +784,7 @@ void CBaseMonster::Killed(int attackerIndex)
 	if (!pev)
 		return;
 
-	globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	globals = gpGlobals;
 
 	if (m_iSquadSize > 1)
 	{
@@ -857,7 +856,7 @@ void CBaseMonster::Killed(int attackerIndex)
 			}
 
 			PevInt(pev, PEV_TAKEDAMAGE) = 0;
-			SetTouch((EntityFunc)NULL);
+			SetTouch(NULL);
 			PevVector(pev, PEV_ORIGIN).z += 1.0f;
 
 			if (((int)PevFloat(pev, PEV_FLAGS) & 0x200) != 0)
@@ -912,14 +911,14 @@ void CBaseMonster::Killed(int attackerIndex)
 
 		if (PevFloat(pev, PEV_HEALTH) <= -30.0f)
 		{
-			SetDoNothingThink();	// m_pfnThink = an empty stub
+			SetThink(&CBaseEntity::SUB_DoNothing);	// m_pfnThink = an empty stub
 			SetNextThink(0.1f);
 			return;
 		}
 	}
 
 	PevInt(pev, PEV_TAKEDAMAGE) = 0;
-	SetTouch((EntityFunc)NULL);
+	SetTouch(NULL);
 	Death(0);
 }
 

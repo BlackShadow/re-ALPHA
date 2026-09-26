@@ -110,6 +110,6 @@ DLLEXPORT void monster_m44(entvars_t* pev)
 
 		CM44* monster = new (privateData) CM44();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

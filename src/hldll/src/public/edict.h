@@ -1,26 +1,22 @@
-#pragma once
+/***
+*
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
+*
+*   This source code contains proprietary and confidential information of
+*   Valve LLC and its suppliers.  Access to this code is restricted to
+*   persons who have executed a written SDK license with Valve.  Any access,
+*   use or distribution of this code by or to any unlicensed person is illegal.
+*
+****/
+#ifndef EDICT_H
+#define EDICT_H
 
+// edict_t is private to the engine; the DLL only passes pointers to it around
+// and reaches the entity variables through entvars_t.
 #include "progdefs.h"
 
-typedef int qboolean;
-
-#define MAX_ENT_LEAFS 48
-
-struct link_t
-{
-	link_t *prev;
-	link_t *next;
-};
-
-struct edict_t
-{
-	qboolean free;
-	int serialnumber;
-	link_t area;
-	int headnode;
-	int num_leafs;
-	short leafnums[MAX_ENT_LEAFS];
-	float freetime;
-	void *pvPrivateData;
-	entvars_t v;
-};
+#endif // EDICT_H

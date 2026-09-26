@@ -1,25 +1,22 @@
 #pragma once
 
-#include <math.h>
-#include <stddef.h>
+// Transitional helpers for code not yet converted to util.h. Removed once
+// every file uses the entvars_t/globalvars_t fields directly.
+
 #include <stdint.h>
-#include <stdlib.h>
+#include "extdll.h"
+#include "util.h"
 #include "hl_types.h"
-#include "../public/edict.h"
 
 #ifndef ARRAYSIZE
 #define ARRAYSIZE(p) (sizeof(p) / sizeof((p)[0]))
 #endif
 
-//=========================================================
-// entvars_t accessors (alpha offsets)
-//=========================================================
-
 enum
 {
 	PEV_LTIME				= 28,
 	PEV_MOVETYPE			= 32,
-	PEV_GRAVITY				= 144,	// pev->gravity (movement gravity scale)
+	PEV_GRAVITY				= 144,
 	PEV_SOLID				= 36,
 	PEV_ORIGIN				= 40,
 	PEV_VELOCITY			= 64,
@@ -51,16 +48,15 @@ enum
 	PEV_GOALENTINDEX		= 428,
 	PEV_OWNER_ENTINDEX		= 456,
 	PEV_DMG					= 500,
-	PEV_DMG_TOGGLE			= 500,	// alias: pev->dmg as brush blocking damage
+	PEV_DMG_TOGGLE			= 500,
 	PEV_PAIN_FINISHED		= 512,
-	// brush / mover fields (func_door / triggers / breakables)
-	PEV_MODELINDEX			= 0,	// pev->modelindex
-	PEV_MODEL				= 128,	// pev->model (brush model string index)
-	PEV_SKIN				= 132,	// pev->skin (KeyValue "skin")
-	PEV_MOVEDIR				= 460,	// pev->movedir (12 bytes)
-	PEV_NOISE_MOVING		= 484,	// pev->noiseMoving (looping move sound)
-	PEV_NOISE_ARRIVED		= 488,	// pev->noiseArrived (arrival/stop sound)
-	PEV_DMGTIME				= 496,	// pev->dmgtime (door dmg re-arm time)
+	PEV_MODELINDEX			= 0,
+	PEV_MODEL				= 128,
+	PEV_SKIN				= 132,
+	PEV_MOVEDIR				= 460,
+	PEV_NOISE_MOVING		= 484,
+	PEV_NOISE_ARRIVED		= 488,
+	PEV_DMGTIME				= 496,
 	PEV_EDICT_PTR			= 520,
 	PEV_GLOBALS_PTR			= 524,
 	PEV_VIEWOFS				= 328,
@@ -85,63 +81,44 @@ inline Vector& PevVector(entvars_t* pev, size_t byteOffset)
 
 inline edict_t* EdictFromEntvars(entvars_t* pev)
 {
-	if (!pev)
-		return NULL;
-
-	return *(edict_t **)((uint8_t *)pev + PEV_EDICT_PTR);
+	return pev ? pev->pContainingEntity : NULL;
 }
 
 inline void* GlobalsFromEntvars(entvars_t* pev)
 {
-	if (!pev)
-		return NULL;
-
-	return *(void **)((uint8_t *)pev + PEV_GLOBALS_PTR);
+	return gpGlobals;
 }
 
 inline float GlobalsTime(void* globals)
 {
-	if (!globals)
-		return 0.0f;
-
-	return *(float *)((uint8_t *)globals + 124);
+	return gpGlobals->time;
 }
 
-// globalvars_t byte offsets used by gameplay code.
 enum
 {
 	GLOBALS_TIME			= 124,
-	GLOBALS_SELF_ENTINDEX	= 112,	// current entity index for Touch/Use dispatch
-	GLOBALS_OTHER_ENTINDEX	= 116,	// 'other'/activator ent index stashed before Touch/Use dispatch
+	GLOBALS_SELF_ENTINDEX	= 112,
+	GLOBALS_OTHER_ENTINDEX	= 116,
 };
 
 inline int* GlobalsInt(void* globals, size_t byteOffset)
 {
-	return (int *)((uint8_t *)globals + byteOffset);
+	return (int *)((uint8_t *)gpGlobals + byteOffset);
 }
 
 inline const float* GlobalsForward(void* globals)
 {
-	if (!globals)
-		return NULL;
-
-	return (const float *)((uint8_t *)globals + 240);
+	return gpGlobals->v_forward;
 }
 
 inline const float* GlobalsRight(void* globals)
 {
-	if (!globals)
-		return NULL;
-
-	return (const float *)((uint8_t *)globals + 264);
+	return gpGlobals->v_right;
 }
 
 inline const float* GlobalsUp(void* globals)
 {
-	if (!globals)
-		return NULL;
-
-	return (const float *)((uint8_t *)globals + 252);
+	return gpGlobals->v_up;
 }
 
 inline void VecSet(float* out, float x, float y, float z)
@@ -214,18 +191,13 @@ inline BOOL VecNormalize(float* v)
 
 inline float RandomFloat(float a1, float a2)
 {
-	return ((float)(rand() & 0x7FFF)) * 0.000030518509f * (a2 - a1) + a1;
+	return RANDOM_FLOAT(a1, a2);
 }
 
 inline int RandomLong(int a1, int a2)
 {
-	return a1 + rand() % (a2 - a1 + 1);
+	return RANDOM_LONG(a1, a2);
 }
 
-// Original DLL global the binary..A8: last combat/damage direction.
-extern float g_vecAttackDir[3];
-
-// Original DLL global the binary: debug line drawing toggled by impulse 200.
 extern int g_fDrawLines;
-
-void DrawDebugLine(const Vector &start, const Vector &end);
+void DrawDebugLine(const Vector &vecStart, const Vector &vecEnd);

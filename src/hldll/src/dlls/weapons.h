@@ -2,8 +2,6 @@
 
 #include "hl_types.h"
 
-struct entvars_t;
-
 //=========================================================
 // weapons.h - Spawn API for the player-instantiated weapon
 // and projectile entity classes (Half-Life 0.52 alpha).

@@ -185,7 +185,6 @@ static CBaseEntity* FindOrMakeEntity(edict_t* pEdict)
 
 	CBaseEntity* pEntity = new (priv) CBaseEntity();
 	pEntity->pev = pevTarget;
-	pEntity->m_pGlobals = GlobalsFromEntvars(pevTarget);
 	return pEntity;
 }
 
@@ -243,7 +242,6 @@ static CMultiSource* ResolveMultiSource(entvars_t* pevSource)
 
 	CMultiSource* pSource = new (priv) CMultiSource();
 	pSource->pev = pevSource;
-	pSource->m_pGlobals = GlobalsFromEntvars(pevSource);
 	return pSource;
 }
 
@@ -275,7 +273,7 @@ void CMultiSource::RegisterThink(CBaseEntity* pOther)
 {
 	m_iTotal = 0;
 	m_iCount = 0;
-	SetDoNothingThink();	// SUB_DoNothing
+	SetThink(&CBaseEntity::SUB_DoNothing);	// SUB_DoNothing
 
 	const char* pszName = EngineStringFromIndex(PevInt(pev, PEV_TARGETNAME));
 	edict_t* pTarget = EngineFindEntityByString(NULL, "target", pszName);
@@ -327,7 +325,7 @@ void CMultiSource::Use(CBaseEntity* pOther)
 	if (PevInt(pev, PEV_TARGET) == 0)
 		return;
 
-	void* globals = m_pGlobals;
+	void* globals = gpGlobals;
 	int oldSelf = *GlobalsInt(globals, BUTTON_GLOBALS_SELF_ENTINDEX);
 	int oldActivator = *GlobalsInt(globals, BUTTON_GLOBALS_ACTIVATOR_ENTINDEX);
 
@@ -554,7 +552,7 @@ void CBaseButton::TriggerAndWait(CBaseEntity* pOther)
 	{
 		// Stays pushed: drop the touch handler (re-arm touch presses if
 		// SF_BUTTON_TOUCH_ACTIVATE is set).
-		SetDoNothingTouch();
+		SetTouch(&CBaseEntity::SUB_DoNothing);
 		if ((flags & SF_BUTTON_TOUCH_ACTIVATE) != 0)
 			SetTouch(&CBaseButton::ButtonTouch);
 	}
@@ -566,7 +564,7 @@ void CBaseButton::TriggerAndWait(CBaseEntity* pOther)
 	}
 
 	PevFloat(pev, PEV_FRAME) = 1.0f;
-	SUB_UseTargets(NULL, 0, 0.0f);
+	SUB_UseTargets();
 }
 
 //=========================================================
@@ -604,7 +602,7 @@ void CBaseButton::ButtonBackHome(CBaseEntity* pOther)
 
 	int flags = (int)PevFloat(pev, PEV_SPAWNFLAGS);
 
-	SetDoNothingTouch();
+	SetTouch(&CBaseEntity::SUB_DoNothing);
 	if ((flags & SF_BUTTON_TOUCH_ACTIVATE) != 0)
 		SetTouch(&CBaseButton::ButtonTouch);
 
@@ -638,7 +636,7 @@ void CBaseButton::ButtonUse(CBaseEntity* pOther)
 	if (m_toggle_state == BS_PRESSED && m_fStayPushed != 0 && (flags & SF_BUTTON_TOGGLE) == 0)
 		return;
 
-	m_hActivator = *GlobalsInt(m_pGlobals, BUTTON_GLOBALS_ACTIVATOR_ENTINDEX);
+	m_hActivator = *GlobalsInt(gpGlobals, BUTTON_GLOBALS_ACTIVATOR_ENTINDEX);
 
 	// At home (or a plain button) -> press; otherwise (pressed toggle /
 	// stay-pushed) fire targets and return.
@@ -649,7 +647,7 @@ void CBaseButton::ButtonUse(CBaseEntity* pOther)
 	else
 	{
 		PlayPressSound();
-		SUB_UseTargets(NULL, 0, 0.0f);
+		SUB_UseTargets();
 		ButtonReturn(NULL);
 	}
 }
@@ -664,7 +662,7 @@ void CBaseButton::ButtonTouch(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	if (!globals)
 		return;
 
@@ -705,13 +703,13 @@ void CBaseButton::ButtonTouch(CBaseEntity* pOther)
 	}
 
 	// Begin acting.
-	SetTouch((EntityFunc)NULL);
+	SetTouch(NULL);
 	m_hActivator = *GlobalsInt(globals, BUTTON_GLOBALS_ACTIVATOR_ENTINDEX);
 
 	if ((m_fStayPushed != 0 || (flags & SF_BUTTON_TOGGLE) != 0) && m_toggle_state == BS_PRESSED)
 	{
 		PlayPressSound();
-		SUB_UseTargets(NULL, 0, 0.0f);
+		SUB_UseTargets();
 		ButtonReturn(NULL);
 	}
 	else
@@ -742,8 +740,8 @@ int CBaseButton::TakeDamage(entvars_t* inflictor, entvars_t* attacker, float dam
 	if (m_toggle_state == BS_PRESSED && m_fStayPushed == 0)
 		return 0;
 
-	SetTouch((EntityFunc)NULL);
-	m_hActivator = *GlobalsInt(m_pGlobals, BUTTON_GLOBALS_ACTIVATOR_ENTINDEX);
+	SetTouch(NULL);
+	m_hActivator = *GlobalsInt(gpGlobals, BUTTON_GLOBALS_ACTIVATOR_ENTINDEX);
 
 	// At home (or a plain button) -> press; a pressed stay-pushed button
 	// fires targets and returns.
@@ -754,7 +752,7 @@ int CBaseButton::TakeDamage(entvars_t* inflictor, entvars_t* attacker, float dam
 	else
 	{
 		PlayPressSound();
-		SUB_UseTargets(NULL, 0, 0.0f);
+		SUB_UseTargets();
 		ButtonReturn(NULL);
 	}
 
@@ -834,7 +832,7 @@ void CBaseButton::Spawn()
 	}
 	else
 	{
-		SetDoNothingTouch();	// SUB_DoNothing
+		SetTouch(&CBaseEntity::SUB_DoNothing);	// SUB_DoNothing
 		SetUse(&CBaseButton::ButtonUse);
 	}
 }
@@ -895,7 +893,7 @@ void CRotButton::Spawn()
 	}
 	else
 	{
-		SetDoNothingTouch();	// SUB_DoNothing
+		SetTouch(&CBaseEntity::SUB_DoNothing);	// SUB_DoNothing
 		SetUse(&CBaseButton::ButtonUse);
 	}
 }
@@ -1047,7 +1045,7 @@ void CMomentaryRotButton::UpdateTarget(float fraction)
 	if (PevInt(pev, PEV_TARGET) == 0)
 		return;
 
-	void* globals = m_pGlobals;
+	void* globals = gpGlobals;
 	int oldSelf = *GlobalsInt(globals, BUTTON_GLOBALS_SELF_ENTINDEX);
 	int oldActivator = *GlobalsInt(globals, BUTTON_GLOBALS_ACTIVATOR_ENTINDEX);
 
@@ -1143,7 +1141,7 @@ void CMomentaryRotButton::UpdateThink(CBaseEntity* pOther)
 	}
 	else
 	{
-		SetThink((ThinkFunc)NULL);
+		SetThink(NULL);
 	}
 }
 
@@ -1163,7 +1161,7 @@ void CMomentaryRotButton::Off(CBaseEntity* pOther)
 		VecSet(VecPtr(PevVector(pev, PEV_AVELOCITY)), 0.0f, 0.0f, 0.0f);
 		VecCopy(VecPtr(angles), VecPtr(m_start));
 		PevFloat(pev, PEV_NEXTTHINK) = -1.0f;
-		SetThink((ThinkFunc)NULL);
+		SetThink(NULL);
 	}
 	else
 	{
@@ -1205,7 +1203,7 @@ DLLEXPORT void func_button(entvars_t* pev)
 
 		CBaseButton* self = new (privateData) CBaseButton();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -1236,7 +1234,7 @@ DLLEXPORT void func_rot_button(entvars_t* pev)
 
 		CRotButton* self = new (privateData) CRotButton();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -1267,7 +1265,7 @@ DLLEXPORT void momentary_rot_button(entvars_t* pev)
 
 		CMomentaryRotButton* self = new (privateData) CMomentaryRotButton();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -1298,6 +1296,6 @@ DLLEXPORT void multisource(entvars_t* pev)
 
 		CMultiSource* self = new (privateData) CMultiSource();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

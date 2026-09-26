@@ -50,7 +50,7 @@
 #define AFLOCK_TOO_FAR			128.0f
 #define AFLOCK_AVOID_RADIUS		64.0f
 
-#define FL_ONGROUND				0x200
+
 
 // pev byte offsets not yet named in utils.h
 #define PEV_AVELOCITY_Y			92		// avelocity[1] (PEV_AVELOCITY + 4)
@@ -227,7 +227,7 @@ void CBoid::Death(int gibType)
 {
 	HL_UNUSED(gibType);
 
-	SetRemoveThink();
+	SetThink(&CBaseEntity::SUB_Remove);
 	SetNextThink(BOID_THINK_INTERVAL);
 }
 
@@ -318,7 +318,7 @@ void CBoid::AdvanceFrameThink(CBaseEntity* pOther)
 //=========================================================
 void CBoid::BecomeLeaderThink(CBaseEntity* pOther)
 {
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	float flTime = GlobalsTime(globals);
 
 	edict_t* selfEdict = EdictFromEntvars(pev);
@@ -399,7 +399,7 @@ void CBoid::StartFlightThink(CBaseEntity* pOther)
 		SetThink(&CBoid::FlockFollowerThink);
 
 	{
-		void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+		void* globals = gpGlobals;
 		PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 1.0f;
 	}
 
@@ -422,7 +422,7 @@ void CBoid::StartFlightThink(CBaseEntity* pOther)
 //=========================================================
 BOOL CBoid::FPathBlocked()
 {
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 
 	const float* forward = GlobalsForward(globals);
 	const float* right = GlobalsRight(globals);
@@ -575,7 +575,7 @@ void CBoid::SpreadFlock2()
 //=========================================================
 void CBoid::FlockLeaderThink(CBaseEntity* pOther)
 {
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 
 	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
 
@@ -726,7 +726,7 @@ void CBoid::FlockLeaderThink(CBaseEntity* pOther)
 //=========================================================
 void CBoid::FlockFollowerThink(CBaseEntity* pOther)
 {
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + BOID_THINK_INTERVAL;
 
 	entvars_t* pevLeader = m_pSquadLeader;
@@ -815,7 +815,7 @@ void CBoid::FlockFollowerThink(CBaseEntity* pOther)
 //=========================================================
 void CBoid::StartAnimating()
 {
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + BOID_THINK_INTERVAL;
 
 	SetThink(&CBoid::AdvanceFrameThink);
@@ -847,7 +847,7 @@ edict_t* BoidFlockCreateMember(const float* origin, const float* angles)
 
 		pBoid = new (privateData) CBoid();
 		pBoid->pev = entvars;
-		pBoid->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 
 	pBoid->SetupBoid();
@@ -896,6 +896,6 @@ DLLEXPORT void monster_boid(entvars_t* pev)
 
 		CBoid* monster = new (privateData) CBoid();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
