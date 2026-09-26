@@ -107,9 +107,9 @@ enum
 //=========================================================
 // Temp-entity message constants (svc_temporary_entity).
 //=========================================================
-#define MSG_BROADCAST		0
+
 #define SVC_TEMP_ENTITY		23
-#define TE_BREAKMODEL		108
+
 #define TE_GUNSHOT			15
 
 //=========================================================
@@ -123,7 +123,7 @@ enum
 //                   NOT FL_ONGROUND (0x200).
 //=========================================================
 #define SF_BREAK_TRIGGER_ONLY	1
-#define FL_CLIENT				8
+
 
 //=========================================================
 // Model / sound tables (indexed by Materials).
@@ -355,7 +355,7 @@ void CBreakable::Use(CBaseEntity* pOther)
 	// stash the brush forward vector as the attack direction
 	EngineMakeVectors(VecPtr(PevVector(pev, PEV_ANGLES)));
 
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	const float* forward = GlobalsForward(globals);
 	g_vecAttackDir[0] = forward[0];
 	g_vecAttackDir[1] = forward[1];
@@ -519,7 +519,7 @@ void CBreakable::Die()
 	}
 
 	// remove the brush a tick later
-	SetRemoveThink();
+	SetThink(&CBaseEntity::SUB_Remove);
 	PevFloat(pev, PEV_NEXTTHINK) = (float)(PevFloat(pev, PEV_LTIME) + 0.1);
 }
 
@@ -700,7 +700,7 @@ void CGlass::GlassDie()
 	PevFloat(pev, PEV_SOLID) = 0.0f;	// SOLID_NOT
 	PevInt(pev, PEV_MODEL) = 0;			// hide the brush
 
-	SetRemoveThink();
+	SetThink(&CBaseEntity::SUB_Remove);
 	PevFloat(pev, PEV_NEXTTHINK) = PevFloat(pev, PEV_LTIME);
 }
 
@@ -868,7 +868,7 @@ DLLEXPORT void func_breakable(entvars_t* pev)
 
 		CBreakable* self = new (privateData) CBreakable();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -899,7 +899,7 @@ DLLEXPORT void func_glass(entvars_t* pev)
 
 		CGlass* self = new (privateData) CGlass();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -930,6 +930,6 @@ DLLEXPORT void func_pushable(entvars_t* pev)
 
 		CPushable* self = new (privateData) CPushable();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

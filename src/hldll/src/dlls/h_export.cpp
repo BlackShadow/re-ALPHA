@@ -48,6 +48,9 @@ static const char kRestartCommand[] = "restart\n";
 static const char kPlayerTornoff2[] = "player/tornoff2.wav";
 static const char kModelsDoctor[] = "models/doctor.mdl";
 
+enginefuncs_t g_engfuncs;
+globalvars_t *gpGlobals;
+
 static int g_skillValue = 0;
 static int g_frameCount = 0;
 static int g_disableDisconnectSound = 0;
@@ -156,7 +159,6 @@ static CBasePlayer *GetPlayer(entvars_t *pev)
 		memset((unsigned char *)privateData + 12, 0, kPlayerPrivateDataSize - 12);
 		*(void **)player = vtable;
 		player->pev = pev;
-		player->m_pGlobals = GlobalsFromEntvars(pev);
 	}
 
   return (CBasePlayer *)privateData;
@@ -247,7 +249,10 @@ int ClientRespawn(entvars_t *pev)
     return 0;
 
   if ((ClientInt(client, 37) & 0x7FFFFFFF) == 0 && (ClientInt(client, 36) & 0x7FFFFFFF) == 0)
-    return EngineServerCommand(kRestartCommand);
+  {
+    EngineServerCommand(kRestartCommand);
+    return 0;
+  }
 
   CopyRespawnState(pev);
   if ((ClientInt(client, 37) & 0x7FFFFFFF) != 0)
@@ -273,7 +278,7 @@ static CBaseEntity *EntityFromPev(entvars_t *pev)
 	if (!edict)
 		return NULL;
 
-	return GetEntity(edict);
+	return CBaseEntity::Instance(edict);
 }
 
 static int EntIndexFromPev(entvars_t *pev)
@@ -318,7 +323,7 @@ static void DispatchEntityEvent(entvars_t *pev, entvars_t *pevOther, int eventTy
 
 	void *globals = GlobalsFromEntvars(pev);
 	if (!globals)
-		globals = pEntity->m_pGlobals;
+		globals = gpGlobals;
 
 	int otherIndex = EntIndexFromDispatchArg(pevOther);
 	CBaseEntity *pOther = (CBaseEntity *)pevOther;
@@ -363,11 +368,12 @@ extern "C" {
 
 DLLEXPORT void __stdcall GiveFnptrsToDll(enginefuncs_t *pEngineFuncs)
 {
-  EngineCopyTable(pEngineFuncs);
+  memcpy(&g_engfuncs, pEngineFuncs, sizeof(enginefuncs_t));
 }
 
 DLLEXPORT int __stdcall SetChangeParms(client_t *pClient)
 {
+  gpGlobals = (globalvars_t *)pClient;
   if (!pClient)
     return 0;
 
@@ -404,6 +410,7 @@ DLLEXPORT int __stdcall SetChangeParms(client_t *pClient)
 
 DLLEXPORT int __stdcall SetNewParms(client_t *pClient)
 {
+  gpGlobals = (globalvars_t *)pClient;
   if (!pClient)
     return 0;
 
@@ -434,6 +441,7 @@ DLLEXPORT int __stdcall SetNewParms(client_t *pClient)
 
 DLLEXPORT int __stdcall ClientKill(client_t *pClient)
 {
+  gpGlobals = (globalvars_t *)pClient;
   entvars_t *pev = GetEntvarsFromClient(pClient);
   if (!pev)
     return 0;
@@ -446,6 +454,7 @@ DLLEXPORT int __stdcall ClientKill(client_t *pClient)
 
 DLLEXPORT int __stdcall PutClientInServer(client_t *pClient)
 {
+  gpGlobals = (globalvars_t *)pClient;
   if (!pClient)
     return 0;
 
@@ -469,6 +478,7 @@ DLLEXPORT int __stdcall PutClientInServer(client_t *pClient)
 
 DLLEXPORT int __stdcall PlayerPreThink(client_t *pClient)
 {
+  gpGlobals = (globalvars_t *)pClient;
   entvars_t *pev = GetEntvarsFromClient(pClient);
   if (!pev)
     return 0;
@@ -483,6 +493,7 @@ DLLEXPORT int __stdcall PlayerPreThink(client_t *pClient)
 
 DLLEXPORT int __stdcall PlayerPostThink(client_t *pClient)
 {
+  gpGlobals = (globalvars_t *)pClient;
   entvars_t *pev = GetEntvarsFromClient(pClient);
   if (!pev)
     return 0;
@@ -497,11 +508,13 @@ DLLEXPORT int __stdcall PlayerPostThink(client_t *pClient)
 
 DLLEXPORT void __stdcall ClientConnect(client_t *pClient)
 {
+  gpGlobals = (globalvars_t *)pClient;
   HL_UNUSED(pClient);
 }
 
 DLLEXPORT int __stdcall ClientDisconnect(client_t *pClient)
 {
+  gpGlobals = (globalvars_t *)pClient;
   entvars_t *pev = GetEntvarsFromClient(pClient);
   if (!pev)
     return 0;
@@ -517,6 +530,7 @@ DLLEXPORT int __stdcall ClientDisconnect(client_t *pClient)
 
 DLLEXPORT int __stdcall StartFrame(globalvars_t *pGlobals)
 {
+  gpGlobals = pGlobals;
   if (pGlobals)
   {
     float *globalsFloat = (float *)pGlobals;
@@ -530,6 +544,7 @@ DLLEXPORT int __stdcall StartFrame(globalvars_t *pGlobals)
 
 DLLEXPORT int DispatchSpawn(entvars_t *pev)
 {
+  gpGlobals = pev->pSystemGlobals;
   CBaseEntity *pEntity = EntityFromPev(pev);
   if (!pEntity)
     return 0;
@@ -543,6 +558,7 @@ DLLEXPORT int DispatchSpawn(entvars_t *pev)
 
 DLLEXPORT const char* DispatchKeyValue(entvars_t *pev, KeyValueData *pkvd)
 {
+  gpGlobals = pev->pSystemGlobals;
   CBaseEntity *pEntity = EntityFromPev(pev);
   if (pEntity)
     pEntity->KeyValue(pkvd);
@@ -559,6 +575,7 @@ DLLEXPORT const char* DispatchKeyValue(entvars_t *pev, KeyValueData *pkvd)
 
 DLLEXPORT int DispatchRestore(entvars_t *pev, SAVERESTOREDATA *pSaveData)
 {
+  gpGlobals = pev->pSystemGlobals;
 	CBaseEntity *pEntity = EntityFromPev(pev);
 	if (pEntity)
 		return pEntity->Restore(pSaveData);
@@ -567,6 +584,7 @@ DLLEXPORT int DispatchRestore(entvars_t *pev, SAVERESTOREDATA *pSaveData)
 
 DLLEXPORT int DispatchSave(entvars_t *pev, SAVERESTOREDATA *pSaveData)
 {
+  gpGlobals = pev->pSystemGlobals;
   CBaseEntity *pEntity = EntityFromPev(pev);
   if (pEntity)
     return pEntity->Save(pSaveData);
@@ -575,6 +593,7 @@ DLLEXPORT int DispatchSave(entvars_t *pev, SAVERESTOREDATA *pSaveData)
 
 DLLEXPORT void DispatchThink(entvars_t *pev, entvars_t *pevOther)
 {
+  gpGlobals = pev->pSystemGlobals;
   CBaseEntity *pEntity = EntityFromPev(pev);
   if (pEntity)
     pEntity->Think((CBaseEntity *)pevOther);
@@ -585,16 +604,19 @@ DLLEXPORT void DispatchThink(entvars_t *pev, entvars_t *pevOther)
 // non-entity data.
 DLLEXPORT void DispatchTouch(entvars_t *pev, entvars_t *pevOther)
 {
+  gpGlobals = pev->pSystemGlobals;
   DispatchEntityEvent(pev, pevOther, DISPATCH_EVENT_TOUCH);
 }
 
 DLLEXPORT void DispatchUse(entvars_t *pev, entvars_t *pevOther)
 {
+  gpGlobals = pev->pSystemGlobals;
   DispatchEntityEvent(pev, pevOther, DISPATCH_EVENT_USE);
 }
 
 DLLEXPORT void DispatchBlocked(entvars_t *pev, entvars_t *pevOther)
 {
+  gpGlobals = pev->pSystemGlobals;
   DispatchEntityEvent(pev, pevOther, DISPATCH_EVENT_BLOCKED);
 }
 

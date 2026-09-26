@@ -175,6 +175,6 @@ DLLEXPORT void path_corner(entvars_t* pev)
 
 		CPathCorner* self = new (privateData) CPathCorner();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

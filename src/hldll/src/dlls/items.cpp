@@ -95,7 +95,7 @@ void CItem::Touch(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	entvars_t* pevPlayer = ToucherVars(globals);
 	if (!pevPlayer)
 		return;
@@ -110,7 +110,7 @@ void CItem::Touch(CBaseEntity* pOther)
 	else
 		PevInt(pevPlayer, PEV_ITEMS_LOW) |= 1 << itemType;
 
-	SetRemoveThink();
+	SetThink(&CBaseEntity::SUB_Remove);
 	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + ITEM_RESPAWN_DELAY;
 }
 
@@ -154,6 +154,6 @@ DLLEXPORT void item(entvars_t* pev)
 
 		CItem* self = new (privateData) CItem();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

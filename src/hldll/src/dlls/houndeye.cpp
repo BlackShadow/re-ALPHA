@@ -257,7 +257,7 @@ int CHoundeye::CheckAttacks(entvars_t* pevEnemy, float flDist)
 	if (!CheckRangeAttack(pevEnemy) || flDist > HOUNDEYE_MAX_ATTACK_DIST)
 		return 0;
 
-	m_IdealActivity = 7;
+	m_IdealMonsterState = 7;
 	SetThink(&CHoundeye::SonicAttackThink);
 	return 1;
 }
@@ -274,7 +274,7 @@ void CHoundeye::AlertSound()
 	if (!recruits)
 	{
 		EngineAlertMessage(1, "No Squad\n");
-		m_Activity = 7;
+		m_MonsterState = 7;
 		return;
 	}
 
@@ -292,15 +292,15 @@ void CHoundeye::AlertSound()
 		if (!pMember)
 			break;
 
-		pMember->SetMonsterActivity(8);
-		pMember->SetSquadSize(m_iSquadSize);
+		pMember->m_MonsterState = 8;
+		pMember->m_iSquadSize = m_iSquadSize;
 
-		pevMember = pMember->SquadNext();
+		pevMember = pMember->m_pSquadNext;
 	}
 
 	EngineAlertMessage(1, "group of: %d\n", m_iSquadSize);
 
-	m_Activity = 8;
+	m_MonsterState = 8;
 	m_fSonicActive = 1;
 	m_iSquadSize = recruits;
 }
@@ -352,7 +352,7 @@ void CHoundeye::Pain(float flDamage)
 	if (edict)
 		EngineEmitSound(edict, 2, sample, HOUNDEYE_VOL, HOUNDEYE_ATTN_COMBAT);
 
-	if (m_Activity == 1 || m_Activity == 4)
+	if (m_MonsterState == 1 || m_MonsterState == 4)
 		AlertSound();
 }
 
@@ -409,7 +409,7 @@ void CHoundeye::SonicAttackThink(CBaseEntity* pOther)
 		return;
 	}
 
-	if (m_Activity != 30)
+	if (m_MonsterState != 30)
 	{
 		int soundIndex = rand() % 3;
 		edict_t* edict = EdictFromEntvars(pev);
@@ -428,13 +428,13 @@ void CHoundeye::SonicAttackThink(CBaseEntity* pOther)
 			{
 				CHoundeye* pHoundeye = (CHoundeye*)pMember;
 				pHoundeye->SetThink(&CHoundeye::SonicFollowThink);
-				pHoundeye->SetMonsterIdealActivity(7);
+				pHoundeye->m_IdealMonsterState = 7;
 			}
 
-			pevMember = pMember->SquadNext();
+			pevMember = pMember->m_pSquadNext;
 		}
 
-		m_Activity = 30;
+		m_MonsterState = 30;
 		SetActivity(30);
 	}
 
@@ -513,7 +513,7 @@ void CHoundeye::SonicAttackThink(CBaseEntity* pOther)
 		}
 	}
 
-	m_Activity = m_IdealActivity;
+	m_MonsterState = m_IdealMonsterState;
 	SetThink(&CBaseMonster::MonsterThink);
 	m_flNextAttack = GlobalTime() + HOUNDEYE_ATTACK_COOLDOWN;
 }
@@ -525,9 +525,9 @@ void CHoundeye::SonicFollowThink(CBaseEntity* pOther)
 {
 	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + HOUNDEYE_THINK_INTERVAL;
 
-	if (m_Activity != 30)
+	if (m_MonsterState != 30)
 	{
-		m_Activity = 30;
+		m_MonsterState = 30;
 		SetActivity(30);
 	}
 
@@ -558,7 +558,7 @@ void CHoundeye::SonicFollowThink(CBaseEntity* pOther)
 	if (!m_fSequenceFinished)
 		return;
 
-	m_Activity = m_IdealActivity;
+	m_MonsterState = m_IdealMonsterState;
 	SetThink(&CBaseMonster::MonsterThink);
 	m_flNextAttack = GlobalTime() + HOUNDEYE_ATTACK_COOLDOWN;
 }
@@ -590,6 +590,6 @@ DLLEXPORT void monster_houndeye(entvars_t* pev)
 
 		CHoundeye* monster = new (privateData) CHoundeye();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

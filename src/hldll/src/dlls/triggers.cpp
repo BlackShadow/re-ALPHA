@@ -68,10 +68,10 @@ enum
 //=========================================================
 // SOLID_* / MOVETYPE_* values stored in pev as floats.
 //=========================================================
-#define SOLID_NOT			0.0f
-#define SOLID_TRIGGER		1.0f
-#define SOLID_BSP			4.0f
-#define MOVETYPE_PUSH		7.0f
+
+
+
+
 
 //=========================================================
 // Vtable Use slot offset (binary CBaseEntity layout): the
@@ -218,7 +218,7 @@ void CTriggerMultiple::KeyValue(KeyValueData* pkvd)
 //=========================================================
 void CTriggerMultiple::ActivateMultiTrigger()
 {
-	void* globals = m_pGlobals;
+	void* globals = gpGlobals;
 
 	// only fire once we have passed the re-trigger time stored in
 	// pev->nextthink
@@ -254,14 +254,14 @@ void CTriggerMultiple::ActivateMultiTrigger()
 	// remember the activator for SUB_UseTargets to thread through
 	g_CounterActivatorIndex = PevInt(pev, PEV_ENEMY);
 
-	SUB_UseTargets(NULL, 0, 0.0f);
+	SUB_UseTargets();
 
 	if (m_flWait <= 0.0f)
 	{
 		// one-shot: hand off to RemoveEntity on the next think
-		SetTouch((EntityFunc)NULL);
+		SetTouch(NULL);
 		PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
-		SetRemoveThink();
+		SetThink(&CBaseEntity::SUB_Remove);
 	}
 	else
 	{
@@ -278,7 +278,7 @@ void CTriggerMultiple::ActivateMultiTrigger()
 //=========================================================
 void CTriggerMultiple::MultiWaitOver(CBaseEntity* pOther)
 {
-	SetThink((ThinkFunc)NULL);
+	SetThink(NULL);
 }
 
 //=========================================================
@@ -305,7 +305,7 @@ void CTriggerMultiple::MultiTouch(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	entvars_t* pevOther = OtherVars(m_pGlobals);
+	entvars_t* pevOther = OtherVars(gpGlobals);
 	if (!ClassNameIs(pevOther, kPlayer))
 		return;
 
@@ -328,7 +328,7 @@ void CTriggerMultiple::MultiTouch(CBaseEntity* pOther)
 		Vector& otherAngles = PevVector(pevOther, PEV_ANGLES);
 		EngineMakeVectors(VecPtr(otherAngles));
 
-		const float* forward = GlobalsForward(m_pGlobals);
+		const float* forward = GlobalsForward(gpGlobals);
 		float dot = movedir.x * forward[0] + movedir.y * forward[1] + movedir.z * forward[2];
 		if (dot >= 0.0f)
 			fire = 1;
@@ -337,7 +337,7 @@ void CTriggerMultiple::MultiTouch(CBaseEntity* pOther)
 	if (fire)
 	{
 		// record the toucher as the trigger's enemy/activator
-		PevInt(pev, PEV_ENEMY) = *GlobalsInt(m_pGlobals, GLOBALS_OTHER_ENT);
+		PevInt(pev, PEV_ENEMY) = *GlobalsInt(gpGlobals, GLOBALS_OTHER_ENT);
 		ActivateMultiTrigger();
 	}
 }
@@ -407,7 +407,7 @@ void CTriggerHurt::HurtTouch(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	entvars_t* pevOther = OtherVars(m_pGlobals);
+	entvars_t* pevOther = OtherVars(gpGlobals);
 	if (!pevOther)
 		return;
 
@@ -417,7 +417,7 @@ void CTriggerHurt::HurtTouch(CBaseEntity* pOther)
 
 	// throttle: re-arm time stored at object offset 28
 	float& flNextDmgTime = *(float*)((unsigned char*)this + 28);
-	if (flNextDmgTime > GlobalsTime(m_pGlobals))
+	if (flNextDmgTime > GlobalsTime(gpGlobals))
 		return;
 
 	edict_t* pOtherEdict = EdictFromEntvars(pevOther);
@@ -466,7 +466,7 @@ void CTriggerHurt::Spawn()
 	if (PevInt(pev, PEV_TARGETNAME) != 0)
 		SetUse(&CTriggerHurt::ToggleUse);
 	else
-		SetDoNothingUse();
+		SetUse(&CBaseEntity::SUB_DoNothing);
 }
 
 //=========================================================
@@ -502,7 +502,7 @@ void CTriggerMonsterJump::JumpTouch(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	entvars_t* pevOther = OtherVars(m_pGlobals);
+	entvars_t* pevOther = OtherVars(gpGlobals);
 	if (!pevOther)
 		return;
 
@@ -640,7 +640,7 @@ void CTriggerCDAudio::CDAudioTouch(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	entvars_t* pevOther = OtherVars(m_pGlobals);
+	entvars_t* pevOther = OtherVars(gpGlobals);
 	if (!ClassNameIs(pevOther, kPlayer))
 		return;
 
@@ -661,9 +661,9 @@ void CTriggerCDAudio::CDAudioTouch(CBaseEntity* pOther)
 	}
 
 	// go dormant, then remove on the next think
-	SetDoNothingTouch();
-	SetRemoveThink();
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(m_pGlobals) + 0.1f;
+	SetTouch(&CBaseEntity::SUB_DoNothing);
+	SetThink(&CBaseEntity::SUB_Remove);
+	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(gpGlobals) + 0.1f;
 }
 
 //=========================================================
@@ -707,7 +707,7 @@ void CTriggerCounter::KeyValue(KeyValueData* pkvd)
 //=========================================================
 void CTriggerCounter::ActivateMultiTrigger()
 {
-	void* globals = m_pGlobals;
+	void* globals = gpGlobals;
 
 	if (GlobalsTime(globals) < PevFloat(pev, PEV_NEXTTHINK))
 		return;
@@ -734,11 +734,11 @@ void CTriggerCounter::ActivateMultiTrigger()
 	}
 
 	g_CounterActivatorIndex = PevInt(pev, PEV_ENEMY);
-	SUB_UseTargets(NULL, 0, 0.0f);
+	SUB_UseTargets();
 
 	if (m_flWait <= 0.0f)
 	{
-		SetTouch((EntityFunc)NULL);
+		SetTouch(NULL);
 		PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
 		SetThink(&CTriggerCounter::CounterRemoveThink);
 	}
@@ -813,7 +813,7 @@ void CTriggerCounter::CounterUse(CBaseEntity* pOther)
 void CTriggerCounter::CounterWaitOver(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
-	SetThink((ThinkFunc)NULL);
+	SetThink(NULL);
 }
 
 //=========================================================
@@ -907,17 +907,17 @@ void CTriggerChangeLevel::ChangeLevelTouch(CBaseEntity* pOther)
 	HL_UNUSED(pOther);
 
 	// The binary: only the player triggers the transition.
-	entvars_t* pevPlayer = OtherVars(m_pGlobals);
+	entvars_t* pevPlayer = OtherVars(gpGlobals);
 	if (!ClassNameIs(pevPlayer, kPlayer))
 		return;
 
 	// The binary: disable so we only fire once.
-	SetTouch((EntityFunc)NULL);
+	SetTouch(NULL);
 	PevFloat(pev, PEV_SOLID) = SOLID_NOT;
 
 	// The binary: malloc(120) level list -> gpGlobals+176; clear found flag.
 	LEVELLIST* pLevelList = (LEVELLIST*)malloc(sizeof(LEVELLIST));
-	*(void**)((unsigned char*)m_pGlobals + 176) = pLevelList;
+	*(void**)((unsigned char*)gpGlobals + 176) = pLevelList;
 	if (pLevelList)
 		pLevelList->foundLandmark = 0;
 
@@ -925,7 +925,7 @@ void CTriggerChangeLevel::ChangeLevelTouch(CBaseEntity* pOther)
 	strcpy(g_szChangeMapName, MapName());
 
 	// The binary: fire pev->target / killtarget before the transition.
-	SUB_UseTargets(NULL, 0, 0.0f);
+	SUB_UseTargets();
 
 	// The binary: search for the info_landmark within 255u of the trigger's
 	// bbox center (: pev+4 absmin + 0.5*pev->size) and, if found, record its
@@ -1040,7 +1040,7 @@ void CTriggerPush::Touch(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	entvars_t* pevOther = OtherVars(m_pGlobals);
+	entvars_t* pevOther = OtherVars(gpGlobals);
 	if (!pevOther)
 		return;
 
@@ -1136,7 +1136,7 @@ void CLadder::Touch(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	entvars_t* pevOther = OtherVars(m_pGlobals);
+	entvars_t* pevOther = OtherVars(gpGlobals);
 	if (!ClassNameIs(pevOther, kPlayer))
 		return;
 
@@ -1213,7 +1213,7 @@ void CFriction::FrictionTouch(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	entvars_t* pevOther = OtherVars(m_pGlobals);
+	entvars_t* pevOther = OtherVars(gpGlobals);
 	if (!pevOther)
 		return;
 
@@ -1323,7 +1323,7 @@ void CMultiManager::KeyValue(KeyValueData* pkvd)
 //=========================================================
 void CMultiManager::ManagerThink(CBaseEntity* pOther)
 {
-	float time = GlobalsTime(m_pGlobals);
+	float time = GlobalsTime(gpGlobals);
 
 	PevFloat(pev, PEV_NEXTTHINK) = time + 0.1f;
 
@@ -1365,7 +1365,6 @@ void CMultiManager::ManagerThink(CBaseEntity* pOther)
 							break;
 						pEntity = new (priv) CBaseEntity();
 						pEntity->pev = pevTarget;
-						pEntity->m_pGlobals = GlobalsFromEntvars(pevTarget);
 					}
 
 					pEntity->Use(NULL);
@@ -1388,7 +1387,7 @@ void CMultiManager::ManagerThink(CBaseEntity* pOther)
 		for (i = 0; i < Count(); ++i)
 			Fired(i) = 0;
 
-		SetDoNothingThink();			// SUB_DoNothing
+		SetThink(&CBaseEntity::SUB_DoNothing);			// SUB_DoNothing
 		SetUse(&CMultiManager::ManagerUse);
 	}
 }
@@ -1403,13 +1402,13 @@ void CMultiManager::ManagerUse(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	float time = GlobalsTime(m_pGlobals);
+	float time = GlobalsTime(gpGlobals);
 
 	int i;
 	for (i = 0; i < Count(); ++i)
 		FireTime(i) = time + Delay(i);
 
-	SetDoNothingUse();			// SUB_DoNothing
+	SetUse(&CBaseEntity::SUB_DoNothing);			// SUB_DoNothing
 	SetThink(&CMultiManager::ManagerThink);
 	PevFloat(pev, PEV_NEXTTHINK) = time;
 }
@@ -1455,7 +1454,7 @@ HL_COMPILE_TIME_ASSERT(sizeof(CMultiManager) <= 392, CMultiManager_size);
 
 //=========================================================
 // Shared construction helper - placement-new a T into the
-// edict's private data and wire pev / m_pGlobals.
+// edict's private data and wire pev / gpGlobals.
 //=========================================================
 template <typename T>
 static void ConstructEntity(entvars_t* pev, int size)
@@ -1489,7 +1488,7 @@ static void ConstructEntity(entvars_t* pev, int size)
 
 		T* self = new (privateData) T();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 

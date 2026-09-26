@@ -41,7 +41,7 @@
 #define AMBIENT_ATTN_EVERYWHERE	0.0f
 #define AMBIENT_VOLUME_SCALE	0.1		// pev.health holds 0..10 volume; * 0.1 -> 0..1 (binary multiplies by a double)
 
-#define SVC_ROOMTYPE			37		// engine message: set client DSP roomtype
+
 
 static const char kNullSound[] = "common/null.wav";
 
@@ -170,7 +170,7 @@ void CAmbientGeneric::RampThink(CBaseEntity* pOther)
 
 	// Stop thinking (binary points the think at the empty SUB_DoNothing
 	// stub the binary).
-	SetDoNothingThink();
+	SetThink(&CBaseEntity::SUB_DoNothing);
 }
 
 //=========================================================
@@ -312,7 +312,6 @@ static unsigned char* PlayerPrivateData(edict_t* pClient)
 
 	CBasePlayer* pPlayer = new (priv) CBasePlayer();
 	pPlayer->pev = pevClient;
-	pPlayer->m_pGlobals = GlobalsFromEntvars(pevClient);
 
 	return (unsigned char*)priv;
 }
@@ -399,7 +398,7 @@ void CEnvSound::Think(CBaseEntity* pOther)
 			*pRoomRange = flRange;
 
 			// Tell this client to switch to our roomtype.
-			void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+			void* globals = gpGlobals;
 			int* pMsgEntity = (int*)((unsigned char*)globals + GLOBALS_MSG_ENTITY);
 
 			*pMsgEntity = EngineIndexOfEdict(pClient);
@@ -462,7 +461,7 @@ DLLEXPORT void ambient_generic(entvars_t* pev)
 
 		CAmbientGeneric* self = new (privateData) CAmbientGeneric();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -493,6 +492,6 @@ DLLEXPORT void env_sound(entvars_t* pev)
 
 		CEnvSound* self = new (privateData) CEnvSound();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

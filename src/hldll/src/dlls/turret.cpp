@@ -443,7 +443,7 @@ void CTurret::Spawn()
 			EngineSetSize(edict, mins, maxs);
 	}
 
-	m_Activity = 1;
+	m_MonsterState = 1;
 
 	// pev+28 is an unnamed field in the alpha entvars (see SHARED_NEEDS);
 	// this nextthink is immediately overwritten below by GlobalTime()+0.3.
@@ -585,7 +585,7 @@ void CTurret::InitialThink(CBaseEntity* pOther)
 	}
 	else
 	{
-		SetDoNothingThink();
+		SetThink(&CBaseEntity::SUB_DoNothing);
 	}
 }
 
@@ -688,7 +688,7 @@ void CTurret::RetractThink(CBaseEntity* pOther)
 		if (edict)
 			EngineSetSize(edict, mins, maxs);
 
-		SetDoNothingThink();
+		SetThink(&CBaseEntity::SUB_DoNothing);
 	}
 }
 
@@ -920,7 +920,7 @@ void CTurret::FireThink(CBaseEntity* pOther)
 	AdvanceAnimation(TURRET_THINK_FAST);
 
 	edict_t* edict = EdictFromEntvars(pev);
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 
 	// no longer on, or no enemy -> spin down
 	if (!m_iOn || !PevInt(pev, PEV_ENEMY))
@@ -1221,7 +1221,7 @@ void CTurret::Death(int gibType)
 {
 	HL_UNUSED(gibType);
 
-	SetDoNothingThink();
+	SetThink(&CBaseEntity::SUB_DoNothing);
 }
 
 //=========================================================
@@ -1315,6 +1315,6 @@ DLLEXPORT void monster_turret(entvars_t* pev)
 
 		CTurret* monster = new (privateData) CTurret();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

@@ -72,7 +72,7 @@ void CISlave::Spawn()
 	PevFloat(pev, PEV_YAWSPEED) = 8.0f;		// 0x41000000
 	PevInt(pev, PEV_SEQUENCE) = 13;
 
-	m_Activity = 1;
+	m_MonsterState = 1;
 
 	PevFloat(pev, PEV_NEXTTHINK) = PevFloat(pev, PEV_NEXTTHINK) + 1.0f;
 	WalkMonsterStart(NULL);
@@ -153,8 +153,8 @@ void CISlave::Death(int gibType)
 	HL_UNUSED(gibType);
 
 	// this+12 = think = the binary (shared "remove entity" think)
-	SetRemoveThink();
-	// pev->nextthink = *(*(pev+524) + 124) = globals time (read straight off pev, not m_pGlobals)
+	SetThink(&CBaseEntity::SUB_Remove);
+	// pev->nextthink = *(*(pev+524) + 124) = globals time (read straight off pev, not gpGlobals)
 	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(GlobalsFromEntvars(pev));
 }
 
@@ -216,6 +216,6 @@ DLLEXPORT void monster_alien_slave(entvars_t* pev)
 
 		CISlave* monster = new (privateData) CISlave();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

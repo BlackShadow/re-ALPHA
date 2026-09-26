@@ -37,7 +37,7 @@
 // pev->body lives at byte offset 136 in the alpha entvars_t and is not yet
 // named in utils.h. A value of -1.0 means "pick a random scientist body".
 #define PEV_BODY					136
-#define FL_ONGROUND					0x200
+
 
 static const char kScientistModel[] = "models/scientist.mdl";
 
@@ -283,29 +283,29 @@ void CScientist::SetDeathActivity(int type)
 	switch (type)
 	{
 	case 0:
-		m_Activity = 35;
+		m_MonsterState = 35;
 		break;
 	case 1:
-		m_Activity = 36;
+		m_MonsterState = 36;
 		break;
 	case 2:
-		m_Activity = 37;
+		m_MonsterState = 37;
 		break;
 	case 3:
-		m_Activity = 38;
+		m_MonsterState = 38;
 		break;
 	case 4:
-		m_Activity = 39;
+		m_MonsterState = 39;
 		break;
 	default:
-		// The binary default arm the binary alerts and leaves m_Activity at its
+		// The binary default arm the binary alerts and leaves m_MonsterState at its
 		// prior value (no write); it does NOT force activity 35.
 		EngineAlertMessage(1, "Unknown death type!\n");
 		break;
 	}
 
 	PevFloat(pev, PEV_IDEAL_YAW) = PevVector(pev, PEV_ANGLES).y;
-	SetActivity(m_Activity);
+	SetActivity(m_MonsterState);
 	SetThink(&CBaseMonster::MonsterThink);
 	SetNextThink(SCIENTIST_THINK_INTERVAL);
 }
@@ -408,6 +408,6 @@ DLLEXPORT void monster_scientist(entvars_t* pev)
 
 		CScientist* monster = new (privateData) CScientist();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

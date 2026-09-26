@@ -45,9 +45,9 @@
 //   solid    : SOLID_NOT(0), SOLID_BSP(4)
 //   movetype : MOVETYPE_PUSH(7)
 //=========================================================
-#define SOLID_NOT			0.0f
-#define SOLID_BSP			4.0f
-#define MOVETYPE_PUSH		7.0f
+
+
+
 
 //=========================================================
 // func_door spawn flags (pev->spawnflags bits used by the door
@@ -252,7 +252,7 @@ void CBaseDoor::Spawn()
 		// after one frame.
 		PevFloat(pev, PEV_SOLID) = SOLID_NOT;
 		SetThink(&CBaseDoor::WaterThink);
-		PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(m_pGlobals) + 1.0f;
+		PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(gpGlobals) + 1.0f;
 	}
 
 	// bind the brush model and copy its origin
@@ -295,7 +295,7 @@ void CBaseDoor::Spawn()
 
 	// install the bump-open touch handler unless suppressed
 	if ((((int)PevFloat(pev, PEV_SPAWNFLAGS)) & SF_DOOR_NO_DAMAGE_PUSH) != 0)
-		SetDoNothingTouch();
+		SetTouch(&CBaseEntity::SUB_DoNothing);
 	else
 		SetTouch(&CBaseDoor::DoorTouch);
 }
@@ -310,7 +310,7 @@ void CBaseDoor::DoorTouch(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	void* globals = m_pGlobals;
+	void* globals = gpGlobals;
 	edict_t* pToucher = EnginePEntityOfEntIndex(*GlobalsInt(globals, GLOBALS_OTHER_ENTINDEX));
 	entvars_t* pevToucher = EngineGetVarsOfEnt(pToucher);
 
@@ -387,7 +387,7 @@ void CBaseDoor::DoorGoDown(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	void* globals = m_pGlobals;
+	void* globals = gpGlobals;
 	edict_t* pActEdict = EnginePEntityOfEntIndex(*GlobalsInt(globals, GLOBALS_OTHER_ENTINDEX));
 	entvars_t* pevAct = EngineGetVarsOfEnt(pActEdict);
 
@@ -451,7 +451,7 @@ void CBaseDoor::DoorGoDown(CBaseEntity* pOther)
 		AngularMove(destAngle, PevFloat(pev, PEV_DOOR_SPEED));
 	}
 
-	SUB_UseTargets(NULL, 0, 0.0f);
+	SUB_UseTargets();
 }
 
 //=========================================================
@@ -533,7 +533,7 @@ void CBaseDoor::DoorHitBottom(CBaseEntity* pOther)
 	m_toggle_state = DOOR_STATE_CLOSED;
 
 	if ((((int)PevFloat(pev, PEV_SPAWNFLAGS)) & SF_DOOR_NO_DAMAGE_PUSH) != 0)
-		SetDoNothingTouch();
+		SetTouch(&CBaseEntity::SUB_DoNothing);
 	else
 		SetTouch(&CBaseDoor::DoorTouch);
 }
@@ -550,7 +550,7 @@ void CBaseDoor::Blocked(CBaseEntity* pOther)
 	HL_UNUSED(pOther);
 
 	// hurt the blocking entity
-	void* globals = m_pGlobals;
+	void* globals = gpGlobals;
 	edict_t* pBlockerEdict = EnginePEntityOfEntIndex(*GlobalsInt(globals, GLOBALS_OTHER_ENTINDEX));
 	void* blockerPriv = EngineGetPrivateData(pBlockerEdict);
 	if (blockerPriv)
@@ -608,7 +608,6 @@ void CBaseDoor::Blocked(CBaseEntity* pOther)
 			// install the func_door vtable on the freshly bound entity
 			pDoor = new (priv) CBaseDoor();
 			pDoor->pev = pevTarget;
-			pDoor->m_pGlobals = GlobalsFromEntvars(pevTarget);
 		}
 
 		if ((unsigned int)(*(int*)&pDoor->m_flWait) < 0x80000001u)
@@ -728,7 +727,7 @@ void CRotDoor::Spawn()
 	m_toggle_state = DOOR_STATE_CLOSED;
 
 	if ((((int)PevFloat(pev, PEV_SPAWNFLAGS)) & SF_DOOR_NO_DAMAGE_PUSH) != 0)
-		SetDoNothingTouch();
+		SetTouch(&CBaseEntity::SUB_DoNothing);
 	else
 		SetTouch(&CBaseDoor::DoorTouch);
 }
@@ -789,7 +788,7 @@ void CMomentaryDoor::Spawn()
 	m_vecPosition2.z = movedir.z * travel + m_vecPosition1.z;
 
 	// momentary doors install the original null move-done callback
-	SetMoveDoneNoop();
+	SetMoveDone(&CBaseEntity::SUB_DoNothing);
 
 	if ((((int)PevFloat(pev, PEV_SPAWNFLAGS)) & SF_DOOR_START_OPEN) != 0)
 	{
@@ -903,7 +902,7 @@ DLLEXPORT void func_door(entvars_t* pev)
 
 		CBaseDoor* self = new (privateData) CBaseDoor();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -936,7 +935,7 @@ DLLEXPORT void func_water(entvars_t* pev)
 
 		CBaseDoor* self = new (privateData) CBaseDoor();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -967,7 +966,7 @@ DLLEXPORT void func_door_rotating(entvars_t* pev)
 
 		CRotDoor* self = new (privateData) CRotDoor();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -998,6 +997,6 @@ DLLEXPORT void momentary_door(entvars_t* pev)
 
 		CMomentaryDoor* self = new (privateData) CMomentaryDoor();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }

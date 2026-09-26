@@ -390,7 +390,7 @@ void CHGrunt::AlertSound()
 	if (recruits == 0)
 	{
 		EngineAlertMessage(1, "No Squad");
-		m_Activity = 8;
+		m_MonsterState = 8;
 		return;
 	}
 
@@ -420,20 +420,20 @@ void CHGrunt::AlertSound()
 			{
 				if (strcmp(classname, "monster_human_grunt") == 0)
 				{
-					pMember->SetMonsterActivity(25);
-					pMember->SetMonsterIdealActivity(5);
+					pMember->m_MonsterState = 25;
+					pMember->m_IdealMonsterState = 5;
 				}
 				else if (strcmp(classname, "monster_human_assault") == 0)
 				{
-					pMember->SetMonsterActivity(20);
+					pMember->m_MonsterState = 20;
 				}
 			}
 
 			++i;
-			pMember->SetSquadSize(flGroupSize);
-			EngineAlertMessage(1, "%d\n", pMember->SquadSize());
+			pMember->m_iSquadSize = flGroupSize;
+			EngineAlertMessage(1, "%d\n", pMember->m_iSquadSize);
 
-			pevMember = pMember->SquadNext();
+			pevMember = pMember->m_pSquadNext;
 		}
 		while (flGroupSize > i);
 	}
@@ -441,8 +441,8 @@ void CHGrunt::AlertSound()
 	EngineAlertMessage(1, "group of: %d\n", m_iSquadSize);
 
 	m_iSquadSize = (unsigned int)recruits;
-	m_Activity = 20;
-	m_IdealActivity = 26;
+	m_MonsterState = 20;
+	m_IdealMonsterState = 26;
 	m_fSquadLeader = 1;	// binary sets *(this+0x138)=1 (this monster now leads the squad)
 }
 
@@ -458,14 +458,14 @@ int CHGrunt::CheckAttacks(entvars_t* pevEnemy, float flDist)
 	{
 		if (flDist <= HGRUNT_MELEE_DIST && CheckMeleeAttack(pevEnemy))
 		{
-			m_IdealActivity = 7;
+			m_IdealMonsterState = 7;
 			SetThink(&CHGrunt::MeleeAttackThink);
 			return 1;
 		}
 
 		if (CheckRangeAttack(pevEnemy) && flDist <= HGRUNT_RANGE_DIST)
 		{
-			m_IdealActivity = 7;
+			m_IdealMonsterState = 7;
 			SetThink(&CHGrunt::ShootThink);
 			return 1;
 		}
@@ -481,7 +481,7 @@ int CHGrunt::CheckAttacks(entvars_t* pevEnemy, float flDist)
 		return 1;
 	}
 
-	m_IdealActivity = FVisible(pev, pevEnemy) ? 31 : 27;
+	m_IdealMonsterState = FVisible(pev, pevEnemy) ? 31 : 27;
 	SetThink(&CHGrunt::ReloadThink);
 	return 1;
 }
@@ -497,7 +497,7 @@ void CHGrunt::ShootThink(CBaseEntity* pOther)
 	if (!pevEnemy)
 		return;
 
-	if (m_Activity != 30)
+	if (m_MonsterState != 30)
 	{
 		float start[3];
 		float end[3];
@@ -517,13 +517,13 @@ void CHGrunt::ShootThink(CBaseEntity* pOther)
 
 		if (CheckFriendlyFire(pev, dir[0], dir[1], dir[2], HGRUNT_RANGE_DIST))
 		{
-			m_Activity = 27;
-			m_IdealActivity = 31;
+			m_MonsterState = 27;
+			m_IdealMonsterState = 31;
 			SetThink(&CBaseMonster::MonsterThink);
 			return;
 		}
 
-		m_Activity = 30;
+		m_MonsterState = 30;
 		SetActivity(30);
 	}
 
@@ -543,7 +543,7 @@ void CHGrunt::ShootThink(CBaseEntity* pOther)
 
 	if ((m_afEnemyFlags & 2) == 0)
 	{
-		m_Activity = 6;
+		m_MonsterState = 6;
 		SetThink(&CBaseMonster::MonsterThink);
 		return;
 	}
@@ -567,8 +567,8 @@ void CHGrunt::ShootThink(CBaseEntity* pOther)
 
 		if (CheckFriendlyFire(pev, dir[0], dir[1], dir[2], HGRUNT_RANGE_DIST))
 		{
-			m_Activity = 27;
-			m_IdealActivity = 31;
+			m_MonsterState = 27;
+			m_IdealMonsterState = 31;
 			SetThink(&CBaseMonster::MonsterThink);
 			return;
 		}
@@ -587,8 +587,8 @@ void CHGrunt::ShootThink(CBaseEntity* pOther)
 			}
 			else
 			{
-				m_Activity = 25;
-				m_IdealActivity = 31;
+				m_MonsterState = 25;
+				m_IdealMonsterState = 31;
 				SetThink(&CBaseMonster::MonsterThink);
 				m_flNextAttack = GlobalTime() + 1.0f;
 			}
@@ -603,9 +603,9 @@ void CHGrunt::MeleeAttackThink(CBaseEntity* pOther)
 {
 	SetNextThink(HGRUNT_THINK_INTERVAL);
 
-	if (m_Activity != 29)
+	if (m_MonsterState != 29)
 	{
-		m_Activity = 29;
+		m_MonsterState = 29;
 		SetActivity(29);
 		m_flNextAttack = GlobalTime() + 2.0f;
 	}
@@ -630,7 +630,7 @@ void CHGrunt::MeleeAttackThink(CBaseEntity* pOther)
 		// (events&8) block, so gpGlobals forward/up are recomputed from the grunt's
 		// facing before the kick trace and the (250*forward + 200*up) knockback.
 		EngineMakeVectors(VecPtr(PevVector(pev, PEV_ANGLES)));
-		void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+		void* globals = gpGlobals;
 		const float* forward = GlobalsForward(globals);
 		const float* up = GlobalsUp(globals);
 
@@ -677,7 +677,7 @@ void CHGrunt::MeleeAttackThink(CBaseEntity* pOther)
 				}
 
 				m_flNextAttack = GlobalTime();
-				m_Activity = m_IdealActivity;
+				m_MonsterState = m_IdealMonsterState;
 				SetThink(&CBaseMonster::MonsterThink);
 				return;
 			}
@@ -687,7 +687,7 @@ void CHGrunt::MeleeAttackThink(CBaseEntity* pOther)
 	if (m_fSequenceFinished)
 	{
 		SetThink(&CBaseMonster::MonsterThink);
-		m_Activity = m_IdealActivity;
+		m_MonsterState = m_IdealMonsterState;
 	}
 }
 
@@ -698,9 +698,9 @@ void CHGrunt::ReloadThink(CBaseEntity* pOther)
 {
 	SetNextThink(HGRUNT_THINK_INTERVAL);
 
-	if (m_Activity != 32)
+	if (m_MonsterState != 32)
 	{
-		m_Activity = 32;
+		m_MonsterState = 32;
 		SetActivity(32);
 	}
 
@@ -729,7 +729,7 @@ void CHGrunt::ReloadThink(CBaseEntity* pOther)
 	{
 		m_iAmmo = 45;
 		SetThink(&CBaseMonster::MonsterThink);
-		m_Activity = m_IdealActivity;
+		m_MonsterState = m_IdealMonsterState;
 	}
 }
 
@@ -738,9 +738,9 @@ void CHGrunt::ReloadThink(CBaseEntity* pOther)
 //=========================================================
 void CHGrunt::HeavyPainThink(CBaseEntity* pOther)
 {
-	if (m_Activity != 33)
+	if (m_MonsterState != 33)
 	{
-		m_Activity = 33;
+		m_MonsterState = 33;
 		SetActivity(33);
 	}
 
@@ -762,12 +762,12 @@ void CHGrunt::HeavyPainThink(CBaseEntity* pOther)
 
 	if (pevEnemy && FInViewCone(pev, pevEnemy, 0.1f))
 	{
-		m_Activity = 25;
-		m_IdealActivity = 5;
+		m_MonsterState = 25;
+		m_IdealMonsterState = 5;
 	}
 	else
 	{
-		m_Activity = 6;
+		m_MonsterState = 6;
 	}
 }
 
@@ -890,7 +890,7 @@ void CHGrunt::Pain(float flDamage)
 		EngineEmitSound(edict, 2, sound, HGRUNT_VOL, HGRUNT_ATTN_COMBAT);
 	}
 
-	if (m_Activity == 1 || m_Activity == 4)
+	if (m_MonsterState == 1 || m_MonsterState == 4)
 	{
 		// Being hurt while idle/walking rallies the squad (vtable slot 12).
 		AlertSound();
@@ -913,23 +913,23 @@ void CHGrunt::Pain(float flDamage)
 
 	if (FVisible(pev, pevEnemy))
 	{
-		if (m_Activity != 11 && m_Activity != 12)
+		if (m_MonsterState != 11 && m_MonsterState != 12)
 		{
 			if (RandomFloat(0.0f, 1.0f) >= 0.75f)
 			{
-				m_Activity = 31;
+				m_MonsterState = 31;
 			}
 			else
 			{
-				m_Activity = 25;
-				m_IdealActivity = 5;
+				m_MonsterState = 25;
+				m_IdealMonsterState = 5;
 			}
 		}
 	}
 	else
 	{
-		m_Activity = 27;
-		m_IdealActivity = 6;
+		m_MonsterState = 27;
+		m_IdealMonsterState = 6;
 	}
 }
 
@@ -999,7 +999,7 @@ DLLEXPORT void monster_human_grunt(entvars_t* pev)
 
 		CHGrunt* monster = new (privateData) CHGrunt();
 		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 

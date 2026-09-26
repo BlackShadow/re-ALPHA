@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,319 +12,375 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// Subs - Trivial info-marker entities
+// Subs - frequently used global functions and the
+// delay / toggle base entities
 //=========================================================
 
-#include <new>
-#include <string.h>
+#include "extdll.h"
+#include "util.h"
 #include "cbase.h"
-#include "enginefuncs.h"
-#include "hl_exports.h"
-#include "utils.h"
 
-//=========================================================
-// info markers all use the bare CBaseEntity private-data size
-//=========================================================
-#define INFO_PRIVATE_DATA_SIZE	28
-
-//=========================================================
-// CPointEntity - info_player_start / info_player_deathmatch
-//
-// These markers have an empty Spawn (vtable slot 0)
-// and inherit every other slot from CBaseEntity, so they need no
-// behavior of their own beyond the construction wrapper.
-//=========================================================
+// Landmark class
 class CPointEntity : public CBaseEntity
 {
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CPointEntity) <= INFO_PRIVATE_DATA_SIZE, CPointEntity_size);
+LINK_ENTITY_TO_CLASS(info_player_start, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_player_deathmatch, CPointEntity);
 
-//=========================================================
-// CInfoLandmark - info_landmark
-//
-// Spawn makes the entity a zero-size point that
-// is solid (SOLID_BBOX) so it can be located by name at runtime.
-//=========================================================
+// Null Entity, remove on startup
+class CNullEntity : public CBaseEntity
+{
+public:
+	void Spawn();
+};
+
+void CNullEntity::Spawn()
+{
+	REMOVE_ENTITY(ENT(pev));
+}
+
+LINK_ENTITY_TO_CLASS(info_null, CNullEntity);
+
+// Level transition landmark, a point found by name
 class CInfoLandmark : public CBaseEntity
 {
 public:
 	void Spawn();
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CInfoLandmark) <= INFO_PRIVATE_DATA_SIZE, CInfoLandmark_size);
-
-//=========================================================
-// CInfoNull - info_null
-//
-// Spawn removes the entity immediately; it only
-// exists as a placeholder target during map authoring.
-//=========================================================
-class CInfoNull : public CBaseEntity
+void CInfoLandmark::Spawn()
 {
-public:
-	void Spawn();
-};
+	pev->solid = SOLID_BBOX;
+	UTIL_SetSize(pev, g_vecZero, g_vecZero);
+}
 
-HL_COMPILE_TIME_ASSERT(sizeof(CInfoNull) <= INFO_PRIVATE_DATA_SIZE, CInfoNull_size);
+LINK_ENTITY_TO_CLASS(info_landmark, CInfoLandmark);
 
-//=========================================================
-// CHintStairs - hint_stairsup / hint_stairsdown
-//
-// Spawn makes the entity non-solid and installs a
-// think that invokes the entity's own Think slot
-// which is empty for these hints.
-//=========================================================
+// Stair hints for monster navigation
 class CHintStairs : public CBaseEntity
 {
 public:
 	void Spawn();
-	void Think(CBaseEntity* pOther);
-
-private:
-	void HintThink(CBaseEntity* pOther);
+	void Think(CBaseEntity *pOther);
+	void HintThink(CBaseEntity *pOther);
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CHintStairs) <= INFO_PRIVATE_DATA_SIZE, CHintStairs_size);
-
-//=========================================================
-// CInfoLandmark::Spawn
-//=========================================================
-void CInfoLandmark::Spawn()
-{
-	if (!pev)
-		return;
-
-	PevFloat(pev, PEV_SOLID) = 2.0f;	// SOLID_BBOX
-
-	edict_t* edict = EdictFromEntvars(pev);
-	if (!edict)
-		return;
-
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(mins, 0.0f, 0.0f, 0.0f);
-		VecSet(maxs, 0.0f, 0.0f, 0.0f);
-		EngineSetSize(edict, mins, maxs);
-	}
-}
-
-//=========================================================
-// CInfoNull::Spawn
-//=========================================================
-void CInfoNull::Spawn()
-{
-	if (!pev)
-		return;
-
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineRemoveEntity(edict);
-}
-
-//=========================================================
-// CHintStairs::Spawn
-//=========================================================
 void CHintStairs::Spawn()
 {
-	if (!pev)
-		return;
-
-	PevFloat(pev, PEV_SOLID) = 0.0f;	// SOLID_NOT
-
+	pev->solid = SOLID_NOT;
 	SetThink(&CHintStairs::HintThink);
 }
 
-//=========================================================
-// CHintStairs::Think
-//
-// The hint's Think vtable slot is empty.
-//=========================================================
-void CHintStairs::Think(CBaseEntity* pOther)
+void CHintStairs::Think(CBaseEntity *pOther)
 {
 }
 
-//=========================================================
-// CHintStairs::HintThink
-//
-// Invokes the entity's own (empty) Think slot.
-//=========================================================
-void CHintStairs::HintThink(CBaseEntity* pOther)
+void CHintStairs::HintThink(CBaseEntity *pOther)
 {
 	Think(pOther);
 }
 
+LINK_ENTITY_TO_CLASS(hint_stairsup, CHintStairs);
+LINK_ENTITY_TO_CLASS(hint_stairsdown, CHintStairs);
+
 //=========================================================
-// construction wrappers
+// CBaseDelay
 //=========================================================
-
-DLLEXPORT void info_player_start(entvars_t* pev)
+CBaseDelay::CBaseDelay()
 {
-	entvars_t* entvars = pev;
-	if (!entvars)
+	m_flDelay = 0.0f;
+	m_iszKillTarget = 0;
+}
+
+void CBaseDelay::KeyValue(KeyValueData *pkvd)
+{
+	if (FStrEq(pkvd->szKeyName, "delay"))
 	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
+		m_flDelay = (float)atof(pkvd->szValue);
+		pkvd->fHandled = TRUE;
 	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
+	else if (FStrEq(pkvd->szKeyName, "killtarget"))
 	{
-		privateData = EngineAllocPrivateData(edict, INFO_PRIVATE_DATA_SIZE);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, INFO_PRIVATE_DATA_SIZE);
-
-		CPointEntity* self = new (privateData) CPointEntity();
-		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		m_iszKillTarget = ALLOC_STRING(pkvd->szValue);
+		pkvd->fHandled = TRUE;
+	}
+	else
+	{
+		CBaseEntity::KeyValue(pkvd);
 	}
 }
 
-DLLEXPORT void info_player_deathmatch(entvars_t* pev)
+//=========================================================
+// SUB_UseTargets - fires pev->target, or removes the entities
+// named by m_iszKillTarget. With a delay, a temporary entity
+// does it once the delay has passed.
+//
+// The targets' Use() find the activator in gpGlobals->other.
+//=========================================================
+void CBaseDelay::SUB_UseTargets()
 {
-	entvars_t* entvars = pev;
-	if (!entvars)
+	if (m_flDelay != 0.0f)
 	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
+		CBaseDelay *pTemp = GetClassPtr((CBaseDelay *)NULL);
+
+		pTemp->pev->classname = ALLOC_STRING("DelayedUse");
+		pTemp->pev->nextthink = gpGlobals->time + m_flDelay;
+		pTemp->SetThink(&CBaseDelay::DelayThink);
+		pTemp->m_iszKillTarget = m_iszKillTarget;
+		pTemp->m_flDelay = 0.0f;	// prevent "recursion"
+		pTemp->pev->target = pev->target;
+		return;
 	}
 
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
+	// kill the killtargets
+	if (m_iszKillTarget)
+	{
+		const char *pszKillTarget = STRING(m_iszKillTarget);
+		edict_t *pentKillTarget = NULL;
+
+		while ((pentKillTarget = FIND_ENTITY_BY_STRING(pentKillTarget, "targetname", pszKillTarget)) != NULL)
+		{
+			// the search ends at the world
+			if (FNullEnt(pentKillTarget))
+				break;
+
+			REMOVE_ENTITY(pentKillTarget);
+		}
+		return;
+	}
+
+	// fire targets
+	if (FStringNull(pev->target))
 		return;
 
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
+	EOFFSET eoffsetSelf = gpGlobals->self;
+	EOFFSET eoffsetOther = gpGlobals->other;
+
+	const char *pszTarget = STRING(pev->target);
+	edict_t *pentTarget = NULL;
+
+	while ((pentTarget = FIND_ENTITY_BY_STRING(pentTarget, "targetname", pszTarget)) != NULL)
 	{
-		privateData = EngineAllocPrivateData(edict, INFO_PRIVATE_DATA_SIZE);
-		if (!privateData)
-			return;
+		// the search ends at the world
+		if (FNullEnt(pentTarget))
+			break;
 
-		memset(privateData, 0, INFO_PRIVATE_DATA_SIZE);
+		gpGlobals->self = OFFSET(pentTarget);
+		gpGlobals->other = eoffsetSelf;
 
-		CPointEntity* self = new (privateData) CPointEntity();
-		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		CBaseEntity *pTarget = GetClassPtr((CBaseEntity *)VARS(pentTarget));
+		pTarget->Use(NULL);
+
+		gpGlobals->self = eoffsetSelf;
+		gpGlobals->other = eoffsetOther;
 	}
 }
 
-DLLEXPORT void info_null(entvars_t* pev)
+void CBaseDelay::DelayThink(CBaseEntity *pOther)
 {
-	entvars_t* entvars = pev;
-	if (!entvars)
+	// m_flDelay is zero now, so this fires right away
+	SUB_UseTargets();
+	REMOVE_ENTITY(ENT(pev));
+}
+
+//=========================================================
+// SetMovedir - turns pev->angles into the pev->movedir unit
+// vector. Angles of (0 -1 0) and (0 -2 0) mean straight up
+// and straight down.
+//=========================================================
+void SetMovedir(entvars_t *pev)
+{
+	if (pev->angles == Vector(0.0f, -1.0f, 0.0f))
 	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
+		pev->movedir = Vector(0.0f, 0.0f, 1.0f);
+	}
+	else if (pev->angles == Vector(0.0f, -2.0f, 0.0f))
+	{
+		pev->movedir = Vector(0.0f, 0.0f, -1.0f);
+	}
+	else
+	{
+		UTIL_MakeVectors(pev->angles);
+		pev->movedir = gpGlobals->v_forward;
 	}
 
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
+	pev->angles = g_vecZero;
+}
 
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
+//=========================================================
+// CBaseToggle
+//=========================================================
+CBaseToggle::CBaseToggle()
+{
+	m_toggle_state = TS_AT_TOP;
+	m_flActivateFinished = 0.0f;
+	m_flMoveDistance = 0.0f;
+	m_flWait = 0.0f;
+	m_flLip = 0.0f;
+	m_flTWidth = 0.0f;
+	m_flTLength = 0.0f;
+	m_vecPosition1 = g_vecZero;
+	m_vecPosition2 = g_vecZero;
+	m_cTriggersLeft = 0;
+	m_flHeight = 0.0f;
+	m_hActivator = 0;
+	m_pfnCallWhenMoveDone = &CBaseEntity::SUB_DoNothing;
+	m_vecFinalDest = g_vecZero;
+	m_vecFinalAngle = g_vecZero;
+}
+
+void CBaseToggle::KeyValue(KeyValueData *pkvd)
+{
+	if (FStrEq(pkvd->szKeyName, "lip"))
 	{
-		privateData = EngineAllocPrivateData(edict, INFO_PRIVATE_DATA_SIZE);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, INFO_PRIVATE_DATA_SIZE);
-
-		CInfoNull* self = new (privateData) CInfoNull();
-		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		m_flLip = (float)atof(pkvd->szValue);
+		pkvd->fHandled = TRUE;
+	}
+	else if (FStrEq(pkvd->szKeyName, "skin"))
+	{
+		pev->skin = (float)atof(pkvd->szValue);
+		pkvd->fHandled = TRUE;
+	}
+	else if (FStrEq(pkvd->szKeyName, "wait"))
+	{
+		m_flWait = (float)atof(pkvd->szValue);
+		pkvd->fHandled = TRUE;
+	}
+	else if (FStrEq(pkvd->szKeyName, "distance"))
+	{
+		m_flMoveDistance = (float)atof(pkvd->szValue);
+		pkvd->fHandled = TRUE;
+	}
+	else if (FStrEq(pkvd->szKeyName, "movesnd"))
+	{
+		m_bMoveSnd = (unsigned char)(int)atof(pkvd->szValue);
+		pkvd->fHandled = TRUE;
+	}
+	else if (FStrEq(pkvd->szKeyName, "stopsnd"))
+	{
+		m_bStopSnd = (unsigned char)(int)atof(pkvd->szValue);
+		pkvd->fHandled = TRUE;
+	}
+	else if (FStrEq(pkvd->szKeyName, "healthvalue"))
+	{
+		m_bHealthValue = (unsigned char)(int)atof(pkvd->szValue);
+		pkvd->fHandled = TRUE;
 	}
 }
 
-DLLEXPORT void info_landmark(entvars_t* pev)
+//=========================================================
+// LinearMove - calculate pev->velocity and pev->nextthink to
+// reach vecDest from pev->origin traveling at flSpeed
+//=========================================================
+void CBaseToggle::LinearMove(const Vector &vecDest, float flSpeed)
 {
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
+	m_vecFinalDest = vecDest;
 
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
+	// Already there?
+	if (pev->origin == vecDest)
+	{
+		LinearMoveDone(NULL);
 		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, INFO_PRIVATE_DATA_SIZE);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, INFO_PRIVATE_DATA_SIZE);
-
-		CInfoLandmark* self = new (privateData) CInfoLandmark();
-		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
 	}
+
+	// set destdelta to the vector needed to move
+	Vector vecDestDelta = vecDest - pev->origin;
+
+	// divide vector length by speed to get time to reach dest
+	float flTravelTime = vecDestDelta.Length() / flSpeed;
+
+	// too short a move to bother gliding
+	if (flTravelTime < 0.1f)
+	{
+		LinearMoveDone(NULL);
+		return;
+	}
+
+	// set nextthink to trigger a call to LinearMoveDone when dest is reached
+	pev->nextthink = pev->ltime + flTravelTime;
+	SetThink(&CBaseToggle::LinearMoveDone);
+
+	// scale the destdelta vector by the time spent traveling to get velocity
+	pev->velocity = vecDestDelta / flTravelTime;
 }
 
-DLLEXPORT void hint_stairsup(entvars_t* pev)
+//=========================================================
+// After moving, set origin to exact final destination,
+// call "move done" function
+//=========================================================
+void CBaseToggle::LinearMoveDone(CBaseEntity *pOther)
 {
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
+	UTIL_SetOrigin(pev, m_vecFinalDest);
+	pev->velocity = g_vecZero;
+	pev->nextthink = -1.0f;
 
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, INFO_PRIVATE_DATA_SIZE);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, INFO_PRIVATE_DATA_SIZE);
-
-		CHintStairs* self = new (privateData) CHintStairs();
-		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
-	}
+	(this->*m_pfnCallWhenMoveDone)(NULL);
 }
 
-DLLEXPORT void hint_stairsdown(entvars_t* pev)
+//=========================================================
+// AngularMove - calculate pev->avelocity and pev->nextthink
+// to reach vecDestAngle from pev->angles rotating at flSpeed
+//=========================================================
+void CBaseToggle::AngularMove(const Vector &vecDestAngle, float flSpeed)
 {
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
+	m_vecFinalAngle = vecDestAngle;
 
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
+	// Already there?
+	if (pev->angles == vecDestAngle)
+	{
+		AngularMoveDone(NULL);
 		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, INFO_PRIVATE_DATA_SIZE);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, INFO_PRIVATE_DATA_SIZE);
-
-		CHintStairs* self = new (privateData) CHintStairs();
-		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
 	}
+
+	// set destdelta to the vector needed to move
+	Vector vecDestDelta = vecDestAngle - pev->angles;
+
+	// divide by speed to get time to reach dest
+	float flTravelTime = vecDestDelta.Length() / flSpeed;
+
+	// too short a move to bother rotating
+	if (flTravelTime < 0.1f)
+	{
+		AngularMoveDone(NULL);
+		return;
+	}
+
+	// set nextthink to trigger a call to AngularMoveDone when dest is reached
+	pev->nextthink = pev->ltime + flTravelTime;
+	SetThink(&CBaseToggle::AngularMoveDone);
+
+	// scale the destdelta vector by the time spent traveling to get velocity
+	pev->avelocity = vecDestDelta / flTravelTime;
+}
+
+//=========================================================
+// After rotating, set angle to exact final angle, call
+// "move done" function
+//=========================================================
+void CBaseToggle::AngularMoveDone(CBaseEntity *pOther)
+{
+	pev->angles = m_vecFinalAngle;
+	pev->avelocity = g_vecZero;
+	pev->nextthink = -1.0f;
+
+	(this->*m_pfnCallWhenMoveDone)(NULL);
+}
+
+//=========================================================
+// InitTrigger - sets up a brush entity as an invisible
+// trigger volume
+//=========================================================
+void CBaseTrigger::InitTrigger()
+{
+	// trigger angles are used for one-way touches
+	if (pev->angles != g_vecZero)
+		SetMovedir(pev);
+
+	pev->solid = SOLID_TRIGGER;
+	SET_MODEL(ENT(pev), STRING(pev->model));	// set size and link into world
+	pev->movetype = MOVETYPE_NONE;
+	pev->modelindex = 0;
+	pev->model = 0;
 }

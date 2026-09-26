@@ -51,11 +51,11 @@ static const char kScientistModel[] = "models/scientist.mdl";
 //=========================================================
 // brush mover constants
 //=========================================================
-#define SOLID_BSP			4.0f	// pev->solid
-#define MOVETYPE_PUSH		7.0f	// pev->movetype
-#define SOLID_NOT			0.0f
-#define SOLID_TRIGGER		1.0f
-#define MOVETYPE_NONE		0.0f
+
+
+
+
+
 #define AT_CONSOLE			3		// ALERT() message level
 
 #define PLAT_MOVE_VOLUME	1.0f
@@ -204,7 +204,7 @@ void CPlatTrigger::Touch(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
+	void* globals = gpGlobals;
 	if (!globals)
 		return;
 
@@ -285,7 +285,6 @@ void CFuncPlat::SetupTrigger()
 			if (pPlatform)
 			{
 				pPlatform->pev = pevPlat;
-				pPlatform->m_pGlobals = GlobalsFromEntvars(pevPlat);
 			}
 		}
 	}
@@ -305,7 +304,6 @@ void CFuncPlat::SetupTrigger()
 			if (pField)
 			{
 				pField->pev = pevField;
-				pField->m_pGlobals = GlobalsFromEntvars(pevField);
 			}
 		}
 		else
@@ -475,7 +473,7 @@ void CFuncPlat::Blocked(CBaseEntity* pOther)
 	HL_UNUSED(pOther);
 
 	// resolve the entity the engine threaded through globals (the blocker)
-	int blockerIndex = *GlobalsInt(m_pGlobals, GLOBALS_OTHER_ENTINDEX);
+	int blockerIndex = *GlobalsInt(gpGlobals, GLOBALS_OTHER_ENTINDEX);
 	edict_t* pBlockerEdict = EnginePEntityOfEntIndex(blockerIndex);
 	entvars_t* pevBlocker = pBlockerEdict ? EngineGetVarsOfEnt(pBlockerEdict) : NULL;
 
@@ -613,7 +611,6 @@ void CFuncTrain::Next(CBaseEntity* pOther)
 		{
 			CBaseEntity* pCorner = new (cornerPriv) CBaseEntity();
 			pCorner->pev = pevTarget;
-			pCorner->m_pGlobals = GlobalsFromEntvars(pevTarget);
 		}
 	}
 
@@ -701,7 +698,7 @@ void CFuncTrain::Arrived(CBaseEntity* pOther)
 		EngineEmitSound(EdictFromEntvars(pev), 2,
 			EngineStringFromIndex(PevInt(pev, PEV_NOISE)),
 			PLAT_MOVE_VOLUME, PLAT_MOVE_ATTN);
-		PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(m_pGlobals) + 999999.0f;
+		PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(gpGlobals) + 999999.0f;
 		SetThink(&CFuncTrain::Wait);
 	}
 }
@@ -715,7 +712,7 @@ void CFuncTrain::Use(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	if (m_pfnThink == (ThinkFunc)&CFuncTrain::Wait)
+	if (m_pfnThink == static_cast<ENTITYFUNCPTR>(&CFuncTrain::Wait))
 		Next(NULL);
 }
 
@@ -729,7 +726,7 @@ void CFuncTrain::Blocked(CBaseEntity* pOther)
 {
 	HL_UNUSED(pOther);
 
-	void* globals = m_pGlobals;
+	void* globals = gpGlobals;
 	float now = GlobalsTime(globals);
 
 	// m_flActivateFinished gates how often we re-damage
@@ -826,7 +823,7 @@ void CTrainInfo::Touch(CBaseEntity* pOther)
 	HL_UNUSED(pOther);
 
 	// resolve the entity the engine threaded through globals
-	int otherIndex = *GlobalsInt(m_pGlobals, GLOBALS_OTHER_ENTINDEX);
+	int otherIndex = *GlobalsInt(gpGlobals, GLOBALS_OTHER_ENTINDEX);
 	edict_t* pOtherEdict = EnginePEntityOfEntIndex(otherIndex);
 	entvars_t* pevOther = pOtherEdict ? EngineGetVarsOfEnt(pOtherEdict) : NULL;
 
@@ -889,7 +886,7 @@ DLLEXPORT void func_plat(entvars_t* pev)
 
 		CFuncPlat* self = new (privateData) CFuncPlat();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -920,7 +917,7 @@ DLLEXPORT void func_train(entvars_t* pev)
 
 		CFuncTrain* self = new (privateData) CFuncTrain();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
 
@@ -953,6 +950,6 @@ DLLEXPORT void train_info(entvars_t* pev)
 
 		CTrainInfo* self = new (privateData) CTrainInfo();
 		self->pev = entvars;
-		self->m_pGlobals = GlobalsFromEntvars(entvars);
+		gpGlobals = entvars->pSystemGlobals;
 	}
 }
