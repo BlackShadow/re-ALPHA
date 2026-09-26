@@ -13,7 +13,7 @@
 *
 ****/
 #include <windows.h>
-#include <gl/gl.h>
+#include <GL/gl.h>
 #include "quakedef.h"
 
 viddef_t vid;
@@ -195,7 +195,7 @@ extern int IN_ShowMouse(void);
 extern int IN_HideMouse(void);
 extern int IN_ClearMouseState(void);
 extern int IN_MouseEvent(int buttons);
-extern void Key_Event(int key, int down);
+extern void Key_Event(int key, qboolean down);
 extern void Key_ClearStates(void);
 extern void S_BlockSound(void);
 extern void S_UnblockSound(void);

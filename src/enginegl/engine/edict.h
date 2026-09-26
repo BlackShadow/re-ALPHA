@@ -5,7 +5,7 @@
 #include "mathlib.h"
 #include <stddef.h>
 
- // Entity flags (v.flags)
+// Entity flags (v.flags)
 #define FL_FLY					(1<<0)
 #define FL_SWIM					(1<<1)
 #define FL_CONVEYOR				(1<<2)
@@ -36,7 +36,7 @@
 #define FL_KILLME				(1<<30)
 #define FL_DORMANT				(1<<31)
 
- // Trace structure
+// Trace structure
 typedef struct
 {
 	qboolean	allsolid;
@@ -52,11 +52,11 @@ typedef struct
 	struct edict_s *ent;
 } trace_t;
 
- // Maximum BSP leaves tracked per edict (leafnums[]).
+// Maximum BSP leaves tracked per edict (leafnums[]).
 #define MAX_ENT_LEAFS 16
 
- // Entity variables (edict_t::v)
- // Layout is defined by `progs.dat` fielddefs for this build (entityfields = 132).
+// Entity variables (edict_t::v)
+// Layout is defined by `progs.dat` fielddefs for this build (entityfields = 132).
 typedef struct entvars_s
 {
 	float		modelindex; // 0
@@ -161,17 +161,20 @@ typedef struct entvars_s
 	void		*pSystemGlobals; // 131
 } entvars_t;
 
- // Edict structure
+// Edict structure
 typedef struct edict_s
 {
-	int			free;
-	link_t		area; // world link
-	int			num_leafs; // 0..MAX_ENT_LEAFS
+	qboolean	free;
+	link_t		area;				// linked to a division node or leaf
+
+	int			num_leafs;
 	short		leafnums[MAX_ENT_LEAFS];
-	// Extra header state used by this build (baseline/ misc).
-	byte		header_data[68];
-	void		*pvPrivateData; // allocated via ED_AllocPrivateData
-	entvars_t	v; // progs fields
+
+	entity_state_t	baseline;
+
+	float		freetime;			// sv.time when the object was freed
+	void		*pvPrivateData;		// the game DLL's object, allocated by ED_AllocPrivateData
+	entvars_t	v;					// C exported fields from progs
 } edict_t;
 
 #if defined(_DEBUG)
@@ -197,10 +200,10 @@ void ED_ParseGlobals(char *data);
 char *ED_ParseEdict(char *data, edict_t *ent);
 void ED_Print(void *ed);
 
- // Link back from link_t::area to owning edict.
+// Link back from link_t::area to owning edict.
 #define EDICT_FROM_AREA(l) ((edict_t *)((byte *)(l) - offsetof(edict_t, area)))
 
- // Iterate edicts in the contiguous edict buffer (stride = pr_edict_size).
+// Iterate edicts in the contiguous edict buffer (stride = pr_edict_size).
 extern int pr_edict_size;
 #define NEXT_EDICT(e) ((edict_t *)((byte *)(e) + pr_edict_size))
 

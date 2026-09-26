@@ -13,43 +13,43 @@
 *
 ****/
 
- // sys.h -- system interface
- // NOTE: This is a skeleton header derived from reverse engineering.
- // Platform-specific functions will be filled during translation.
+// sys.h -- system interface
+// NOTE: This is a skeleton header derived from reverse engineering.
+// Platform-specific functions will be filled during translation.
 
 #ifndef SYS_H
 #define SYS_H
 
 #include <stddef.h>
 
- // =============================================================================
- // System initialization and shutdown
- // =============================================================================
+// =============================================================================
+// System initialization and shutdown
+// =============================================================================
 
 void Sys_Init(void);
 void Sys_Shutdown(void);
 __declspec(noreturn) void Sys_Error(const char *error, ...);
 void Sys_Quit(void);
 
- // =============================================================================
- // Console and debug output
- // =============================================================================
+// =============================================================================
+// Console and debug output
+// =============================================================================
 
 int Sys_Printf(char *fmt, ...);
 char *Sys_ConsoleInput(void);
 
- // =============================================================================
- // Timing
- // =============================================================================
+// =============================================================================
+// Timing
+// =============================================================================
 
 void Sys_InitFloatTime(void);
 double Sys_FloatTime(void);
 void Sys_Sleep(void);
 void Sys_SendKeyEvents(void);
 
- // =============================================================================
- // File I/ O
- // =============================================================================
+// =============================================================================
+// File I/ O
+// =============================================================================
 
 int Sys_FileOpenRead(char *path, int *handle);
 int Sys_FileOpenWrite(char *path);
@@ -60,10 +60,10 @@ size_t Sys_FileWrite(int handle, void *src, size_t count);
 int Sys_FileTime(char *path);
 int Sys_mkdir(char *path);
 
- // Main entry point for Windows
- // Main entry point for Windows
- // defined in sys_win.c
+// Main entry point for Windows
+// Main entry point for Windows
+// defined in sys_win.c
 
- // =============================================================================
+// =============================================================================
 
 #endif // SYS_H

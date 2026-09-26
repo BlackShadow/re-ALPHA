@@ -1,9 +1,9 @@
 /***
 *
 *	Copyright (c) 1996-2002, Valve LLC. All rights reserved.
-*	
-*	This product contains software technology licensed from Id 
-*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc. 
+*
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
 *	All Rights Reserved.
 *
 ****/
@@ -143,7 +143,7 @@ typedef struct
 	int					unused2[2]; // 96, 100
 } mstudioseqdesc_t; // stride 104
 
- // motion flags
+// motion flags
 #define STUDIO_X		0x0001
 #define STUDIO_Y		0x0002
 #define STUDIO_Z		0x0004
@@ -164,20 +164,20 @@ typedef struct
 
 #define STUDIO_LOOPING	0x0001
 
- // bone flags
+// bone flags
 #define STUDIO_HAS_NORMALS	0x0001
 #define STUDIO_HAS_VERTICES 0x0002
 #define STUDIO_HAS_BBOX		0x0004
 #define STUDIO_HAS_CHROME	0x0008 // if any of the textures have chrome on them
 
-typedef struct 
+typedef struct
 {
 	char				name[32]; // 0
 	int					parent; // 32
 	int					unused[6]; // 36..59
 } mstudiobone_t;
 
-typedef struct 
+typedef struct
 {
 	int					bone; // 0
 	int					type; // 4 (STUDIO_* flags, includes STUDIO_RLOOP)
@@ -185,12 +185,12 @@ typedef struct
 	float				end; // 12
 } mstudiobonecontroller_t;
 
-typedef struct 
+typedef struct
 {
 	int					bone;
 	int					group; // intersection group
 	vec3_t				bbmin; // bounding box
-	vec3_t				bbmax;		
+	vec3_t				bbmax;
 } mstudiobbox_t;
 
 #endif // STUDIO_H

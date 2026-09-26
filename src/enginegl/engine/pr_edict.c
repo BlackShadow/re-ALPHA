@@ -53,8 +53,8 @@ int type_size[8] = {1, 1, 1, 3, 1, 1, 1, 1};
 #define GEFV_CACHESIZE  2
 
 typedef struct {
-    void *pcache;
-    char field[MAX_FIELD_LEN];
+	void *pcache;
+	char field[MAX_FIELD_LEN];
 } gefv_cache;
 
 static gefv_cache gefvCache[GEFV_CACHESIZE];
@@ -109,71 +109,71 @@ void ED_FreePrivateData(edict_t *ent);
 
 edict_t *EDICT_NUM(int n)
 {
-    if (n < 0 || sv_max_edicts <= n)
-        Sys_Error("EDICT_NUM: bad number %i", n);
-    return (edict_t *)((byte *)sv_edicts + n * pr_edict_size);
+	if (n < 0 || sv_max_edicts <= n)
+		Sys_Error("EDICT_NUM: bad number %i", n);
+	return (edict_t *)((byte *)sv_edicts + n * pr_edict_size);
 }
 
 int NUM_FOR_EDICT(void *e)
 {
-    int b;
+	int b;
 
-    b = (int)(((byte *)e - (byte *)sv_edicts) / pr_edict_size);
+	b = (int)(((byte *)e - (byte *)sv_edicts) / pr_edict_size);
 
-    if (b < 0 || b >= *sv_num_edicts)
-        Sys_Error("NUM_FOR_EDICT: bad pointer");
-    return b;
+	if (b < 0 || b >= *sv_num_edicts)
+		Sys_Error("NUM_FOR_EDICT: bad pointer");
+	return b;
 }
 
 edict_t *PROG_TO_EDICT(int e)
 {
-    return (edict_t *)((byte *)sv_edicts + e);
+	return (edict_t *)((byte *)sv_edicts + e);
 }
 
 int EDICT_TO_PROG(void *e)
 {
-    return (int)((byte *)e - (byte *)sv_edicts);
+	return (int)((byte *)e - (byte *)sv_edicts);
 }
 
 int EDICT_INDEX(int offset)
 {
-    return offset / pr_edict_size;
+	return offset / pr_edict_size;
 }
 
 void *ED_AllocPrivateData(edict_t *ent, int size)
 {
-    void *result;
+	void *result;
 
 	if (!ent)
 		return NULL;
 
-    ED_FreePrivateData(ent);
+	ED_FreePrivateData(ent);
 
-    if (size <= 0)
-        return NULL;
+	if (size <= 0)
+		return NULL;
 
-    result = calloc(1, size);
-    *(void **)((byte *)ent + 116) = result;
-    return result;
+	result = calloc(1, size);
+	*(void **)((byte *)ent + 116) = result;
+	return result;
 }
 
 void *ED_GetPrivateData(edict_t *ent)
 {
 	if (!ent)
 		return NULL;
-    return *(void **)((byte *)ent + 116);
+	return *(void **)((byte *)ent + 116);
 }
 
 void ED_FreePrivateData(edict_t *ent)
 {
-    void *block;
+	void *block;
 
 	if (!ent)
 		return;
 
-    block = *(void **)((byte *)ent + 116);
-    if (block)
-    {
+	block = *(void **)((byte *)ent + 116);
+	if (block)
+	{
 #if defined(_DEBUG)
 		if (g_dispatchDepth > 0)
 		{
@@ -187,39 +187,39 @@ void ED_FreePrivateData(edict_t *ent)
 		{
 			free(block);
 		}
-    }
-    *(void **)((byte *)ent + 116) = NULL;
+	}
+	*(void **)((byte *)ent + 116) = NULL;
 }
 
 char *ED_NewString(const char *string)
 {
-    int len;
-    int i;
-    int j;
-    char *new_str;
-    char c;
+	int len;
+	int i;
+	int j;
+	char *new_str;
+	char c;
 
-    len = strlen(string) + 1;
-    new_str = (char *)Hunk_Alloc(len);
+	len = strlen(string) + 1;
+	new_str = (char *)Hunk_Alloc(len);
 
-    for (i = 0, j = 0; len > i; i++)
-    {
-        c = string[i];
-        if (c == '\\' && len - 1 > i)
-        {
-            i++;
-            if (string[i] == 'n')
-                new_str[j] = '\n';
-            else
-                new_str[j] = '\\';
-        }
-        else
-        {
-            new_str[j] = c;
-        }
-        j++;
-    }
-    return new_str;
+	for (i = 0, j = 0; len > i; i++)
+	{
+		c = string[i];
+		if (c == '\\' && len - 1 > i)
+		{
+			i++;
+			if (string[i] == 'n')
+				new_str[j] = '\n';
+			else
+				new_str[j] = '\\';
+		}
+		else
+		{
+			new_str[j] = c;
+		}
+		j++;
+	}
+	return new_str;
 }
 
 static qboolean ED_EntityValueIsRawInt(const ddef_t *def)
@@ -234,17 +234,17 @@ static qboolean ED_EntityValueIsRawInt(const ddef_t *def)
 		return false;
 
 	if (!strcmp(name, "weapon") ||
-	    !strcmp(name, "weapons") ||
-	    !strcmp(name, "ammo_1") ||
-	    !strcmp(name, "ammo_2") ||
-	    !strcmp(name, "ammo_3") ||
-	    !strcmp(name, "ammo_4") ||
-	    !strcmp(name, "items") ||
-	    !strcmp(name, "items2") ||
-	    !strcmp(name, "sequence") ||
-	    !strcmp(name, "controller") ||
-	    !strcmp(name, "blending") ||
-	    !strcmp(name, "button"))
+		!strcmp(name, "weapons") ||
+		!strcmp(name, "ammo_1") ||
+		!strcmp(name, "ammo_2") ||
+		!strcmp(name, "ammo_3") ||
+		!strcmp(name, "ammo_4") ||
+		!strcmp(name, "items") ||
+		!strcmp(name, "items2") ||
+		!strcmp(name, "sequence") ||
+		!strcmp(name, "controller") ||
+		!strcmp(name, "blending") ||
+		!strcmp(name, "button"))
 	{
 		return true;
 	}
@@ -254,126 +254,126 @@ static qboolean ED_EntityValueIsRawInt(const ddef_t *def)
 
 int ED_ParseEpair(void *base, ddef_t *key, char *s)
 {
-    int *dest;
-    ddef_t *def;
-    int type;
-    char temp[128];
-    char *v;
-    char *w;
-    int i;
-    float fval;
-    int ival;
-    ddef_t *field;
-    dfunction_t *func;
+	int *dest;
+	ddef_t *def;
+	int type;
+	char temp[128];
+	char *v;
+	char *w;
+	int i;
+	float fval;
+	int ival;
+	ddef_t *field;
+	dfunction_t *func;
 
-    def = (ddef_t *)key;
-    dest = (int *)((byte *)base + 4 * def->ofs);
+	def = (ddef_t *)key;
+	dest = (int *)((byte *)base + 4 * def->ofs);
 
-    type = def->type;
-    type &= ~0x8000;
+	type = def->type;
+	type &= ~0x8000;
 
-    switch (type)
-    {
-        case 1:
-            ival = (int)ED_NewString(s) - (int)pr_strings;
-            *dest = ival;
-            return 1;
+	switch (type)
+	{
+		case 1:
+			ival = (int)ED_NewString(s) - (int)pr_strings;
+			*dest = ival;
+			return 1;
 
-        case 2:
-            fval = (float)atof(s);
-            *(float *)dest = fval;
-            return 1;
+		case 2:
+			fval = (float)atof(s);
+			*(float *)dest = fval;
+			return 1;
 
-        case 3:
-            strcpy(temp, s);
-            v = temp;
-            w = temp;
-            for (i = 0; i < 3; i++)
-            {
-                while (*v && *v != ' ')
-                    v++;
-                *v++ = 0;
-                ((float *)dest)[i] = (float)atof(w);
-                w = v;
-            }
-            return 1;
+		case 3:
+			strcpy(temp, s);
+			v = temp;
+			w = temp;
+			for (i = 0; i < 3; i++)
+			{
+				while (*v && *v != ' ')
+					v++;
+				*v++ = 0;
+				((float *)dest)[i] = (float)atof(w);
+				w = v;
+			}
+			return 1;
 
-        case 4:
-            ival = atoi(s);
-            if (ED_EntityValueIsRawInt(def))
-            {
-                *dest = ival;
-            }
-            else
-            {
-                *dest = (int)EDICT_NUM(ival) - (int)sv_edicts;
-            }
-            return 1;
+		case 4:
+			ival = atoi(s);
+			if (ED_EntityValueIsRawInt(def))
+			{
+				*dest = ival;
+			}
+			else
+			{
+				*dest = (int)EDICT_NUM(ival) - (int)sv_edicts;
+			}
+			return 1;
 
-        case 5:
-            field = ED_FindField(s);
-            if (!field)
-            {
-                Con_Printf("Can't find field %s\n", s);
-                return 0;
-            }
-            *dest = *(int *)((byte *)pr_globals + 4 * field->ofs);
-            return 1;
+		case 5:
+			field = ED_FindField(s);
+			if (!field)
+			{
+				Con_Printf("Can't find field %s\n", s);
+				return 0;
+			}
+			*dest = *(int *)((byte *)pr_globals + 4 * field->ofs);
+			return 1;
 
-        case 6:
-            if (g_iextdllcount > 0)
-            {
-                // In game-DLL builds, entvars function slots (think/use/touch/etc.) hold raw 32-bit
-                // function pointers, not QuakeC function indices. Preserve numeric values from saves.
-                if (!strncmp(s, "dll:", 4))
-                {
-                    char *endptr;
-                    char *endptr2;
-                    long dll_index;
-                    unsigned long offset;
+		case 6:
+			if (g_iextdllcount > 0)
+			{
+				// In game-DLL builds, entvars function slots (think/use/touch/etc.) hold raw 32-bit
+				// function pointers, not QuakeC function indices. Preserve numeric values from saves.
+				if (!strncmp(s, "dll:", 4))
+				{
+					char *endptr;
+					char *endptr2;
+					long dll_index;
+					unsigned long offset;
 
-                    endptr = NULL;
-                    dll_index = strtol(s + 4, &endptr, 10);
-                    if (endptr && *endptr == ':')
-                    {
-                        endptr2 = NULL;
-                        offset = strtoul(endptr + 1, &endptr2, 10);
-                        if (endptr2 && !*endptr2 && dll_index >= 0 && dll_index < g_iextdllcount)
-                        {
-                            *dest = (int)((byte *)g_rgextdll[dll_index] + offset);
-                            return 1;
-                        }
-                    }
-                }
+					endptr = NULL;
+					dll_index = strtol(s + 4, &endptr, 10);
+					if (endptr && *endptr == ':')
+					{
+						endptr2 = NULL;
+						offset = strtoul(endptr + 1, &endptr2, 10);
+						if (endptr2 && !*endptr2 && dll_index >= 0 && dll_index < g_iextdllcount)
+						{
+							*dest = (int)((byte *)g_rgextdll[dll_index] + offset);
+							return 1;
+						}
+					}
+				}
 
-                char *endptr;
-                long lval;
+				char *endptr;
+				long lval;
 
-                endptr = NULL;
-                lval = strtol(s, &endptr, 10);
-                if (endptr && !*endptr)
-                {
-                    *dest = (int)lval;
-                    return 1;
-                }
-            }
+				endptr = NULL;
+				lval = strtol(s, &endptr, 10);
+				if (endptr && !*endptr)
+				{
+					*dest = (int)lval;
+					return 1;
+				}
+			}
 
-            func = ED_FindFunction(s);
-            if (!func)
-            {
-                if (g_iextdllcount > 0)
-                {
-                    *dest = 0;
-                    return 1;
-                }
-                Con_Printf("Can't find function %s\n", s);
-                return 0;
-            }
-            *dest = (int)(((byte *)func - (byte *)pr_functions) / 36);
-            return 1;
-    }
+			func = ED_FindFunction(s);
+			if (!func)
+			{
+				if (g_iextdllcount > 0)
+				{
+					*dest = 0;
+					return 1;
+				}
+				Con_Printf("Can't find function %s\n", s);
+				return 0;
+			}
+			*dest = (int)(((byte *)func - (byte *)pr_functions) / 36);
+			return 1;
+	}
 
-    return 1;
+	return 1;
 }
 
 int ED_SuckOutClassname(char *data, edict_t *ent)
@@ -418,42 +418,42 @@ void ED_FreePrivateDataWrapper(edict_t *ed)
 
 void *ED_GetDispatchFunction(void *ent, int callback_type)
 {
-    extern void *g_pfnDispatchSpawn;
-    extern void *g_pfnDispatchThink;
-    extern void *g_pfnDispatchUse;
-    extern void *g_pfnDispatchTouch;
-    extern void *g_pfnDispatchBlocked;
-    extern void *g_pfnDispatchKeyValue;
-    extern void *g_pfnDispatchSave;
+	extern void *g_pfnDispatchSpawn;
+	extern void *g_pfnDispatchThink;
+	extern void *g_pfnDispatchUse;
+	extern void *g_pfnDispatchTouch;
+	extern void *g_pfnDispatchBlocked;
+	extern void *g_pfnDispatchKeyValue;
+	extern void *g_pfnDispatchSave;
 
-    switch (callback_type)
-    {
-        case 0:
-            return g_pfnDispatchSpawn;
-        case 1:
-            return g_pfnDispatchThink;
-        case 2:
-            return g_pfnDispatchTouch;
-        case 3:
-            return g_pfnDispatchUse;
-        case 4:
-            return g_pfnDispatchBlocked;
-        case 5:
-            return g_pfnDispatchKeyValue;
-        case 6:
-            return g_pfnDispatchSave;
-    }
-    return NULL;
+	switch (callback_type)
+	{
+		case 0:
+			return g_pfnDispatchSpawn;
+		case 1:
+			return g_pfnDispatchThink;
+		case 2:
+			return g_pfnDispatchTouch;
+		case 3:
+			return g_pfnDispatchUse;
+		case 4:
+			return g_pfnDispatchBlocked;
+		case 5:
+			return g_pfnDispatchKeyValue;
+		case 6:
+			return g_pfnDispatchSave;
+	}
+	return NULL;
 }
 
 void *ED_CallDispatch(void *ent, int callback_type, void *param)
 {
-    typedef void *(*dispatch_fn)(void *, void *);
-    dispatch_fn func;
+	typedef void *(*dispatch_fn)(void *, void *);
+	dispatch_fn func;
 	void *result;
 
-    func = (dispatch_fn)ED_GetDispatchFunction(ent, callback_type);
-    if (func)
+	func = (dispatch_fn)ED_GetDispatchFunction(ent, callback_type);
+	if (func)
 	{
 #if defined(_DEBUG)
 		ED_DispatchEnter();
@@ -465,10 +465,10 @@ void *ED_CallDispatch(void *ent, int callback_type, void *param)
 		return result;
 	}
 
-    if (!callback_type)
-        Con_Printf("ASSERT FAILURE: entity method (spawn) is null\n");
+	if (!callback_type)
+		Con_Printf("ASSERT FAILURE: entity method (spawn) is null\n");
 
-    return NULL;
+	return NULL;
 }
 
 void ED_PrintEdict_f(void)
@@ -481,70 +481,70 @@ void ED_PrintEdict_f(void)
 
 void ED_PrintEdicts(void)
 {
-    int i;
+	int i;
 
-    Con_Printf("%i entities\n", *sv_num_edicts);
-    for (i = 0; i < *sv_num_edicts; i++)
-        ED_Print(EDICT_NUM(i));
+	Con_Printf("%i entities\n", *sv_num_edicts);
+	for (i = 0; i < *sv_num_edicts; i++)
+		ED_Print(EDICT_NUM(i));
 }
 
 void ED_Count(void)
 {
-    int i;
-    int active;
-    int view;
-    int touch;
-    int step;
-    void *ent;
-    float *ent_v;
+	int i;
+	int active;
+	int view;
+	int touch;
+	int step;
+	void *ent;
+	float *ent_v;
 
-    active = 0;
-    view = 0;
-    touch = 0;
-    step = 0;
+	active = 0;
+	view = 0;
+	touch = 0;
+	step = 0;
 
-    for (i = 0; i < *sv_num_edicts; i++)
-    {
-        ent = EDICT_NUM(i);
-        ent_v = (float *)ent;
+	for (i = 0; i < *sv_num_edicts; i++)
+	{
+		ent = EDICT_NUM(i);
+		ent_v = (float *)ent;
 
-        if (*(int *)ent)
-            continue;
+		if (*(int *)ent)
+			continue;
 
-        active++;
-        if (ent_v[39] != 0.0f)
-            touch++;
-        if (*(int *)((char *)ent + 248))
-            view++;
-        if (ent_v[38] == 4.0f)
-            step++;
-    }
+		active++;
+		if (ent_v[39] != 0.0f)
+			touch++;
+		if (*(int *)((char *)ent + 248))
+			view++;
+		if (ent_v[38] == 4.0f)
+			step++;
+	}
 
-    Con_Printf("num_edicts:%3i\n", *sv_num_edicts);
-    Con_Printf("active    :%3i\n", active);
-    Con_Printf("view      :%3i\n", view);
-    Con_Printf("touch     :%3i\n", touch);
-    Con_Printf("step      :%3i\n", step);
+	Con_Printf("num_edicts:%3i\n", *sv_num_edicts);
+	Con_Printf("active    :%3i\n", active);
+	Con_Printf("view      :%3i\n", view);
+	Con_Printf("touch     :%3i\n", touch);
+	Con_Printf("step      :%3i\n", step);
 }
 
 void ED_Init(void)
 {
-    Cmd_AddCommand("edict", ED_PrintEdict_f);
-    Cmd_AddCommand("edicts", ED_PrintEdicts);
-    Cmd_AddCommand("edictcount", ED_Count);
-    Cmd_AddCommand("profile", PR_Profile_f);
+	Cmd_AddCommand("edict", ED_PrintEdict_f);
+	Cmd_AddCommand("edicts", ED_PrintEdicts);
+	Cmd_AddCommand("edictcount", ED_Count);
+	Cmd_AddCommand("profile", PR_Profile_f);
 
-    Cvar_RegisterVariable(&nomonsters);
-    Cvar_RegisterVariable(&gamecfg);
-    Cvar_RegisterVariable(&scratch1);
-    Cvar_RegisterVariable(&scratch2);
-    Cvar_RegisterVariable(&scratch3);
-    Cvar_RegisterVariable(&scratch4);
-    Cvar_RegisterVariable(&savedgamecfg);
-    Cvar_RegisterVariable(&saved1);
-    Cvar_RegisterVariable(&saved2);
-    Cvar_RegisterVariable(&saved3);
-    Cvar_RegisterVariable(&saved4);
+	Cvar_RegisterVariable(&nomonsters);
+	Cvar_RegisterVariable(&gamecfg);
+	Cvar_RegisterVariable(&scratch1);
+	Cvar_RegisterVariable(&scratch2);
+	Cvar_RegisterVariable(&scratch3);
+	Cvar_RegisterVariable(&scratch4);
+	Cvar_RegisterVariable(&savedgamecfg);
+	Cvar_RegisterVariable(&saved1);
+	Cvar_RegisterVariable(&saved2);
+	Cvar_RegisterVariable(&saved3);
+	Cvar_RegisterVariable(&saved4);
 }
 
 void PR_Profile_f(void)
@@ -612,36 +612,36 @@ void ED_WriteGlobals(savebuf_t *sb)
 
 void ED_ParseGlobals(char *data)
 {
-    char keyname[64];
-    ddef_t *key;
+	char keyname[64];
+	ddef_t *key;
 
-    while (1)
-    {
-        data = COM_Parse(data);
-        if (com_token[0] == '}')
-            break;
-        if (!data)
-            Sys_Error("ED_ParseEntity: EOF without closing brace");
+	while (1)
+	{
+		data = COM_Parse(data);
+		if (com_token[0] == '}')
+			break;
+		if (!data)
+			Sys_Error("ED_ParseEntity: EOF without closing brace");
 
-        strcpy(keyname, com_token);
+		strcpy(keyname, com_token);
 
-        data = COM_Parse(data);
-        if (!data)
-            Sys_Error("ED_ParseEntity: EOF without closing brace");
-        if (com_token[0] == '}')
-            Sys_Error("ED_ParseEntity: closing brace without data");
+		data = COM_Parse(data);
+		if (!data)
+			Sys_Error("ED_ParseEntity: EOF without closing brace");
+		if (com_token[0] == '}')
+			Sys_Error("ED_ParseEntity: closing brace without data");
 
-        key = ED_FindGlobal(keyname);
-        if (key)
-        {
-            if (!ED_ParseEpair(pr_globals, key, com_token))
-                Host_Error("ED_ParseGlobals: parse error");
-        }
-        else
-        {
-            Con_Printf("'%s' is not a global\n", keyname);
-        }
-    }
+		key = ED_FindGlobal(keyname);
+		if (key)
+		{
+			if (!ED_ParseEpair(pr_globals, key, com_token))
+				Host_Error("ED_ParseGlobals: parse error");
+		}
+		else
+		{
+			Con_Printf("'%s' is not a global\n", keyname);
+		}
+	}
 }
 
 char *ED_ParseEdict(char *data, edict_t *ent)
@@ -786,8 +786,8 @@ void ED_LoadFromFile(char *data)
 		if (deathmatch.value == 0.0f)
 		{
 			if ((current_skill == 0 && (spawnflags & 0x100)) ||
-			    (current_skill == 1 && (spawnflags & 0x200)) ||
-			    (current_skill >= 2 && (spawnflags & 0x400)))
+				(current_skill == 1 && (spawnflags & 0x200)) ||
+				(current_skill >= 2 && (spawnflags & 0x400)))
 			{
 				++inhibit;
 				ED_Free(ent);
@@ -820,92 +820,92 @@ void ED_LoadFromFile(char *data)
 
 void PR_LoadProgs(void)
 {
-    int i;
-    int *progs_ptr;
-    unsigned char *progs_bytes;
-    short *stmt;
-    int *func;
-    short *def;
+	int i;
+	int *progs_ptr;
+	unsigned char *progs_bytes;
+	short *stmt;
+	int *func;
+	short *def;
 
-    for (i = 0; i < GEFV_CACHESIZE; i++)
-        gefvCache[i].field[0] = 0;
+	for (i = 0; i < GEFV_CACHESIZE; i++)
+		gefvCache[i].field[0] = 0;
 
-    CRC_Init(&pr_crc);
+	CRC_Init(&pr_crc);
 
-    progs = COM_LoadHunkFile("progs.dat");
-    if (!progs)
-        Sys_Error("PR_LoadProgs: couldn't load progs.dat");
+	progs = COM_LoadHunkFile("progs.dat");
+	if (!progs)
+		Sys_Error("PR_LoadProgs: couldn't load progs.dat");
 
-    Con_DPrintf("Programs occupy %iK.\n", com_filesize / 1024);
+	Con_DPrintf("Programs occupy %iK.\n", com_filesize / 1024);
 
-    progs_bytes = (unsigned char *)progs;
-    for (i = 0; i < com_filesize; i++)
-        CRC_ProcessByte(&pr_crc, progs_bytes[i]);
+	progs_bytes = (unsigned char *)progs;
+	for (i = 0; i < com_filesize; i++)
+		CRC_ProcessByte(&pr_crc, progs_bytes[i]);
 
-    progs_ptr = (int *)progs;
+	progs_ptr = (int *)progs;
 
-    for (i = 0; i < 15; i++)
-        progs_ptr[i] = LittleLong(progs_ptr[i]);
+	for (i = 0; i < 15; i++)
+		progs_ptr[i] = LittleLong(progs_ptr[i]);
 
-    if (progs_ptr[0] != 6)
-        Sys_Error("progs.dat has wrong version number (%i should be %i)", progs_ptr[0], 6);
+	if (progs_ptr[0] != 6)
+		Sys_Error("progs.dat has wrong version number (%i should be %i)", progs_ptr[0], 6);
 
-    if (progs_ptr[1] != 58783)
-        Sys_Error("progs.dat system vars have been modified, progdefs.h is out of date");
+	if (progs_ptr[1] != 58783)
+		Sys_Error("progs.dat system vars have been modified, progdefs.h is out of date");
 
-    pr_functions = (char *)progs + progs_ptr[8];
-    pr_globaldefs = (char *)progs + progs_ptr[4];
-    pr_statements = (char *)progs + progs_ptr[2];
-    pr_strings = (char *)progs + progs_ptr[10];
-    pr_fielddefs = (char *)progs + progs_ptr[6];
-    pr_global_struct = (globalvars_t *)((char *)progs + progs_ptr[12]);
-    pr_globals = (float *)pr_global_struct;
-    pr_edict_size = 4 * progs_ptr[14] + 120;
+	pr_functions = (char *)progs + progs_ptr[8];
+	pr_globaldefs = (char *)progs + progs_ptr[4];
+	pr_statements = (char *)progs + progs_ptr[2];
+	pr_strings = (char *)progs + progs_ptr[10];
+	pr_fielddefs = (char *)progs + progs_ptr[6];
+	pr_global_struct = (globalvars_t *)((char *)progs + progs_ptr[12]);
+	pr_globals = (float *)pr_global_struct;
+	pr_edict_size = 4 * progs_ptr[14] + 120;
 
-    for (i = 0; i < progs_ptr[3]; i++)
-    {
-        stmt = (short *)((char *)pr_statements + i * 8);
-        stmt[0] = LittleShort(stmt[0]);
-        stmt[1] = LittleShort(stmt[1]);
-        stmt[2] = LittleShort(stmt[2]);
-        stmt[3] = LittleShort(stmt[3]);
-    }
+	for (i = 0; i < progs_ptr[3]; i++)
+	{
+		stmt = (short *)((char *)pr_statements + i * 8);
+		stmt[0] = LittleShort(stmt[0]);
+		stmt[1] = LittleShort(stmt[1]);
+		stmt[2] = LittleShort(stmt[2]);
+		stmt[3] = LittleShort(stmt[3]);
+	}
 
-    for (i = 0; i < progs_ptr[9]; i++)
-    {
-        func = (int *)((char *)pr_functions + i * 36);
-        func[0] = LittleLong(func[0]);
-        func[1] = LittleLong(func[1]);
-        func[2] = LittleLong(func[2]);
-        func[4] = LittleLong(func[4]);
-        func[5] = LittleLong(func[5]);
-        func[6] = LittleLong(func[6]);
-    }
+	for (i = 0; i < progs_ptr[9]; i++)
+	{
+		func = (int *)((char *)pr_functions + i * 36);
+		func[0] = LittleLong(func[0]);
+		func[1] = LittleLong(func[1]);
+		func[2] = LittleLong(func[2]);
+		func[4] = LittleLong(func[4]);
+		func[5] = LittleLong(func[5]);
+		func[6] = LittleLong(func[6]);
+	}
 
-    for (i = 0; i < progs_ptr[5]; i++)
-    {
-        def = (short *)((char *)pr_globaldefs + i * 8);
-        def[0] = LittleShort(def[0]);
-        def[1] = LittleShort(def[1]);
-        *(int *)&def[2] = LittleLong(*(int *)&def[2]);
-    }
+	for (i = 0; i < progs_ptr[5]; i++)
+	{
+		def = (short *)((char *)pr_globaldefs + i * 8);
+		def[0] = LittleShort(def[0]);
+		def[1] = LittleShort(def[1]);
+		*(int *)&def[2] = LittleLong(*(int *)&def[2]);
+	}
 
-    for (i = 0; i < progs_ptr[7]; i++)
-    {
-        def = (short *)((char *)pr_fielddefs + i * 8);
-        def[0] = LittleShort(def[0]);
+	for (i = 0; i < progs_ptr[7]; i++)
+	{
+		def = (short *)((char *)pr_fielddefs + i * 8);
+		def[0] = LittleShort(def[0]);
 
-        if ((signed char)((char *)def)[1] < 0)
-            Sys_Error("PR_LoadProgs: pr_fielddefs[i].type & DEF_SAVEGLOBAL");
+		if ((signed char)((char *)def)[1] < 0)
+			Sys_Error("PR_LoadProgs: pr_fielddefs[i].type & DEF_SAVEGLOBAL");
 
-        def[1] = LittleShort(def[1]);
-        *(int *)&def[2] = LittleLong(*(int *)&def[2]);
-    }
+		def[1] = LittleShort(def[1]);
+		*(int *)&def[2] = LittleLong(*(int *)&def[2]);
+	}
 
-    for (i = 0; i < progs_ptr[13]; i++)
-    {
-        ((int *)pr_globals)[i] = LittleLong(((int *)pr_globals)[i]);
-    }
+	for (i = 0; i < progs_ptr[13]; i++)
+	{
+		((int *)pr_globals)[i] = LittleLong(((int *)pr_globals)[i]);
+	}
 }
 
 ddef_t *ED_FindField(const char *name)
@@ -1084,316 +1084,316 @@ ddef_t *ED_FieldAtOfs(int ofs)
 
 void *GetEdictFieldValue(void *ent, const char *field)
 {
-    int i;
-    void *def;
-    unsigned short *field_def;
+	int i;
+	void *def;
+	unsigned short *field_def;
 
-    for (i = 0; i < GEFV_CACHESIZE; i++)
-    {
-        if (!strcmp(field, gefvCache[i].field))
-        {
-            def = gefvCache[i].pcache;
-            goto found;
-        }
-    }
+	for (i = 0; i < GEFV_CACHESIZE; i++)
+	{
+		if (!strcmp(field, gefvCache[i].field))
+		{
+			def = gefvCache[i].pcache;
+			goto found;
+		}
+	}
 
-    def = ED_FindField(field);
-    if (strlen(field) < MAX_FIELD_LEN)
-    {
+	def = ED_FindField(field);
+	if (strlen(field) < MAX_FIELD_LEN)
+	{
 
-        gefvCache[gefv_cache_index].pcache = def;
-        strcpy(gefvCache[gefv_cache_index].field, field);
-        gefv_cache_index ^= 1;
-    }
+		gefvCache[gefv_cache_index].pcache = def;
+		strcpy(gefvCache[gefv_cache_index].field, field);
+		gefv_cache_index ^= 1;
+	}
 
 found:
-    if (def)
-    {
-        field_def = (unsigned short *)def;
-        return (char *)ent + 120 + 4 * field_def[1];
-    }
-    return NULL;
+	if (def)
+	{
+		field_def = (unsigned short *)def;
+		return (char *)ent + 120 + 4 * field_def[1];
+	}
+	return NULL;
 }
 
 char *PR_ValueString(int type, void *val)
 {
-    static char line[256];
-    float *fval;
-    ddef_t *def;
-    int entnum;
-    char *funcname;
-    int type_clean;
+	static char line[256];
+	float *fval;
+	ddef_t *def;
+	int entnum;
+	char *funcname;
+	int type_clean;
 
-    fval = (float *)val;
-    type_clean = type & ~0x8000;
+	fval = (float *)val;
+	type_clean = type & ~0x8000;
 
-    switch (type_clean)
-    {
-        case 0:
-            sprintf(line, "void");
-            break;
+	switch (type_clean)
+	{
+		case 0:
+			sprintf(line, "void");
+			break;
 
-        case 1:
-            sprintf(line, "%s", pr_strings + *(int *)val);
-            break;
+		case 1:
+			sprintf(line, "%s", pr_strings + *(int *)val);
+			break;
 
-        case 2:
-            sprintf(line, "%5.1f", *fval);
-            break;
+		case 2:
+			sprintf(line, "%5.1f", *fval);
+			break;
 
-        case 3:
-            sprintf(line, "'%5.1f %5.1f %5.1f'", fval[0], fval[1], fval[2]);
-            break;
+		case 3:
+			sprintf(line, "'%5.1f %5.1f %5.1f'", fval[0], fval[1], fval[2]);
+			break;
 
-        case 4:
-            entnum = NUM_FOR_EDICT((char *)sv_edicts + *(int *)val);
-            sprintf(line, "entity %i", entnum);
-            break;
+		case 4:
+			entnum = NUM_FOR_EDICT((char *)sv_edicts + *(int *)val);
+			sprintf(line, "entity %i", entnum);
+			break;
 
-        case 5:
-            def = ED_FieldAtOfs(*(int *)val);
-            sprintf(line, ".%s", pr_strings + def->s_name);
-            break;
+		case 5:
+			def = ED_FieldAtOfs(*(int *)val);
+			sprintf(line, ".%s", pr_strings + def->s_name);
+			break;
 
-        case 6:
-            funcname = pr_strings + *(int *)((char *)pr_functions + 36 * *(int *)val + 16);
-            sprintf(line, "%s()", funcname);
-            break;
+		case 6:
+			funcname = pr_strings + *(int *)((char *)pr_functions + 36 * *(int *)val + 16);
+			sprintf(line, "%s()", funcname);
+			break;
 
-        case 7:
-            sprintf(line, "pointer");
-            break;
+		case 7:
+			sprintf(line, "pointer");
+			break;
 
-        default:
-            sprintf(line, "bad type %i", type_clean);
-            break;
-    }
+		default:
+			sprintf(line, "bad type %i", type_clean);
+			break;
+	}
 
-    return line;
+	return line;
 }
 
 char *PR_UglyValueString(int type, void *val)
 {
-    static char line[256];
-    float *fval;
-    ddef_t *def;
-    int entnum;
-    char *funcname;
-    char *fieldname;
-    int type_clean;
+	static char line[256];
+	float *fval;
+	ddef_t *def;
+	int entnum;
+	char *funcname;
+	char *fieldname;
+	int type_clean;
 
-    fval = (float *)val;
-    type_clean = type & ~0x8000;
+	fval = (float *)val;
+	type_clean = type & ~0x8000;
 
-    if (type_clean == 0)
-    {
-        sprintf(line, "void");
-        return line;
-    }
+	if (type_clean == 0)
+	{
+		sprintf(line, "void");
+		return line;
+	}
 
-    switch (type_clean)
-    {
-        case 1:
-            sprintf(line, "%s", pr_strings + *(int *)val);
-            break;
+	switch (type_clean)
+	{
+		case 1:
+			sprintf(line, "%s", pr_strings + *(int *)val);
+			break;
 
-        case 2:
-            sprintf(line, "%f", *fval);
-            break;
+		case 2:
+			sprintf(line, "%f", *fval);
+			break;
 
-        case 3:
-            sprintf(line, "%f %f %f", fval[0], fval[1], fval[2]);
-            break;
+		case 3:
+			sprintf(line, "%f %f %f", fval[0], fval[1], fval[2]);
+			break;
 
-        case 4:
-            entnum = NUM_FOR_EDICT((char *)sv_edicts + *(int *)val);
-            sprintf(line, "%i", entnum);
-            break;
+		case 4:
+			entnum = NUM_FOR_EDICT((char *)sv_edicts + *(int *)val);
+			sprintf(line, "%i", entnum);
+			break;
 
-        case 5:
-            def = ED_FieldAtOfs(*(int *)val);
-            fieldname = pr_strings + def->s_name;
-            sprintf(line, "%s", fieldname);
-            break;
+		case 5:
+			def = ED_FieldAtOfs(*(int *)val);
+			fieldname = pr_strings + def->s_name;
+			sprintf(line, "%s", fieldname);
+			break;
 
-        case 6:
-            funcname = pr_strings + *(int *)((char *)pr_functions + 36 * *(int *)val + 16);
-            sprintf(line, "%s", funcname);
-            break;
+		case 6:
+			funcname = pr_strings + *(int *)((char *)pr_functions + 36 * *(int *)val + 16);
+			sprintf(line, "%s", funcname);
+			break;
 
-        default:
-            sprintf(line, "bad type %i", type_clean);
-            break;
-    }
+		default:
+			sprintf(line, "bad type %i", type_clean);
+			break;
+	}
 
-    return line;
+	return line;
 }
 
 char *PR_GlobalString(int ofs)
 {
-    static char line[128];
-    ddef_t *def;
-    char *s;
-    void *val;
-    int i;
-    int len;
+	static char line[128];
+	ddef_t *def;
+	char *s;
+	void *val;
+	int i;
+	int len;
 
-    val = (char *)pr_globals + 4 * ofs;
-    def = ED_GlobalAtOfs(ofs);
+	val = (char *)pr_globals + 4 * ofs;
+	def = ED_GlobalAtOfs(ofs);
 
-    if (def)
-    {
-        s = PR_ValueString(def->type, val);
-        sprintf(line, "%i(%s)%s", ofs, pr_strings + def->s_name, s);
-    }
-    else
-    {
-        sprintf(line, "%i(?]", ofs);
-    }
+	if (def)
+	{
+		s = PR_ValueString(def->type, val);
+		sprintf(line, "%i(%s)%s", ofs, pr_strings + def->s_name, s);
+	}
+	else
+	{
+		sprintf(line, "%i(?]", ofs);
+	}
 
-    len = strlen(line);
-    if (len < 20)
-    {
-        for (i = len; i < 20; i++)
-            strcat(line, " ");
-    }
-    strcat(line, " ");
+	len = strlen(line);
+	if (len < 20)
+	{
+		for (i = len; i < 20; i++)
+			strcat(line, " ");
+	}
+	strcat(line, " ");
 
-    return line;
+	return line;
 }
 
 char *PR_GlobalStringNoContents(int ofs)
 {
-    static char line[128];
-    ddef_t *def;
-    int i;
-    int len;
+	static char line[128];
+	ddef_t *def;
+	int i;
+	int len;
 
-    def = ED_GlobalAtOfs(ofs);
+	def = ED_GlobalAtOfs(ofs);
 
-    if (def)
-        sprintf(line, "%i(%s)", ofs, pr_strings + def->s_name);
-    else
-        sprintf(line, "%i(?]", ofs);
+	if (def)
+		sprintf(line, "%i(%s)", ofs, pr_strings + def->s_name);
+	else
+		sprintf(line, "%i(?]", ofs);
 
-    len = strlen(line);
-    if (len < 20)
-    {
-        for (i = len; i < 20; i++)
-            strcat(line, " ");
-    }
-    strcat(line, " ");
+	len = strlen(line);
+	if (len < 20)
+	{
+		for (i = len; i < 20; i++)
+			strcat(line, " ");
+	}
+	strcat(line, " ");
 
-    return line;
+	return line;
 }
 
 void ED_Print(void *ed)
 {
-    int i;
-    int *progs_ptr;
-    unsigned short *def;
-    char *fieldname;
-    void *val;
-    int type;
-    int type_size_local;
-    int j;
-    int *field_data;
-    int numfielddefs;
-    int len;
+	int i;
+	int *progs_ptr;
+	unsigned short *def;
+	char *fieldname;
+	void *val;
+	int type;
+	int type_size_local;
+	int j;
+	int *field_data;
+	int numfielddefs;
+	int len;
 
-    if (*(int *)ed)
-    {
-        Con_Printf("FREE\n");
-        return;
-    }
+	if (*(int *)ed)
+	{
+		Con_Printf("FREE\n");
+		return;
+	}
 
-    Con_Printf("EDICT %i:\n", NUM_FOR_EDICT(ed));
+	Con_Printf("EDICT %i:\n", NUM_FOR_EDICT(ed));
 
-    progs_ptr = (int *)progs;
-    numfielddefs = progs_ptr[7];
+	progs_ptr = (int *)progs;
+	numfielddefs = progs_ptr[7];
 
-    for (i = 1; i < numfielddefs; i++)
-    {
-        def = (unsigned short *)((char *)pr_fielddefs + i * 8);
-        fieldname = pr_strings + *(int *)((char *)def + 4);
+	for (i = 1; i < numfielddefs; i++)
+	{
+		def = (unsigned short *)((char *)pr_fielddefs + i * 8);
+		fieldname = pr_strings + *(int *)((char *)def + 4);
 
-        len = strlen(fieldname);
-        if (len >= 2 && fieldname[len - 2] == '_')
-            continue;
+		len = strlen(fieldname);
+		if (len >= 2 && fieldname[len - 2] == '_')
+			continue;
 
-        type = def[0] & ~0x8000;
-        type_size_local = type_size[type];
-        val = (char *)ed + 120 + 4 * def[1];
+		type = def[0] & ~0x8000;
+		type_size_local = type_size[type];
+		val = (char *)ed + 120 + 4 * def[1];
 
-        field_data = (int *)val;
-        for (j = 0; j < type_size_local; j++)
-        {
-            if (field_data[j])
-                break;
-        }
+		field_data = (int *)val;
+		for (j = 0; j < type_size_local; j++)
+		{
+			if (field_data[j])
+				break;
+		}
 
-        if (j == type_size_local)
-            continue;
+		if (j == type_size_local)
+			continue;
 
-        Con_Printf("%s", fieldname);
-        len = strlen(fieldname);
-        for (; len < 15; len++)
-            Con_Printf(" ");
+		Con_Printf("%s", fieldname);
+		len = strlen(fieldname);
+		for (; len < 15; len++)
+			Con_Printf(" ");
 
-        Con_Printf("%s\n", PR_ValueString(def[0], val));
-    }
+		Con_Printf("%s\n", PR_ValueString(def[0], val));
+	}
 }
 
 void ED_Write(savebuf_t *sb, edict_t *ed)
 {
-    int i, j;
-    int *progs_ptr;
-    unsigned short *def;
-    char *fieldname;
-    void *val;
-    int type;
-    int type_size_local;
-    int *field_data;
-    char *valstring;
-    int numfielddefs;
+	int i, j;
+	int *progs_ptr;
+	unsigned short *def;
+	char *fieldname;
+	void *val;
+	int type;
+	int type_size_local;
+	int *field_data;
+	char *valstring;
+	int numfielddefs;
 
-    Savegame_WriteInt(sb, 0);
+	Savegame_WriteInt(sb, 0);
 
-    if (ed->free)
-        return;
+	if (ed->free)
+		return;
 
-    progs_ptr = (int *)progs;
-    numfielddefs = progs_ptr[7];
+	progs_ptr = (int *)progs;
+	numfielddefs = progs_ptr[7];
 
-    for (i = 1; i < numfielddefs; i++)
-    {
-        def = (unsigned short *)((char *)pr_fielddefs + i * 8);
-        fieldname = pr_strings + *(int *)((char *)def + 4);
+	for (i = 1; i < numfielddefs; i++)
+	{
+		def = (unsigned short *)((char *)pr_fielddefs + i * 8);
+		fieldname = pr_strings + *(int *)((char *)def + 4);
 
-        int len = strlen(fieldname);
-        if (len >= 2 && fieldname[len - 2] == '_')
-            continue;
+		int len = strlen(fieldname);
+		if (len >= 2 && fieldname[len - 2] == '_')
+			continue;
 
-        type = def[0] & 0x7FFF;
-        type_size_local = type_size[type];
-        val = (char *)ed + 120 + 4 * def[1];
+		type = def[0] & 0x7FFF;
+		type_size_local = type_size[type];
+		val = (char *)ed + 120 + 4 * def[1];
 
-        field_data = (int *)val;
-        for (j = 0; j < type_size_local; j++)
-        {
-            if (field_data[j])
-                break;
-        }
+		field_data = (int *)val;
+		for (j = 0; j < type_size_local; j++)
+		{
+			if (field_data[j])
+				break;
+		}
 
-        if (j == type_size_local)
-            continue;
+		if (j == type_size_local)
+			continue;
 
-        Savegame_WriteString(sb, fieldname);
-        valstring = PR_UglyValueString(type, val);
-        Savegame_WriteString(sb, valstring);
-    }
+		Savegame_WriteString(sb, fieldname);
+		valstring = PR_UglyValueString(type, val);
+		Savegame_WriteString(sb, valstring);
+	}
 
-    ED_CallDispatch(ed, 6, sb);
+	ED_CallDispatch(ed, 6, sb);
 }
 
 void ED_PrintNum(int entnum)
@@ -1406,64 +1406,64 @@ void ED_PrintNum(int entnum)
 
 char *PROG_TO_STRING(int offset)
 {
-    return pr_strings + offset;
+	return pr_strings + offset;
 }
 
 void *EDICT_TO_ENTVAR(edict_t *ent)
 {
-    return (void *)&ent->v;
+	return (void *)&ent->v;
 }
 
 edict_t *ENTVAR_TO_EDICT(void *entvar)
 {
-    int i;
-    edict_t *ent;
+	int i;
+	edict_t *ent;
 
-    for (i = 0; i < *sv_num_edicts; i++)
-    {
-        ent = EDICT_NUM(i);
-        if ((void *)&ent->v == entvar)
-            return ent;
-    }
-    return NULL;
+	for (i = 0; i < *sv_num_edicts; i++)
+	{
+		ent = EDICT_NUM(i);
+		if ((void *)&ent->v == entvar)
+			return ent;
+	}
+	return NULL;
 }
 
 void *ED_GetDispatch(void *ent, int callback_type)
 {
-    return ED_GetDispatchFunction(ent, callback_type);
+	return ED_GetDispatchFunction(ent, callback_type);
 }
 
 void ED_AssertMethodNotChanged(void)
 {
-    Sys_Error("CAN'T CHANGE METHODS HERE!\n");
+	Sys_Error("CAN'T CHANGE METHODS HERE!\n");
 }
 
 float ED_GetCvarValue(const char *cvarname)
 {
-    return Cvar_VariableValue(cvarname);
+	return Cvar_VariableValue(cvarname);
 }
 
 char *ED_GetCvarString(const char *cvarname)
 {
-    return Cvar_VariableString(cvarname);
+	return Cvar_VariableString(cvarname);
 }
 
 void ED_SetCvarValue(const char *cvarname, float value)
 {
-    Cvar_SetValue(cvarname, value);
+	Cvar_SetValue(cvarname, value);
 }
 
 void ED_SetCvarString(const char *cvarname, const char *value)
 {
-    Cvar_Set(cvarname, value);
+	Cvar_Set(cvarname, value);
 }
 
 int ED_AllocString(const char *string)
 {
-    char *new_str;
+	char *new_str;
 
-    new_str = ED_NewString(string);
-    return (int)new_str - (int)pr_strings;
+	new_str = ED_NewString(string);
+	return (int)new_str - (int)pr_strings;
 }
 
 int ED_EntVarsToCl(edict_t *ent)

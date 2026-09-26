@@ -1,16 +1,16 @@
 #ifndef COMMON_H
 #define COMMON_H
 
- // =========================================================
- // Basic types
- // =========================================================
+// =========================================================
+// Basic types
+// =========================================================
 
 #if !defined BYTE_DEFINED
 typedef unsigned char   byte;
 #define BYTE_DEFINED 1
 #endif
 
- // Fixed-size integer types (used throughout engine)
+// Fixed-size integer types (used throughout engine)
 typedef unsigned char		u8;
 typedef signed char			s8;
 typedef unsigned short		u16;
@@ -24,9 +24,9 @@ typedef signed __int64		s64;
 #undef false
 typedef enum { false, true } qboolean;
 
- // =========================================================
- // Constants
- // =========================================================
+// =========================================================
+// Constants
+// =========================================================
 
 #define MAX_QPATH       64
 #define MAX_OSPATH      260
@@ -42,9 +42,9 @@ typedef enum { false, true } qboolean;
 #define NULL ((void *)0)
 #endif
 
- // =========================================================
- // Size buffer
- // =========================================================
+// =========================================================
+// Size buffer
+// =========================================================
 
 typedef struct sizebuf_s
 {
@@ -57,9 +57,9 @@ typedef struct sizebuf_s
 
 typedef struct savebuf_s
 {
-    void    *pBuffer; // Base pointer
-    byte    *curpos; // Current write position
-    int     cursize; // Current size used
+	void    *pBuffer; // Base pointer
+	byte    *curpos; // Current write position
+	int     cursize; // Current size used
 } savebuf_t;
 
 void SZ_Alloc(sizebuf_t *buf, int startsize);
@@ -69,9 +69,9 @@ byte *SZ_GetSpace(sizebuf_t *buf, int length);
 int SZ_Write(sizebuf_t *buf, const void *data, int length);
 void SZ_Print(sizebuf_t *buf, char *data);
 
- // =========================================================
- // Linked list
- // =========================================================
+// =========================================================
+// Linked list
+// =========================================================
 
 typedef struct link_s
 {
@@ -85,9 +85,9 @@ void InsertLinkAfter(link_t *l, link_t *after);
 
 #define STRUCT_FROM_LINK(l,t,m) ((t *)((byte *)l - (int)&(((t *)0)->m)))
 
- // =========================================================
- // Endianness and Message I/ O
- // =========================================================
+// =========================================================
+// Endianness and Message I/ O
+// =========================================================
 
 extern short (*LittleShort)(short l);
 extern int (*LittleLong)(int l);
@@ -121,9 +121,9 @@ int MSG_WriteString(sizebuf_t *sb, const char *s);
 short *MSG_WriteCoord(sizebuf_t *sb, float f);
 byte *MSG_WriteAngle(sizebuf_t *sb, float f);
 
- // =========================================================
- // Utilities
- // =========================================================
+// =========================================================
+// Utilities
+// =========================================================
 
 int Q_strlen(const char *str);
 char *Q_strcpy(char *dest, const char *src);
@@ -145,9 +145,9 @@ int Q_memset(void *dest, int fill, int count);
 int Q_memcpy(void *dest, const void *src, int count);
 int Q_memcmp(const void *m1, const void *m2, int count);
 
- // =========================================================
- // File system
- // =========================================================
+// =========================================================
+// File system
+// =========================================================
 
 void COM_DefaultExtension(char *path, const char *extension);
 void COM_FileBase(const char *in, char *out);
@@ -197,8 +197,9 @@ extern int		com_argc;
 extern char **com_argv;
 int COM_CheckParm(const char *parm);
 
- // File loading helpers (allocation mode via Hunk/ Zone/ Cache/ Stack)
+// File loading helpers (allocation mode via Hunk/ Zone/ Cache/ Stack)
 byte *COM_LoadHunkFile(const char *path);
+struct cache_user_s;
 byte *COM_LoadCacheFile(const char *path, struct cache_user_s *cu);
 byte *COM_LoadStackFile(const char *path, void *buffer, int bufsize);
 
@@ -207,7 +208,7 @@ extern int com_filesize;
 extern qboolean com_modified;
 extern char com_gamedir[MAX_OSPATH];
 
- // Mod/ mission pack flags (set from command line)
+// Mod/ mission pack flags (set from command line)
 extern qboolean rogue;
 extern qboolean hipnotic;
 

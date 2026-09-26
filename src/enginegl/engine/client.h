@@ -18,9 +18,9 @@
 
 #include "usercmd.h"
 
- // =============================================================================
- // Color types
- // =============================================================================
+// =============================================================================
+// Color types
+// =============================================================================
 
 typedef union color24_s
 {
@@ -31,9 +31,9 @@ typedef union color24_s
 	byte rgb[3];
 } color24;
 
- // =============================================================================
- // Dynamic light structure
- // =============================================================================
+// =============================================================================
+// Dynamic light structure
+// =============================================================================
 
 #define MAX_DLIGHTS     32
 #define MAX_ELIGHTS     64
@@ -51,17 +51,17 @@ typedef struct dlight_s
 	qboolean    dark; // subtracts light instead of adding
 } dlight_t;
 
- // Client dynamic-light allocation (cl_main.c)
+// Client dynamic-light allocation (cl_main.c)
 dlight_t *CL_AllocDlight(int key);
 
- // Temp entity subsystem (cl_tent.c)
+// Temp entity subsystem (cl_tent.c)
 void CL_InitTEnts(void);
 void CL_UpdateTEnts(void);
 void CL_ParseTEnt(void);
 
- // =============================================================================
- // Light style structure
- // =============================================================================
+// =============================================================================
+// Light style structure
+// =============================================================================
 
 #ifndef MAX_LIGHTSTYLES
 #define MAX_LIGHTSTYLES     64
@@ -74,17 +74,17 @@ typedef struct lightstyle_s
 	char    map[MAX_STYLESTRING];
 } lightstyle_t;
 
- // =============================================================================
- // Entity state
- // =============================================================================
+// =============================================================================
+// Entity state
+// =============================================================================
 
 typedef struct entity_state_s
 {
- // Baseline origin/ angles
+// Baseline origin/ angles
 	vec3_t	origin;
 	vec3_t	angles;
 
- // Baseline model/ animation properties
+// Baseline model/ animation properties
 	int		modelindex;
 	int		sequence;
 	int		frame;
@@ -102,7 +102,7 @@ typedef struct entity_state_s
 	int		renderfx;
 } entity_state_t;
 
- // Client state
+// Client state
 typedef enum {
 	ca_dedicated,
 	ca_disconnected,
@@ -110,7 +110,7 @@ typedef enum {
 	ca_active
 } connstate_t;
 
- // Per-client state
+// Per-client state
 typedef struct client_s
 {
 	int			movemessages; // increments in CL_SendMove
@@ -139,11 +139,11 @@ typedef struct client_s
 	float   oldtime; // Previous frame time
 
 	void*	pmove;
- // ... gap...
+// ... gap...
 	int		message_size;
 
- // NOTE: The engine clears this struct with a single memset.
- // Keep the struct size in sync to avoid clobbering adjacent globals in engine_globals.c.
+// NOTE: The engine clears this struct with a single memset.
+// Keep the struct size in sync to avoid clobbering adjacent globals in engine_globals.c.
 	byte	reserved_0x00D4[0xBF8 - 0x00D4];
 } client_t;
 
@@ -155,8 +155,8 @@ typedef struct client_static_s
 {
 	connstate_t	state;
 	int			signon;
-	
- // Demo state
+
+// Demo state
 	qboolean	demorecording;
 	qboolean	demoplayback;
 	qboolean	timedemo;
@@ -167,21 +167,21 @@ typedef struct client_static_s
 	int			demonum; // current demo index in demos[]
 	char		demos[8][64]; // demo loop names from startdemos
 
-	
- // Timedemo tracking
+
+// Timedemo tracking
 	int			td_lastframe;
 	int			td_startframe;
 	double		td_starttime;
-	
- // Networking
+
+// Networking
 	struct qsocket_s *netcon;
 	qboolean    netconnection; // legacy/ unknown (kept for compatibility)
-	
+
 	sizebuf_t	message;
-	
+
 	float       spawnparms[NUM_SPAWN_PARMS];
 
- // Movie recording
+// Movie recording
 	qboolean	movierecording;
 } client_static_t;
 
@@ -190,13 +190,13 @@ typedef struct client_static_s
 extern client_static_t	cls;
 extern client_t			cl;
 
- // Client-side stats for save games
+// Client-side stats for save games
 extern int cl_stats_monsters;
 extern int cl_stats_totalmonsters;
 
- // =============================================================================
- // Client movement cvars (defined in cl_input.c)
- // =============================================================================
+// =============================================================================
+// Client movement cvars (defined in cl_input.c)
+// =============================================================================
 
 extern cvar_t cl_upspeed;
 extern cvar_t cl_forwardspeed;
@@ -207,9 +207,9 @@ extern cvar_t cl_yawspeed;
 extern cvar_t cl_pitchspeed;
 extern cvar_t cl_anglespeedkey;
 
- // =============================================================================
- // Client cvars (defined in cl_main.c)
- // =============================================================================
+// =============================================================================
+// Client cvars (defined in cl_main.c)
+// =============================================================================
 
 extern cvar_t cl_shownet;
 extern cvar_t cl_nolerp;
@@ -218,9 +218,9 @@ extern cvar_t cl_lerpstep;
 extern cvar_t cl_pitchdriftspeed;
 extern cvar_t cl_pitchdrift;
 
- // =============================================================================
- // Camera cvars (defined in cam.c)
- // =============================================================================
+// =============================================================================
+// Camera cvars (defined in cam.c)
+// =============================================================================
 
 extern cvar_t cam_command;
 extern cvar_t cam_snapto;
@@ -235,16 +235,16 @@ extern cvar_t c_minyaw;
 extern cvar_t c_maxdistance;
 extern cvar_t c_mindistance;
 
- // =============================================================================
- // Type aliases for compatibility
- // =============================================================================
+// =============================================================================
+// Type aliases for compatibility
+// =============================================================================
 
 struct entity_s;
 typedef struct entity_s cl_entity_t;
 
- // =============================================================================
- // Client subsystem functions
- // =============================================================================
+// =============================================================================
+// Client subsystem functions
+// =============================================================================
 
 void CL_Init(void);
 void CL_InitInput(void);
@@ -269,7 +269,7 @@ void CL_NextDemo(void);
 void CL_BaseMove(usercmd_t *cmd);
 int CL_SendMove(usercmd_t *cmd);
 
- // Third-person camera command handlers (cam.c)
+// Third-person camera command handlers (cam.c)
 void CAM_PitchUpDown(void);
 void CAM_PitchUpUp(void);
 void CAM_PitchDownDown(void);

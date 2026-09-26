@@ -3,9 +3,9 @@
 
 #include "common.h"
 
- // =========================================================
- // Draw System
- // =========================================================
+// =========================================================
+// Draw System
+// =========================================================
 
 typedef struct
 {
@@ -13,9 +13,9 @@ typedef struct
 	byte data[4];
 } qpic_t;
 
- // =========================================================
- // Font data (conchars)
- // =========================================================
+// =========================================================
+// Font data (conchars)
+// =========================================================
 
 typedef struct
 {
@@ -34,7 +34,7 @@ typedef struct qfont_s
 
 extern qfont_t *draw_chars;
 
- // Functions
+// Functions
 void    Draw_Init(void);
 qpic_t  *HUD_Init(void);
 int     Draw_StringWidth(const char *str);
@@ -53,23 +53,23 @@ void    Draw_EndDisc(void);
 void    Draw_ConsoleBackground(int lines);
 void    Draw_TextureMode_f(void);
 
- // 2D state
+// 2D state
 void    GL_Set2D(void);
 
- // Texture upload/ pic loading
+// Texture upload/ pic loading
 int     GL_LoadPicTexture(qpic_t *pic, char *name);
 qpic_t  *Draw_PicFromWad(char *name);
 qpic_t  *Draw_PicFromWad_NoScrap(char *name);
 qpic_t  *Draw_CachePic(char *path);
 
- // Decals (decals.wad cache)
+// Decals (decals.wad cache)
 char    *Draw_NameToDecal(int decal, char *name);
 int     Draw_DecalIndex(int decal);
 void    *Draw_GetDecal(int index);
 
- // =========================================================
- // Menu Draw Helpers (centered on 320x200)
- // =========================================================
+// =========================================================
+// Menu Draw Helpers (centered on 320x200)
+// =========================================================
 
 extern byte identityTable[256];
 extern byte translationTable[256];

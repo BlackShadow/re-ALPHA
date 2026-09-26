@@ -1014,7 +1014,7 @@ void Host_Say(int teamonly)
 			continue;
 
 		if (teamplay.value != 0.0f && teamonly &&
-		    save_client->edict->v.team != host_client->edict->v.team)
+			save_client->edict->v.team != host_client->edict->v.team)
 			continue;
 
 		SV_ClientPrintf("%s", msgbuf);
@@ -1098,7 +1098,7 @@ void Host_Color_f(void)
 	if (Cmd_Argc() == 1)
 	{
 		Con_Printf("\"color\" is \"%i %i\"\n",
-		           ((int)cl_color.value) >> 4, ((int)cl_color.value) & 0x0F);
+				   ((int)cl_color.value) >> 4, ((int)cl_color.value) & 0x0F);
 		Con_Printf("color <0-13> [0-13]\n");
 		return;
 	}
@@ -1447,17 +1447,17 @@ static void Host_Savegame_WriteEdictText(FILE *f, edict_t *ed)
 		{
 
 			if (!strcmp(fieldname, "weapon") ||
-			    !strcmp(fieldname, "weapons") ||
-			    !strcmp(fieldname, "ammo_1") ||
-			    !strcmp(fieldname, "ammo_2") ||
-			    !strcmp(fieldname, "ammo_3") ||
-			    !strcmp(fieldname, "ammo_4") ||
-			    !strcmp(fieldname, "items") ||
-			    !strcmp(fieldname, "items2") ||
-			    !strcmp(fieldname, "sequence") ||
-			    !strcmp(fieldname, "controller") ||
-			    !strcmp(fieldname, "blending") ||
-			    !strcmp(fieldname, "button"))
+				!strcmp(fieldname, "weapons") ||
+				!strcmp(fieldname, "ammo_1") ||
+				!strcmp(fieldname, "ammo_2") ||
+				!strcmp(fieldname, "ammo_3") ||
+				!strcmp(fieldname, "ammo_4") ||
+				!strcmp(fieldname, "items") ||
+				!strcmp(fieldname, "items2") ||
+				!strcmp(fieldname, "sequence") ||
+				!strcmp(fieldname, "controller") ||
+				!strcmp(fieldname, "blending") ||
+				!strcmp(fieldname, "button"))
 			{
 				sprintf(valbuf, "%i", *(int *)val);
 				valstring = valbuf;

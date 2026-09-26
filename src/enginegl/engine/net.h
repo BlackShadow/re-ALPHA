@@ -13,20 +13,20 @@
 *
 ****/
 
- // net.h -- network interface
- // NOTE: This is a skeleton header derived from reverse engineering.
- // Network structures and functions will be filled during translation.
+// net.h -- network interface
+// NOTE: This is a skeleton header derived from reverse engineering.
+// Network structures and functions will be filled during translation.
 
 #ifndef NET_H
 #define NET_H
 
- // =============================================================================
- // Network Constants
- // =============================================================================
+// =============================================================================
+// Network Constants
+// =============================================================================
 #define NET_MAXMESSAGE      8192
 #define NET_NAMELEN         64
 
- // Connectionless control messages (Quake-style)
+// Connectionless control messages (Quake-style)
 #define CCREQ_CONNECT		0x01
 #define CCREQ_SERVER_INFO	0x02
 #define CCREQ_PLAYER_INFO	0x03
@@ -38,63 +38,63 @@
 #define CCREP_PLAYER_INFO	0x84
 #define CCREP_RULE_INFO		0x85
 
- // Connectionless query protocol version (CCREP_SERVER_INFO replies).
- // compares MSG_ReadByte against 3.
+// Connectionless query protocol version (CCREP_SERVER_INFO replies).
+// compares MSG_ReadByte against 3.
 #define NET_PROTOCOL_VERSION 3
 
- // =============================================================================
- // Network Structures
- // =============================================================================
+// =============================================================================
+// Network Structures
+// =============================================================================
 
 typedef struct
 {
-    byte    data[16]; // sockaddr_in is 16 bytes
+	byte    data[16]; // sockaddr_in is 16 bytes
 } netadr_t;
 
 typedef struct qsocket_s
 {
-    struct qsocket_s    *next; // 0
-    double              connecttime; // 8
-    double              lastMessageTime; // 16
-    double              lastSendTime; // 24
-    int                 disconnected; // 32
-    int                 canSend; // 36
-    int                 sendNext; // 40
-    int                 driver; // 44 (sock[11])
-    int                 landriver; // 48 (sock[12])
-    int                 socket; // 52 (sock[13])
-    void                *driverdata; // 56 (sock[14])
-    unsigned int        ackSequence; // 60 (sock[15])
-    unsigned int        sendSequence; // 64 (sock[16])
-    unsigned int        unreliableSendSequence; // 68 (sock[17])
-    int                 sendMessageLength; // 72 (sock[18])
-    byte                sendMessage[NET_MAXMESSAGE]; // 76
-    
- // 76 + 8192 = 8268
- // recvSequence is sock[2067] -> 2067 * 4 = 8268
-    unsigned int        receiveSequence; // 8268
-    unsigned int        unreliableReceiveSequence; // 8272
-    int                 receiveMessageLength; // 8276
-    byte                receiveMessage[NET_MAXMESSAGE]; // 8280
-    
- // 8280 + 8192 = 16472
-    netadr_t            addr; // 16472
-    char                address[NET_NAMELEN]; // 16488
+	struct qsocket_s    *next; // 0
+	double              connecttime; // 8
+	double              lastMessageTime; // 16
+	double              lastSendTime; // 24
+	int                 disconnected; // 32
+	int                 canSend; // 36
+	int                 sendNext; // 40
+	int                 driver; // 44 (sock[11])
+	int                 landriver; // 48 (sock[12])
+	int                 socket; // 52 (sock[13])
+	void                *driverdata; // 56 (sock[14])
+	unsigned int        ackSequence; // 60 (sock[15])
+	unsigned int        sendSequence; // 64 (sock[16])
+	unsigned int        unreliableSendSequence; // 68 (sock[17])
+	int                 sendMessageLength; // 72 (sock[18])
+	byte                sendMessage[NET_MAXMESSAGE]; // 76
+
+// 76 + 8192 = 8268
+// recvSequence is sock[2067] -> 2067 * 4 = 8268
+	unsigned int        receiveSequence; // 8268
+	unsigned int        unreliableReceiveSequence; // 8272
+	int                 receiveMessageLength; // 8276
+	byte                receiveMessage[NET_MAXMESSAGE]; // 8280
+
+// 8280 + 8192 = 16472
+	netadr_t            addr; // 16472
+	char                address[NET_NAMELEN]; // 16488
 } qsocket_t;
 
- // =============================================================================
- // Network constants
- // =============================================================================
+// =============================================================================
+// Network constants
+// =============================================================================
 
- // NOTE: Network constants to be filled from reverse engineering
+// NOTE: Network constants to be filled from reverse engineering
 
- // #define NET_MAXMESSAGE 8192/ / max message size (defined above)
- // #define NET_NAMELEN 64/ / max address string length (defined above)
+// #define NET_MAXMESSAGE 8192/ / max message size (defined above)
+// #define NET_NAMELEN 64/ / max address string length (defined above)
 #define NET_HEADERSIZE      8 // protocol header bytes
 
- // =============================================================================
- // Host cache (server browser)
- // =============================================================================
+// =============================================================================
+// Host cache (server browser)
+// =============================================================================
 
 #define HOSTCACHESIZE 8
 
@@ -113,15 +113,15 @@ typedef struct hostcache_s
 extern int hostCacheCount;
 extern hostcache_t hostcache[HOSTCACHESIZE];
 
- // Number of active server connections (server-side).
+// Number of active server connections (server-side).
 extern int net_activeconnections;
 
- // Current driver index in net_main.c loops.
+// Current driver index in net_main.c loops.
 extern int net_driverlevel;
 
- // =============================================================================
- // Scheduled polling (net_main.c)
- // =============================================================================
+// =============================================================================
+// Scheduled polling (net_main.c)
+// =============================================================================
 
 typedef struct pollprocedure_s
 {
@@ -131,22 +131,22 @@ typedef struct pollprocedure_s
 	void *arg;
 } pollprocedure_t;
 
- // Local addresses (set by network drivers)
+// Local addresses (set by network drivers)
 extern char my_ipx_address[64];
 extern char my_tcpip_address[64];
 
- // Driver availability flags
+// Driver availability flags
 extern qboolean serialAvailable;
 extern qboolean ipxAvailable;
 extern qboolean tcpipAvailable;
 extern unsigned short hostshort;
 
- // =============================================================================
- // Network driver interface
- // =============================================================================
+// =============================================================================
+// Network driver interface
+// =============================================================================
 
- // Windows headers define GetMessage/ SendMessage macros (A/ W variants) which
- // conflict with our net_driver_t fields. Ensure the field names aren't macro-expanded.
+// Windows headers define GetMessage/ SendMessage macros (A/ W variants) which
+// conflict with our net_driver_t fields. Ensure the field names aren't macro-expanded.
 #ifdef GetMessage
 #undef GetMessage
 #endif
@@ -154,33 +154,33 @@ extern unsigned short hostshort;
 #undef SendMessage
 #endif
 
- // NOTE: Network driver structure to be filled
- // Provides abstraction for different network protocols (Winsock, IPX, etc.)
+// NOTE: Network driver structure to be filled
+// Provides abstraction for different network protocols (Winsock, IPX, etc.)
 
 typedef struct net_driver_s
 {
-    char    *name;
-    qboolean initialized;
-    int (*Init)(void);
-    void (*Listen)(qboolean state);
-    void (*SearchForHosts)(qboolean xmit);
-    qsocket_t *(*Connect)(char *host);
-    qsocket_t *(*CheckNewConnections)(void);
-    int (*GetMessage)(qsocket_t *sock);
-    int (*SendMessage)(qsocket_t *sock, sizebuf_t *data);
-    int (*SendUnreliableMessage)(qsocket_t *sock, sizebuf_t *data);
-    qboolean (*CanSendMessage)(qsocket_t *sock);
-    qboolean (*CanSendUnreliableMessage)(qsocket_t *sock);
-    void (*Close)(qsocket_t *sock);
-    void (*Shutdown)(void);
-    int controlSock;
+	char    *name;
+	qboolean initialized;
+	int (*Init)(void);
+	void (*Listen)(qboolean state);
+	void (*SearchForHosts)(qboolean xmit);
+	qsocket_t *(*Connect)(char *host);
+	qsocket_t *(*CheckNewConnections)(void);
+	int (*GetMessage)(qsocket_t *sock);
+	int (*SendMessage)(qsocket_t *sock, sizebuf_t *data);
+	int (*SendUnreliableMessage)(qsocket_t *sock, sizebuf_t *data);
+	qboolean (*CanSendMessage)(qsocket_t *sock);
+	qboolean (*CanSendUnreliableMessage)(qsocket_t *sock);
+	void (*Close)(qsocket_t *sock);
+	void (*Shutdown)(void);
+	int controlSock;
 } net_driver_t;
 
- // =============================================================================
- // Network functions
- // =============================================================================
+// =============================================================================
+// Network functions
+// =============================================================================
 
- // NOTE: Network system functions to be filled from net_main.c
+// NOTE: Network system functions to be filled from net_main.c
 
 void NET_Init(void);
 void NET_Shutdown(void);
@@ -200,11 +200,11 @@ void SchedulePollProcedure(pollprocedure_t *proc, double timeOffset);
 const char *NET_QSocketGetString(qsocket_t *sock);
 void Slist_Send(void);
 
- // =============================================================================
- // Loopback (local) networking
- // =============================================================================
+// =============================================================================
+// Loopback (local) networking
+// =============================================================================
 
- // NOTE: Loopback functions to be filled from net_loop.c
+// NOTE: Loopback functions to be filled from net_loop.c
 
 int Loop_Init(void);
 void Loop_Listen(qboolean state);
@@ -219,9 +219,9 @@ qboolean Loop_CanSendUnreliableMessage(qsocket_t *sock);
 void Loop_Close(qsocket_t *sock);
 void Loop_Shutdown(void);
 
- // =============================================================================
- // Datagram (UDP/ IPX) networking
- // =============================================================================
+// =============================================================================
+// Datagram (UDP/ IPX) networking
+// =============================================================================
 
 int Datagram_Init(void);
 void Datagram_Listen(qboolean state);
@@ -236,6 +236,6 @@ qboolean Datagram_CanSendUnreliableMessage(qsocket_t *sock);
 void Datagram_Close(qsocket_t *sock);
 void Datagram_Shutdown(void);
 
- // =============================================================================
+// =============================================================================
 
 #endif // NET_H

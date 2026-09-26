@@ -1,16 +1,16 @@
 #ifndef SOUND_H
 #define SOUND_H
 
- // =========================================================
- // Sound constants
- // =========================================================
+// =========================================================
+// Sound constants
+// =========================================================
 
 #define MAX_CHANNELS        128
 #define MAX_SFX             512
 
- // =========================================================
- // DMA buffer structure
- // =========================================================
+// =========================================================
+// DMA buffer structure
+// =========================================================
 
 typedef struct dma_s
 {
@@ -29,44 +29,44 @@ typedef struct dma_s
 extern volatile dma_t *shm;
 extern volatile dma_t sn;
 
- // =========================================================
- // Sound structures
- // =========================================================
+// =========================================================
+// Sound structures
+// =========================================================
 
 typedef struct sfxcache_s
 {
-    int length;
-    int loopstart;
-    int speed;
-    int width;
-    int stereo;
-    byte data[1];
+	int length;
+	int loopstart;
+	int speed;
+	int width;
+	int stereo;
+	byte data[1];
 } sfxcache_t;
 
 typedef struct sfx_s
 {
-    char name[MAX_QPATH];
-    cache_user_t cache;
+	char name[MAX_QPATH];
+	cache_user_t cache;
 } sfx_t;
 
 typedef struct
 {
-    sfx_t *sfx;
-    int leftvol;
-    int rightvol;
-    int end;
-    int pos;
-    int looping;
-    int entnum;
-    int entchannel;
-    vec3_t origin;
-    vec_t dist_mult;
-    int master_vol;
+	sfx_t *sfx;
+	int leftvol;
+	int rightvol;
+	int end;
+	int pos;
+	int looping;
+	int entnum;
+	int entchannel;
+	vec3_t origin;
+	vec_t dist_mult;
+	int master_vol;
 } channel_t;
 
- // =========================================================
- // Prototypes
- // =========================================================
+// =========================================================
+// Prototypes
+// =========================================================
 
 int S_Init(void);
 void S_Startup(void);
@@ -86,7 +86,7 @@ void S_LocalSound(const char *sound);
 void S_InsertText(const char *text);
 sfx_t *S_PrecacheSound(const char *sample);
 
- // CD audio (cd_win.c)
+// CD audio (cd_win.c)
 int CDAudio_Init(void);
 void CDAudio_Shutdown(void);
 void CDAudio_Update(void);

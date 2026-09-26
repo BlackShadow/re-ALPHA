@@ -1,16 +1,16 @@
 #ifndef QUAKEDEF_H
 #define QUAKEDEF_H
 
- // =========================================================
- // Platform and configuration
- // =========================================================
+// =========================================================
+// Platform and configuration
+// =========================================================
 
 #ifndef GLQUAKE
 #define GLQUAKE
 #endif
 #define VERSION         0.52
 
- // Constants
+// Constants
 #define MAX_LIGHTSTYLES 64
 #define MAX_SCOREBOARD  64
 #define MAXLIGHTMAPS    4
@@ -38,14 +38,14 @@
 #endif
 #endif
 
- // =========================================================
- // Core subsystem headers
- // =========================================================
+// =========================================================
+// Core subsystem headers
+// =========================================================
 
 #include "common.h"
 #include "zone.h"
 #include "mathlib.h"
- // #include "globals.h"/ / Moved to end
+// #include "globals.h"/ / Moved to end
 
 #include "bspfile.h"
 #include "wad.h"
@@ -81,27 +81,27 @@
 #include "globals.h"
 #include "host.h"
 
- // =========================================================
- // Global state
- // =========================================================
+// =========================================================
+// Global state
+// =========================================================
 
 typedef struct quakeparms_s
 {
-    char    *basedir;
-    char    *cachedir;
-    int     argc;
-    char    **argv;
-    void    *membase;
-    int     memsize;
+	char    *basedir;
+	char    *cachedir;
+	int     argc;
+	char    **argv;
+	void    *membase;
+	int     memsize;
 } quakeparms_t;
 
 extern quakeparms_t host_parms;
 extern cvar_t hostname;
 extern int host_initialized;
 
- // =========================================================
- // Host system parameters
- // =========================================================
+// =========================================================
+// Host system parameters
+// =========================================================
 
 int LoadEntityDLLs(const char *szBasePath);
 
@@ -109,7 +109,7 @@ extern qboolean is_dedicated;
 extern int standard_quake;
 extern int minimum_memory;
 
- // Centralized engine globals (declared in engine_globals.c)
+// Centralized engine globals (declared in engine_globals.c)
 #include "globals.h"
 
 #endif // QUAKEDEF_H

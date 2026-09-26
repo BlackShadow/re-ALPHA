@@ -85,12 +85,12 @@ extern char *cl_skyname_string;
 
 static int st_to_vec[6][3] =
 {
-    {3, -1, 2},
-    {-3, 1, 2},
-    {1, 3, 2},
-    {-1, -3, 2},
-    {-3, -1, -2},
-    {-3, 1, -2}
+	{3, -1, 2},
+	{-3, 1, 2},
+	{1, 3, 2},
+	{-1, -3, 2},
+	{-3, -1, -2},
+	{-3, 1, -2}
 };
 
 static int vec_to_st[6] = {3, -3, 1, -1, -3, -3};
@@ -159,98 +159,98 @@ void EmitWaterPolys(msurface_t *fa, int direction)
 
 void EmitSkyPolys(msurface_t *fa)
 {
-    glpoly_t *p;
-    float *v;
-    int i;
-    vec3_t dir;
-    float length;
-    float s, t;
+	glpoly_t *p;
+	float *v;
+	int i;
+	vec3_t dir;
+	float length;
+	float s, t;
 
-    for (p = (glpoly_t *)*(int *)((int)fa + 36); p; p = (glpoly_t *)p->next)
-    {
-        glBegin(GL_POLYGON);
+	for (p = (glpoly_t *)*(int *)((int)fa + 36); p; p = (glpoly_t *)p->next)
+	{
+		glBegin(GL_POLYGON);
 
-        v = &p->verts[0][0];
+		v = &p->verts[0][0];
 
-        for (i = 0; i < p->numverts; i++, v += 7)
-        {
-            dir[0] = v[0] - r_refdef_vieworg[0];
-            dir[1] = v[1] - r_refdef_vieworg[1];
-            dir[2] = v[2] - r_refdef_vieworg[2];
+		for (i = 0; i < p->numverts; i++, v += 7)
+		{
+			dir[0] = v[0] - r_refdef_vieworg[0];
+			dir[1] = v[1] - r_refdef_vieworg[1];
+			dir[2] = v[2] - r_refdef_vieworg[2];
 
-            dir[2] *= 3.0f;
+			dir[2] *= 3.0f;
 
-            length = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
-            length = sqrt(length);
-            length = 378.0f / length;
+			length = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
+			length = sqrt(length);
+			length = 378.0f / length;
 
-            dir[0] *= length;
-            dir[1] *= length;
+			dir[0] *= length;
+			dir[1] *= length;
 
-            s = (dir[0] + speedscale) * 0.0078125f;
-            t = (dir[1] + speedscale) * 0.0078125f;
+			s = (dir[0] + speedscale) * 0.0078125f;
+			t = (dir[1] + speedscale) * 0.0078125f;
 
-            glTexCoord2f(s, t);
-            glVertex3fv(v);
-        }
+			glTexCoord2f(s, t);
+			glVertex3fv(v);
+		}
 
-        glEnd();
-    }
+		glEnd();
+	}
 }
 
 void EmitBothSkyLayers(msurface_t *fa)
 {
-    float temp;
-    int truncated;
+	float temp;
+	int truncated;
 
-    GL_Bind(solidskytexture);
+	GL_Bind(solidskytexture);
 
-    temp = cl_time * 8.0f;
-    truncated = (int)temp;
-    truncated &= 0x80;
-    speedscale = temp - (float)truncated;
+	temp = cl_time * 8.0f;
+	truncated = (int)temp;
+	truncated &= 0x80;
+	speedscale = temp - (float)truncated;
 
-    EmitSkyPolys(fa);
+	EmitSkyPolys(fa);
 
-    glEnable(GL_BLEND);
+	glEnable(GL_BLEND);
 
-    GL_Bind(alphaskytexture);
+	GL_Bind(alphaskytexture);
 
-    temp = cl_time * 16.0f;
-    truncated = (int)temp;
-    truncated &= 0x80;
-    speedscale = temp - (float)truncated;
+	temp = cl_time * 16.0f;
+	truncated = (int)temp;
+	truncated &= 0x80;
+	speedscale = temp - (float)truncated;
 
-    EmitSkyPolys(fa);
+	EmitSkyPolys(fa);
 
-    glDisable(GL_BLEND);
+	glDisable(GL_BLEND);
 }
 
 void R_LoadSkys(void)
 {
-    int i;
-    char filename[64];
-    FILE *f;
+	int i;
+	char filename[64];
+	FILE *f;
 
-    for (i = 0; i < 6; i++)
-    {
-        GL_Bind(SKY_TEX_START + i);
+	for (i = 0; i < 6; i++)
+	{
+		GL_Bind(SKY_TEX_START + i);
 
-        sprintf(filename, "gfx/env/bkgtst%s.tga", suf[i]);
+		sprintf(filename, "gfx/env/bkgtst%s.tga", suf[i]);
 
-        COM_FOpenFile(filename, &f);
-        if (f)
-        {
-            LoadTGA(f);
-            glTexImage2D(GL_TEXTURE_2D, 0, gl_alpha_format, 256, 256, 0,
-                         GL_RGBA, GL_UNSIGNED_BYTE, targa_rgba);
-            free(targa_rgba);
-            targa_rgba = NULL;
+		COM_FOpenFile(filename, &f);
+		if (f)
+		{
+			LoadTGA(f);
+			glTexImage2D(GL_TEXTURE_2D, 0, gl_alpha_format, 256, 256, 0,
+						 GL_RGBA, GL_UNSIGNED_BYTE, targa_rgba);
+			free(targa_rgba);
+			targa_rgba = NULL;
 
-            glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        }
-    }
+			glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		}
+	}
 }
 
 static void EmitSkyVertex(float s, float t, int facenum)
@@ -308,67 +308,67 @@ void MakeSkyVec(float s, float t, int axis)
 
 void R_InitSky(texture_t *mt)
 {
-    int x, y;
-    int src_offset;
-    byte *src;
-    unsigned int *dest;
-    unsigned int pixel;
-    int red_sum, green_sum, blue_sum;
-    unsigned int avg_color;
-    unsigned int pixels[16384];
+	int x, y;
+	int src_offset;
+	byte *src;
+	unsigned int *dest;
+	unsigned int pixel;
+	int red_sum, green_sum, blue_sum;
+	unsigned int avg_color;
+	unsigned int pixels[16384];
 
-    red_sum = 0;
-    green_sum = 0;
-    blue_sum = 0;
-    src_offset = mt->offsets[0];
-    src = (byte *)mt + src_offset;
-    dest = pixels;
+	red_sum = 0;
+	green_sum = 0;
+	blue_sum = 0;
+	src_offset = mt->offsets[0];
+	src = (byte *)mt + src_offset;
+	dest = pixels;
 
-    for (y = 0; y < 128; y++)
-    {
-        for (x = 0; x < 128; x++)
-        {
-            pixel = pixels[0];
-            *dest++ = pixel;
+	for (y = 0; y < 128; y++)
+	{
+		for (x = 0; x < 128; x++)
+		{
+			pixel = pixels[0];
+			*dest++ = pixel;
 
-            red_sum += pixel & 0xFF;
-            green_sum += (pixel >> 8) & 0xFF;
-            blue_sum += (pixel >> 16) & 0xFF;
-        }
-    }
+			red_sum += pixel & 0xFF;
+			green_sum += (pixel >> 8) & 0xFF;
+			blue_sum += (pixel >> 16) & 0xFF;
+		}
+	}
 
-    avg_color = (red_sum / 0x4000) |
-                ((green_sum / 0x4000) << 8) |
-                ((blue_sum / 0x4000) << 16) |
-                0xFF000000;
+	avg_color = (red_sum / 0x4000) |
+				((green_sum / 0x4000) << 8) |
+				((blue_sum / 0x4000) << 16) |
+				0xFF000000;
 
-    if (!solidskytexture)
-        solidskytexture = texture_extension_number++;
+	if (!solidskytexture)
+		solidskytexture = texture_extension_number++;
 
-    GL_Bind(solidskytexture);
-    glTexImage2D(GL_TEXTURE_2D, 0, texture_extension_number, 128, 128, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	GL_Bind(solidskytexture);
+	glTexImage2D(GL_TEXTURE_2D, 0, texture_extension_number, 128, 128, 0,
+				 GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-    for (y = 0; y < 0x4000; y += 128)
-    {
-        for (x = 0; x < 128; x++)
-        {
-            if (!src[x])
-                pixels[x + y] = avg_color;
-        }
-        src += 256;
-    }
+	for (y = 0; y < 0x4000; y += 128)
+	{
+		for (x = 0; x < 128; x++)
+		{
+			if (!src[x])
+				pixels[x + y] = avg_color;
+		}
+		src += 256;
+	}
 
-    if (!alphaskytexture)
-        alphaskytexture = texture_extension_number++;
+	if (!alphaskytexture)
+		alphaskytexture = texture_extension_number++;
 
-    GL_Bind(alphaskytexture);
-    glTexImage2D(GL_TEXTURE_2D, 0, texture_extension_number, 128, 128, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	GL_Bind(alphaskytexture);
+	glTexImage2D(GL_TEXTURE_2D, 0, texture_extension_number, 128, 128, 0,
+				 GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 }
 
 void GL_CalcMinMaxBounds(int vertexCount, float *vertices, float *minBound, float *maxBound)

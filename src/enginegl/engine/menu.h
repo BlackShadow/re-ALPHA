@@ -1,9 +1,9 @@
 #ifndef MENU_H
 #define MENU_H
 
- // =========================================================
- // Menu Types
- // =========================================================
+// =========================================================
+// Menu Types
+// =========================================================
 
 typedef enum {
 	m_none = 0,
@@ -27,16 +27,16 @@ typedef enum {
 	m_slist
 } menu_state_t;
 
- // =========================================================
- // Menu Functions
- // =========================================================
+// =========================================================
+// Menu Functions
+// =========================================================
 
 void    M_Init(void);
 void    M_Draw(void);
 void    M_Keydown(int key);
 void    M_ToggleMenu_f(void);
 
- // Specific Menu Entry Points
+// Specific Menu Entry Points
 void    M_Menu_Main_f(void);
 void    M_Menu_SinglePlayer_f(void);
 void    M_Menu_Load_f(void);

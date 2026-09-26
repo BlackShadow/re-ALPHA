@@ -3,9 +3,9 @@
 
 #include "common.h"
 
- // Client movement command (sent from client to server).
+// Client movement command (sent from client to server).
 
- // Note: lightlevel is derived from a computed light level and sent along with the move message.
+// Note: lightlevel is derived from a computed light level and sent along with the move message.
 typedef struct usercmd_s
 {
 	float	viewangles[3];
