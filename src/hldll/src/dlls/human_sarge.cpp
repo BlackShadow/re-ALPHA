@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,101 +12,77 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// HSarge - Human sarge monster
+// Human sergeant - throws a shard at the player it spots
 //=========================================================
 
-#include <new>
-#include <string.h>
-#include "basemonster.h"
-#include "enginefuncs.h"
-#include "ggrenade.h"
-#include "hl_exports.h"
+#include "extdll.h"
+#include "util.h"
+#include "cbase.h"
 #include "monsters.h"
-#include "utils.h"
+#include "ggrenade.h"
 
-//=========================================================
-// Monster-specific constants
-//=========================================================
+#define HSARGE_THINK_INTERVAL		0.1f
+#define HSARGE_HEALTH				30.0f
+#define HSARGE_YAW_SPEED			10.0f
+#define HSARGE_FIELD_OF_VIEW		0.1f	// FInViewCone dot product
+#define HSARGE_THROW_DELAY			2.0f	// from spotting the player to throwing
+#define HSARGE_THROW_HEIGHT			32.0f	// above the sergeant's and the target's origins
+#define HSARGE_SHARD_SPEED_SCALE	1.9		// shard speed per unit of distance to the toss target
 
-#define HSARGE_THINK_INTERVAL 0.1f
-
-static const char kHSargeModel[] = "models/hsarge.mdl";
-static const char kShardSprite[] = "sprites/shard.spr";
-static const char kPain3Sound[] = "player/pain3.wav";
-
-//=========================================================
-// Helpers
-//=========================================================
-
-static entvars_t* EnemyVars(entvars_t* pevSelf)
+// hsarge.mdl sequences, named by the monster state that plays them
+enum
 {
-	if (!pevSelf)
+	HSARGE_SEQ_WALK = 0,		// also MONSTERSTATE_CHASE and MONSTERSTATE_MELEE_ATTACK
+	HSARGE_SEQ_DIE1,
+	HSARGE_SEQ_SPAWN,			// matches no state, so the first SetActivity always switches
+};
+
+static const char szHSargeModel[] = "models/hsarge.mdl";
+static const char szShardSprite[] = "sprites/shard.spr";
+static const char szSpotSound[] = "player/pain3.wav";
+
+// Returns the entity variables of the current enemy, or NULL
+static entvars_t *EnemyVars(entvars_t *pev)
+{
+	if (FNullEnt(pev->enemy))
 		return NULL;
 
-	int enemyIndex = PevInt(pevSelf, PEV_ENEMY);
-	if (!enemyIndex)
-		return NULL;
-
-	edict_t* pEdict = EnginePEntityOfEntIndex(enemyIndex);
-	return pEdict ? EngineGetVarsOfEnt(pEdict) : NULL;
+	return VARS(pev->enemy);
 }
-
-//=========================================================
-// CHSarge
-//=========================================================
 
 class CHSarge : public CBaseMonster
 {
 public:
 	void Spawn();
-
-private:
 	void SetActivity(int activity);
-	void SargeThink(CBaseEntity* pOther);
-	void LaunchShard(CBaseEntity* pOther);
+	void SargeThink(CBaseEntity *pOther);
+	void LaunchShard(CBaseEntity *pOther);
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CHSarge) <= 336, CHSarge_private_data_size);
+LINK_ENTITY_TO_CLASS(monster_human_sarge, CHSarge);
 
 //=========================================================
 // Spawn
 //=========================================================
 void CHSarge::Spawn()
 {
-	EnginePrecacheModel(kHSargeModel);
+	PRECACHE_MODEL(szHSargeModel);
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineSetModel(edict, kHSargeModel);
+	SET_MODEL(ENT(pev), szHSargeModel);
+	UTIL_SetSize(pev, Vector(-18.0f, -18.0f, 0.0f), Vector(18.0f, 18.0f, 72.0f));
 
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 18.0f, 18.0f, 72.0f);
-		VecSet(mins, -18.0f, -18.0f, 0.0f);
-		if (edict)
-			EngineSetSize(edict, mins, maxs);
-	}
+	pev->solid = SOLID_SLIDEBOX;
+	pev->movetype = MOVETYPE_STEP;
+	pev->effects = 0;
+	pev->health = HSARGE_HEALTH;
+	pev->yaw_speed = HSARGE_YAW_SPEED;
+	pev->sequence = HSARGE_SEQ_SPAWN;
 
-	PevFloat(pev, PEV_SOLID) = 3.0f;
-	PevFloat(pev, PEV_MOVETYPE) = 4.0f;
-	PevFloat(pev, PEV_STUCK) = 0.0f;
-	PevFloat(pev, PEV_HEALTH) = 30.0f;
-	PevFloat(pev, PEV_YAWSPEED) = 10.0f;
-	PevInt(pev, PEV_SEQUENCE) = 2;
-
-	PevVector(pev, PEV_VIEWOFS).x = 0.0f;
-	PevVector(pev, PEV_VIEWOFS).y = 0.0f;
-	PevVector(pev, PEV_VIEWOFS).z = 64.0f;
+	pev->view_ofs = Vector(0.0f, 0.0f, 64.0f);	// eye position
 
 	SetThink(&CHSarge::SargeThink);
-
-	// The original adds the interval to the existing nextthink value (the
-	// engine has already seeded pev->nextthink), it does NOT recompute it
-	// from the current map time the way SetNextThink would.
-	PevFloat(pev, PEV_NEXTTHINK) = PevFloat(pev, PEV_NEXTTHINK) + HSARGE_THINK_INTERVAL;
+	pev->nextthink = pev->nextthink + HSARGE_THINK_INTERVAL;
 }
 
 //=========================================================
@@ -118,183 +94,118 @@ void CHSarge::SetActivity(int activity)
 
 	switch (activity)
 	{
-	case 4:
-	case 8:
-	case 29:
-		sequence = 0;
+	case MONSTERSTATE_WALK:
+	case MONSTERSTATE_CHASE:
+	case MONSTERSTATE_MELEE_ATTACK:
+		sequence = HSARGE_SEQ_WALK;
 		break;
 
-	case 35:
-		sequence = 1;
+	case MONSTERSTATE_DIE1:
+		sequence = HSARGE_SEQ_DIE1;
 		break;
 
 	default:
-		EngineAlertMessage(1, "HSarge's monster state is bogus: %d", activity);
+		ALERT(at_console, "HSarge's monster state is bogus: %d", activity);
 		return;
 	}
 
-	if (PevInt(pev, PEV_SEQUENCE) == sequence)
+	if (pev->sequence == sequence)
 		return;
 
-	PevInt(pev, PEV_SEQUENCE) = sequence;
-	PevFloat(pev, PEV_FRAME) = 0.0f;
+	pev->sequence = sequence;
+	pev->frame = 0;
 	ResetSequenceInfo(HSARGE_THINK_INTERVAL);
 
-	volatile int validatedSequence = sequence;
-	if (validatedSequence < 0 || validatedSequence > 1)
+	switch (sequence)
 	{
-		EngineAlertMessage(1, "Bogus HSarge anim: %d", validatedSequence);
+	case HSARGE_SEQ_WALK:
+	case HSARGE_SEQ_DIE1:
+		break;
+
+	default:
+		ALERT(at_console, "Bogus HSarge anim: %d", sequence);
 		m_flFrameRate = 0.0f;
 		m_flGroundSpeed = 0.0f;
+		break;
 	}
 }
 
 //=========================================================
-// SargeThink
+// SargeThink - waits for the player to come into view
 //=========================================================
-void CHSarge::SargeThink(CBaseEntity* pOther)
+void CHSarge::SargeThink(CBaseEntity *pOther)
 {
-	SetNextThink(HSARGE_THINK_INTERVAL);
+	pev->nextthink = gpGlobals->time + HSARGE_THINK_INTERVAL;
 
-	edict_t* pClient = EngineFindClientInPVS();
-	if (!pClient)
+	edict_t *pentClient = FIND_CLIENT_IN_PVS();
+	if (FNullEnt(pentClient))
 		return;
 
-	if (!EngineIndexOfEdict(pClient))
+	entvars_t *pevClient = VARS(pentClient);
+
+	if ((int)pevClient->flags & FL_NOTARGET)
 		return;
 
-	entvars_t* pevClient = EngineGetVarsOfEnt(pClient);
-	if (!pevClient)
-		return;
-
-	// pev->flags is stored as a float; the original converts it to an int
-	// (ftol) before testing FL_NOTARGET (0x80).
-	if (((int)PevFloat(pevClient, PEV_FLAGS) & 0x80) != 0)
-		return;
-
-	if (!FInViewCone(pev, pevClient, 0.1f))
+	if (!FInViewCone(pev, pevClient, HSARGE_FIELD_OF_VIEW))
 		return;
 
 	if (!FVisible(pev, pevClient))
 		return;
 
-	PevInt(pev, PEV_ENEMY) = EngineIndexOfEdict(pClient);
+	pev->enemy = OFFSET(pentClient);
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, kPain3Sound, 1.0f, 0.8f);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, szSpotSound, VOL_NORM, ATTN_NORM);
 
-	// The original runs the cover/retreat searches here (their result
-	// vectors are discarded; FindCover sets m_Activity as a side effect).
+	// the positions found are not used
 	FindCover(pevClient);
 	FindRetreat(pevClient);
 
 	SetThink(&CHSarge::LaunchShard);
-	SetNextThink(2.0f);
+	pev->nextthink = gpGlobals->time + HSARGE_THROW_DELAY;
 }
 
 //=========================================================
-// LaunchShard
+// LaunchShard - lobs a bouncing shard at the enemy
 //=========================================================
-void CHSarge::LaunchShard(CBaseEntity* pOther)
+void CHSarge::LaunchShard(CBaseEntity *pOther)
 {
-	entvars_t* pevEnemy = EnemyVars(pev);
+	entvars_t *pevEnemy = EnemyVars(pev);
 	if (!pevEnemy)
 		return;
 
-	float vecTarget[3];
-	vecTarget[0] = PevVector(pevEnemy, PEV_ORIGIN).x;
-	vecTarget[1] = PevVector(pevEnemy, PEV_ORIGIN).y;
-	vecTarget[2] = PevVector(pevEnemy, PEV_ORIGIN).z + 32.0f;
+	Vector vecTarget(pevEnemy->origin.x, pevEnemy->origin.y, pevEnemy->origin.z + HSARGE_THROW_HEIGHT);
+	Vector vecStart(pev->origin.x, pev->origin.y, pev->origin.z + HSARGE_THROW_HEIGHT);
 
-	float vecStart[3];
-	vecStart[0] = PevVector(pev, PEV_ORIGIN).x;
-	vecStart[1] = PevVector(pev, PEV_ORIGIN).y;
-	vecStart[2] = PevVector(pev, PEV_ORIGIN).z + 32.0f;
+	Vector vecTossTarget = GetTossTarget(pev, vecStart, vecTarget);
 
-	float vecTossTarget[3];
-	GetTossTarget(vecTossTarget, pev, vecStart, vecTarget);
-
-	if (vecTossTarget[0] == 0.0f && vecTossTarget[1] == 0.0f && vecTossTarget[2] == 0.0f)
+	if (vecTossTarget == g_vecZero)
 	{
-		m_pfnThink = NULL;
+		SetThink(NULL);
 		return;
 	}
 
-	edict_t* pEdict = EngineCreateEntity();
-	entvars_t* pevShard = pEdict ? EngineGetVarsOfEnt(pEdict) : NULL;
-	if (!pevShard)
-		return;
+	edict_t *pentShard = CREATE_ENTITY();
+	entvars_t *pevShard = VARS(pentShard);
 
-	PevFloat(pevShard, PEV_MOVETYPE) = 10.0f;
-	PevFloat(pevShard, PEV_SOLID) = 2.0f;
-	EngineSetModel(pEdict, kShardSprite);
+	pevShard->movetype = MOVETYPE_BOUNCE;
+	pevShard->solid = SOLID_BBOX;
+	SET_MODEL(pentShard, szShardSprite);
+	UTIL_SetSize(pevShard, g_vecZero, g_vecZero);
 
-	{
-		float vecZero[3] = {0.0f, 0.0f, 0.0f};
-		EngineSetSize(pEdict, vecZero, vecZero);
-	}
+	pevShard->origin = Vector(pev->origin.x, pev->origin.y, pev->origin.z + HSARGE_THROW_HEIGHT);
 
-	// The original writes the shard's origin fields directly (it does
-	// not call SetOrigin), so the entity is not relinked here.
-	PevVector(pevShard, PEV_ORIGIN).x = PevVector(pev, PEV_ORIGIN).x;
-	PevVector(pevShard, PEV_ORIGIN).y = PevVector(pev, PEV_ORIGIN).y;
-	PevVector(pevShard, PEV_ORIGIN).z = PevVector(pev, PEV_ORIGIN).z + 32.0f;
+	float flDist = (vecTossTarget - pev->origin).Length();
 
-	float distVec[3];
-	distVec[0] = vecTossTarget[0] - PevVector(pev, PEV_ORIGIN).x;
-	distVec[1] = vecTossTarget[1] - PevVector(pev, PEV_ORIGIN).y;
-	distVec[2] = vecTossTarget[2] - PevVector(pev, PEV_ORIGIN).z;
+	Vector vecDir = vecTossTarget - pevShard->origin;
+	float flLength = vecDir.Length();
+	if (flLength <= 0.0f)
+		vecDir = g_vecZero;
+	else
+		vecDir = vecDir * (1.0f / flLength);
 
-	float flDist = VecLength(distVec);
-
-	float vel[3];
-	vel[0] = vecTossTarget[0] - PevVector(pevShard, PEV_ORIGIN).x;
-	vel[1] = vecTossTarget[1] - PevVector(pevShard, PEV_ORIGIN).y;
-	vel[2] = vecTossTarget[2] - PevVector(pevShard, PEV_ORIGIN).z;
-
-	if (!VecNormalize(vel))
-		VecSet(vel, 0.0f, 0.0f, 0.0f);
-
-	// The original multiplies the distance by a DOUBLE-precision 1.9
-	// (FMUL double ptr at), so keep the scale in double.
-	double scale = (double)flDist * 1.9;
-	vel[0] = (float)(vel[0] * scale);
-	vel[1] = (float)(vel[1] * scale);
-	vel[2] = (float)(vel[2] * scale);
-
-	PevVector(pevShard, PEV_VELOCITY).x = vel[0];
-	PevVector(pevShard, PEV_VELOCITY).y = vel[1];
-	PevVector(pevShard, PEV_VELOCITY).z = vel[2];
-}
-
-//=========================================================
-// monster_human_sarge
-//=========================================================
-DLLEXPORT void monster_human_sarge(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 336);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 336);
-
-		CHSarge* monster = new (privateData) CHSarge();
-		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
-	}
+	// the speed is scaled in double precision
+	double flSpeed = (double)flDist * HSARGE_SHARD_SPEED_SCALE;
+	pevShard->velocity.x = (float)(vecDir.x * flSpeed);
+	pevShard->velocity.y = (float)(vecDir.y * flSpeed);
+	pevShard->velocity.z = (float)(vecDir.z * flSpeed);
 }

@@ -12,11 +12,17 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-#ifndef EDICT_H
-#define EDICT_H
+#ifndef DOORS_H
+#define DOORS_H
 
-// edict_t is private to the engine; the DLL only passes pointers to it around
-// and reaches the entity variables through entvars_t.
-#include "progdefs.h"
+// func_door spawnflags
+#define SF_DOOR_START_OPEN			1
+#define SF_DOOR_ROTATE_BACKWARDS	2
+#define SF_DOOR_PASSABLE			8
+#define SF_DOOR_ONEWAY				16
+#define SF_DOOR_NO_AUTO_RETURN		32
+#define SF_DOOR_ROTATE_Z			64
+#define SF_DOOR_ROTATE_X			128
+#define SF_DOOR_USE_ONLY			256		// touching does nothing, the door must be used
 
-#endif // EDICT_H
+#endif // DOORS_H

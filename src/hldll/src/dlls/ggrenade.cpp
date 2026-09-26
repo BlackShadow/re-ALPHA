@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,512 +12,298 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// Grenade - Timed grenades and radius damage
+// Grenade - timed grenades and radius damage
 //=========================================================
 
-#include <math.h>
-#include <new>
-#include <string.h>
-#include "basemonster.h"
-#include "enginefuncs.h"
+#include "extdll.h"
+#include "util.h"
+#include "cbase.h"
+#include "monsters.h"
+#include "decals.h"
 #include "ggrenade.h"
-#include "utils.h"
 
-enum
-{
-	SVC_TEMPENTITY = 23,
-	TE_EXPLOSION = 3,
-	TE_DECAL = 104,
-	TE_ALPHABREAKMODEL = 107,
-};
-
-static const char kGrenadeClassname[] = "grenade";
-static const char kPlayerClassname[] = "player";
-
-static const char kGrenadeModel[] = "models/grenade.mdl";
-
-static const char kDebris1[] = "weapons/debris1.wav";
-static const char kDebris2[] = "weapons/debris2.wav";
-static const char kDebris3[] = "weapons/debris3.wav";
-static const char kBounce1[] = "weapons/g_bounce1.wav";
-static const char kBounce2[] = "weapons/g_bounce2.wav";
-static const char kBounce3[] = "weapons/g_bounce3.wav";
-static const char kFuncBreakable[] = "func_breakable";
-static const char kFuncGlass[] = "func_glass";
+#define GRENADE_DAMAGE		100.0f
+#define GRENADE_FUSE		2.0f	// monster grenades explode after this long
 
 extern short g_sModelIndexShrapnel;
 
-static Vector VecFromFloats(const float* vec)
-{
-	Vector out;
-	out.x = vec[0];
-	out.y = vec[1];
-	out.z = vec[2];
-	return out;
-}
-
 //=========================================================
-// RadiusDamage
+// RadiusDamage - damages everything within reach that can
+// be seen from the explosion, less the further away it is
 //=========================================================
-static void RadiusDamage(entvars_t* pevInflictor, entvars_t* pevAttacker, float flDamage, int iClassIgnore)
+static void RadiusDamage(entvars_t *pevInflictor, entvars_t *pevAttacker, float flDamage, int iClassIgnore)
 {
-	if (!pevInflictor)
-		return;
+	// in case the grenade is lying on the ground
+	pevInflictor->origin.z += 1.0f;
 
-	PevVector(pevInflictor, PEV_ORIGIN).z = PevVector(pevInflictor, PEV_ORIGIN).z + 1.0f;
-
-	Vector vecSrc = PevVector(pevInflictor, PEV_ORIGIN);
+	Vector vecSrc = pevInflictor->origin;
 	float flRadius = flDamage * 2.0f;
 
-	edict_t* pEdict = EngineFindEntityInSphere((const float*)&vecSrc, flRadius);
-	while (pEdict)
+	edict_t *pentHit = FIND_ENTITY_IN_SPHERE(vecSrc, flRadius);
+	while (!FNullEnt(pentHit))
 	{
-		if (!EngineIndexOfEdict(pEdict))
-			return;
+		entvars_t *pevHit = VARS(pentHit);
 
-		entvars_t* pevHit = EngineGetVarsOfEnt(pEdict);
-		if (pevHit && (PevInt(pevHit, PEV_TAKEDAMAGE) & 0x7FFFFFFF) != 0)
+		if (pevHit->takedamage != DAMAGE_NO)
 		{
-			CBaseEntity* pEntity = (CBaseEntity*)EngineGetPrivateData(pEdict);
-			if (pEntity && pEntity->Classify() != iClassIgnore)
+			CBaseEntity *pHit = CBaseEntity::Instance(pentHit);
+
+			if (pHit && pHit->Classify() != iClassIgnore)
 			{
-				float vecSpot[3];
-				vecSpot[0] = PevVector(pevHit, PEV_ORIGIN).x;
-				vecSpot[1] = PevVector(pevHit, PEV_ORIGIN).y;
-				vecSpot[2] = PevVector(pevHit, PEV_ORIGIN).z + PevVector(pevHit, PEV_SIZE).z * 0.5f;
+				Vector vecSpot = pevHit->origin;
+				vecSpot.z += pevHit->size.z * 0.5f;
 
 				TraceResult tr;
-				memset(&tr, 0, sizeof(tr));
-				EngineTraceLine((const float*)&vecSrc, vecSpot, 0, EdictFromEntvars(pevInflictor), &tr);
+				UTIL_TraceLine(vecSrc, vecSpot, ignore_monsters, ENT(pevInflictor), &tr);
 
 				if (tr.flFraction == 1.0f)
 				{
-					float delta[3];
-					delta[0] = vecSrc.x - PevVector(pevHit, PEV_ORIGIN).x;
-					delta[1] = vecSrc.y - PevVector(pevHit, PEV_ORIGIN).y;
-					delta[2] = vecSrc.z - PevVector(pevHit, PEV_ORIGIN).z;
+					float flAdjustedDamage = flDamage - (vecSrc - pevHit->origin).Length() * 0.4f;
+					if (flAdjustedDamage < 0)
+						flAdjustedDamage = 0;
 
-					float flAdjustedDamage = flDamage - VecLength(delta) * 0.4f;
-					if (flAdjustedDamage < 0.0f)
-						flAdjustedDamage = 0.0f;
-
-					pEntity->TakeDamage(pevInflictor, pevAttacker, flAdjustedDamage);
+					pHit->TakeDamage(pevInflictor, pevAttacker, flAdjustedDamage);
 				}
 			}
 		}
 
-		int chainIndex = pevHit ? PevInt(pevHit, PEV_CHAIN) : 0;
-		pEdict = chainIndex ? EnginePEntityOfEntIndex(chainIndex) : NULL;
+		pentHit = ENT(pevHit->chain);
 	}
 }
 
 //=========================================================
 // GetTossTarget
 //=========================================================
-BOOL GetTossTarget(float* out, entvars_t* pevOwner, const float* start, const float* target)
+Vector GetTossTarget(entvars_t *pevOwner, const Vector &vecStart, const Vector &vecTarget)
 {
-	if (!out)
-		return 0;
+	UTIL_MakeVectors(pevOwner->angles);
 
-	out[0] = 0.0f;
-	out[1] = 0.0f;
-	out[2] = 0.0f;
+	// miss by up to 24 units
+	float flRand = RANDOM_FLOAT(0.0f, 1.0f);
+	float flMiss = (flRand * 16.0f - 8.0f) + (flRand * 32.0f - 16.0f);
 
-	if (!pevOwner || !start || !target)
-		return 0;
+	Vector vecAim = vecTarget + gpGlobals->v_right * flMiss + gpGlobals->v_forward * flMiss;
 
-	void* globals = GlobalsFromEntvars(pevOwner);
-	edict_t* pOwnerEdict = EdictFromEntvars(pevOwner);
-	if (!globals || !pOwnerEdict)
-		return 0;
-
-	EngineMakeVectors((const float*)&PevVector(pevOwner, PEV_ANGLES));
-
-	const float* forward = GlobalsForward(globals);
-	const float* up = GlobalsUp(globals);
-	const float* right = GlobalsRight(globals);
-	if (!forward || !up || !right)
-		return 0;
-
-	// Binary reuses ONE random value in both terms (== r*48 - 24), not two independent
-	// draws. (Faithful structure; binary actually reads a shared global.)
-	float r = RandomFloat(0.0f, 1.0f);
-	float flRand = (r * 16.0f - 8.0f) + (r * 32.0f - 16.0f);
-
-	float vecTarget[3];
-	vecTarget[0] = target[0] + right[0] * flRand + forward[0] * flRand;
-	vecTarget[1] = target[1] + right[1] * flRand + forward[1] * flRand;
-	vecTarget[2] = target[2] + right[2] * flRand + forward[2] * flRand;
-
-	float mid[3];
-	mid[0] = (vecTarget[0] - start[0]) * 0.5f + start[0];
-	mid[1] = (vecTarget[1] - start[1]) * 0.5f + start[1];
-	mid[2] = (vecTarget[2] - start[2]) * 0.5f + start[2];
-
-	float upOffset[3];
-	upOffset[0] = up[0] * 1024.0f;
-	upOffset[1] = up[1] * 1024.0f;
-	upOffset[2] = up[2] * 1024.0f;
-
-	float endUp[3];
-	Vec3Add(endUp, mid, upOffset);
+	// the top of the arc is under the ceiling halfway there
+	Vector vecMidPoint = (vecAim - vecStart) * 0.5f + vecStart;
 
 	TraceResult tr;
-	memset(&tr, 0, sizeof(tr));
-	EngineTraceLine(mid, endUp, 0, pOwnerEdict, &tr);	// fNoMonsters=0
+	UTIL_TraceLine(vecMidPoint, vecMidPoint + gpGlobals->v_up * 1024.0f, ignore_monsters, ENT(pevOwner), &tr);
+	Vector vecApex = tr.vecEndPos;
 
-	float vecApex[3];
-	vecApex[0] = tr.vecEndPos[0];
-	vecApex[1] = tr.vecEndPos[1];
-	vecApex[2] = tr.vecEndPos[2];
-
-	memset(&tr, 0, sizeof(tr));
-	EngineTraceLine(start, vecApex, 1, pOwnerEdict, &tr);	// fNoMonsters=1
+	// both halves of the arc must be clear
+	UTIL_TraceLine(vecStart, vecApex, dont_ignore_monsters, ENT(pevOwner), &tr);
 	if (tr.flFraction != 1.0f)
-	{
-		vecApex[0] = 0.0f;
-		vecApex[1] = 0.0f;
-		vecApex[2] = 0.0f;
-	}
+		vecApex = g_vecZero;
 
-	memset(&tr, 0, sizeof(tr));
-	EngineTraceLine(vecTarget, vecApex, 1, pOwnerEdict, &tr);	// fNoMonsters=1
+	UTIL_TraceLine(vecAim, vecApex, dont_ignore_monsters, ENT(pevOwner), &tr);
 	if (tr.flFraction != 1.0f)
+		vecApex = g_vecZero;
+
+	if (vecApex != g_vecZero)
 	{
-		vecApex[0] = 0.0f;
-		vecApex[1] = 0.0f;
-		vecApex[2] = 0.0f;
+		DrawDebugLine(vecAim, vecStart);
+		DrawDebugLine(vecStart, vecApex);
+		DrawDebugLine(vecAim, vecApex);
 	}
 
-	if (vecApex[0] != 0.0f || vecApex[1] != 0.0f || vecApex[2] != 0.0f)
-	{
-		DrawDebugLine(VecFromFloats(vecTarget), VecFromFloats(start));
-		DrawDebugLine(VecFromFloats(start), VecFromFloats(vecApex));
-		DrawDebugLine(VecFromFloats(vecTarget), VecFromFloats(vecApex));
-	}
-
-	out[0] = vecApex[0];
-	out[1] = vecApex[1];
-	out[2] = vecApex[2];
-	return 1;
+	return vecApex;
 }
 
 //=========================================================
 // CGrenade
 //=========================================================
-
 class CGrenade : public CBaseMonster
 {
 public:
-	void Init(entvars_t* pevOwner, const float* start, const float* velocity);
-
-	void Touch(CBaseEntity* pOther);	// vtable slot 6
-
-private:
-	void ExplodeThink(CBaseEntity* pOther);
+	void Init(entvars_t *pevOwner, const Vector &vecStart, const Vector &vecVelocity);
+	void Touch(CBaseEntity *pOther);
+	void ExplodeThink(CBaseEntity *pOther);
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CGrenade) <= 336, CGrenade_private_data_size);
-
-static CGrenade* CreateGrenadeEntity()
+void CGrenade::Init(entvars_t *pevOwner, const Vector &vecStart, const Vector &vecVelocity)
 {
-	edict_t* pEdict = EngineCreateEntity();
-	entvars_t* pev = pEdict ? EngineGetVarsOfEnt(pEdict) : NULL;
-	if (!pev)
-		return NULL;
+	BOOL fContact = pevOwner && FClassnameIs(pevOwner, "player");
 
-	void* privateData = EngineGetPrivateData(pEdict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(pEdict, 336);
-		if (!privateData)
-			return NULL;
+	pev->movetype = MOVETYPE_BOUNCE;
+	pev->classname = ALLOC_STRING("grenade");
 
-		memset(privateData, 0, 336);
+	pev->renderamt = 0;
+	pev->rendermode = kRenderNormal;
+	pev->renderfx = 0;
 
-		CGrenade* pGrenade = new (privateData) CGrenade();
-		pGrenade->pev = pev;
-		pGrenade->m_pGlobals = GlobalsFromEntvars(pev);
-		return pGrenade;
-	}
+	if (fContact)
+		pev->gravity = 0.4f;
 
-	return (CGrenade*)privateData;
-}
-
-//=========================================================
-// Init
-//=========================================================
-
-void CGrenade::Init(entvars_t* pevOwner, const float* start, const float* velocity)
-{
-	if (!pev || !start || !velocity)
-		return;
-
-	edict_t* edict = EdictFromEntvars(pev);
-
-	PevFloat(pev, PEV_MOVETYPE) = 10.0f;	// MOVETYPE_BOUNCE (0x41200000)
-	PevInt(pev, PEV_CLASSNAME) = EngineAllocString(kGrenadeClassname);
-
-	// The engine-owned pev is not zeroed by us; clear the render fields and the
-	// field at +260 exactly as the original Init does (offsets 244/240/260).
-	PevInt(pev, 244) = 0;
-	PevInt(pev, PEV_RENDERMODE) = 0;	// +240
-	PevInt(pev, 260) = 0;
+	pev->solid = SOLID_BBOX;
 
 	if (pevOwner)
+		pev->owner = OFFSET(pevOwner);
+
+	SET_MODEL(ENT(pev), "models/grenade.mdl");
+	UTIL_SetSize(pev, g_vecZero, g_vecZero);
+
+	pev->origin = vecStart;
+	pev->velocity = vecVelocity;
+	pev->angles = UTIL_VecToAngles(vecVelocity);
+	pev->dmg = GRENADE_DAMAGE;
+
+	if (fContact)
 	{
-		const char* ownerClass = EngineStringFromIndex(PevInt(pevOwner, PEV_CLASSNAME));
-		if (ownerClass && strcmp(ownerClass, kPlayerClassname) == 0)
-		{
-			PevFloat(pev, PEV_GRAVITY) = 0.4f;	// +144 (0x3ECCCCCD)
-		}
-	}
-
-	PevFloat(pev, PEV_SOLID) = 2.0f;	// SOLID_BBOX (0x40000000)
-
-	if (pevOwner)
-	{
-		edict_t* ownerEdict = EdictFromEntvars(pevOwner);
-		PevInt(pev, PEV_OWNER_ENTINDEX) = ownerEdict ? EngineIndexOfEdict(ownerEdict) : 0;
-	}
-
-	if (edict)
-		EngineSetModel(edict, kGrenadeModel);
-
-	{
-		float vecZero[3] = {0.0f, 0.0f, 0.0f};
-		if (edict)
-			EngineSetSize(edict, vecZero, vecZero);
-	}
-
-	{
-		Vector& vecOrigin = PevVector(pev, PEV_ORIGIN);
-		vecOrigin.x = start[0];
-		vecOrigin.y = start[1];
-		vecOrigin.z = start[2];
-	}
-
-	{
-		Vector& vecVel = PevVector(pev, PEV_VELOCITY);
-		vecVel.x = velocity[0];
-		vecVel.y = velocity[1];
-		vecVel.z = velocity[2];
-	}
-
-	{
-		float ang[3];
-		EngineVecToAngles(velocity, ang);
-		PevVector(pev, PEV_ANGLES).x = ang[0];
-		PevVector(pev, PEV_ANGLES).y = ang[1];
-		PevVector(pev, PEV_ANGLES).z = ang[2];
-	}
-
-	PevFloat(pev, PEV_DMG) = 100.0f;
-
-	const char* ownerClass = pevOwner ? EngineStringFromIndex(PevInt(pevOwner, PEV_CLASSNAME)) : NULL;
-	if (ownerClass && strcmp(ownerClass, kPlayerClassname) == 0)
-	{
-		SetDoNothingThink();
-		PevVector(pev, PEV_AVELOCITY).x = RandomFloat(-100.0f, -500.0f);
+		SetThink(&CBaseEntity::SUB_DoNothing);
+		pev->avelocity.x = RANDOM_FLOAT(-100.0f, -500.0f);
 	}
 	else
 	{
 		SetThink(&CGrenade::ExplodeThink);
-		SetNextThink(2.0f);
-		PevVector(pev, PEV_AVELOCITY).x = -400.0f;	// 0xC3C80000
+		pev->nextthink = gpGlobals->time + GRENADE_FUSE;
+		pev->avelocity.x = -400.0f;
 	}
 }
 
 //=========================================================
-// Touch
-//
-// Player contact grenade: explode on whatever it hits (and forward
-// our blocking damage to breakable/glass).  Otherwise it is a world
-// bounce: randomize a bounce sound, set spin, and damp the velocity.
+// Touch - the player's grenades explode on what they hit,
+// the others bounce
 //=========================================================
-void CGrenade::Touch(CBaseEntity* pOther)
+void CGrenade::Touch(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
+	entvars_t *pevOwner = FNullEnt(pev->owner) ? NULL : VARS(pev->owner);
 
-	if (!pev || !m_pGlobals)
-		return;
-
-	int otherIndex = *GlobalsInt(m_pGlobals, GLOBALS_OTHER_ENTINDEX);
-	edict_t* pOtherEdict = otherIndex ? EnginePEntityOfEntIndex(otherIndex) : NULL;
-	entvars_t* pevOther = pOtherEdict ? EngineGetVarsOfEnt(pOtherEdict) : NULL;
-
-	int ownerIndex = PevInt(pev, PEV_OWNER_ENTINDEX);
-	edict_t* pOwnerEdict = ownerIndex ? EnginePEntityOfEntIndex(ownerIndex) : NULL;
-	entvars_t* pevOwner = pOwnerEdict ? EngineGetVarsOfEnt(pOwnerEdict) : NULL;
-
-	const char* ownerClass = pevOwner ? EngineStringFromIndex(PevInt(pevOwner, PEV_CLASSNAME)) : NULL;
-
-	if (ownerClass && strcmp(ownerClass, kPlayerClassname) == 0)
+	if (pevOwner && FClassnameIs(pevOwner, "player"))
 	{
-		// Remember the entity we hit, then explode now.
-		PevInt(pev, PEV_ENEMY) = pOtherEdict ? EngineIndexOfEdict(pOtherEdict) : 0;
+		pev->enemy = gpGlobals->other;
 
 		SetThink(&CGrenade::ExplodeThink);
-		SetNextThink(0.0f);
+		pev->nextthink = gpGlobals->time;
 
-		// Breakable / glass: forward our blocking damage straight to it.
-		const char* otherClass = pevOther ? EngineStringFromIndex(PevInt(pevOther, PEV_CLASSNAME)) : NULL;
-		if (otherClass && (strcmp(otherClass, kFuncBreakable) == 0 || strcmp(otherClass, kFuncGlass) == 0))
+		// breakables take the full damage
+		if (!FNullEnt(gpGlobals->other))
 		{
-			CBaseEntity* pHit = (CBaseEntity*)EngineGetPrivateData(pOtherEdict);
-			if (pHit)
-				pHit->TakeDamage(pev, pevOwner, PevFloat(pev, PEV_DMG));
+			edict_t *pentOther = ENT(gpGlobals->other);
+			entvars_t *pevOther = VARS(pentOther);
+
+			if (FClassnameIs(pevOther, "func_breakable") || FClassnameIs(pevOther, "func_glass"))
+			{
+				CBaseEntity *pHit = CBaseEntity::Instance(pentOther);
+				if (pHit)
+					pHit->TakeDamage(pev, pevOwner, pev->dmg);
+			}
 		}
 		return;
 	}
 
-	// Non-player grenade hitting the world: bounce.
-	PevFloat(pev, PEV_MOVETYPE) = 10.0f;	// MOVETYPE_BOUNCE
+	pev->movetype = MOVETYPE_BOUNCE;
+	pev->avelocity = Vector(300.0f, 300.0f, 300.0f);
+	pev->gravity = 1.0f;
 
-	PevVector(pev, PEV_AVELOCITY).x = 300.0f;
-	PevVector(pev, PEV_AVELOCITY).y = 300.0f;
-	PevVector(pev, PEV_AVELOCITY).z = 300.0f;
-
-	PevFloat(pev, PEV_GRAVITY) = 1.0f;
-
-	// Only play a bounce sound when we did not hit our owner.
-	if (otherIndex != PevInt(pev, PEV_OWNER_ENTINDEX))
+	if (gpGlobals->other != pev->owner)
 	{
-		edict_t* edict = EdictFromEntvars(pev);
-		if (RandomFloat(0.0f, 1.0f) < 0.7f)
+		if (RANDOM_FLOAT(0.0f, 1.0f) < 0.7f)
 		{
-			float flPick = RandomFloat(0.0f, 1.0f);
-			const char* sound;
-			if (flPick <= 0.33f)
-				sound = kBounce1;
-			else if (flPick <= 0.66f)
-				sound = kBounce2;
-			else
-				sound = kBounce3;
+			float flRand = RANDOM_FLOAT(0.0f, 1.0f);
+			const char *pszSound;
 
-			if (edict)
-				EngineEmitSound(edict, 2, sound, 1.0f, 0.8f);
+			if (flRand <= 0.33f)
+				pszSound = "weapons/g_bounce1.wav";
+			else if (flRand <= 0.66f)
+				pszSound = "weapons/g_bounce2.wav";
+			else
+				pszSound = "weapons/g_bounce3.wav";
+
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSound, VOL_NORM, ATTN_NORM);
 		}
 
-		Vector& vecVel = PevVector(pev, PEV_VELOCITY);
-		vecVel.x = vecVel.x * 0.8f;
-		vecVel.y = vecVel.y * 0.8f;
-		vecVel.z = vecVel.z * 0.8f;
+		pev->velocity = pev->velocity * 0.8f;
 	}
 }
 
 //=========================================================
 // ExplodeThink
 //=========================================================
-void CGrenade::ExplodeThink(CBaseEntity* pOther)
+void CGrenade::ExplodeThink(CBaseEntity *pOther)
 {
-	if (!pev)
-		return;
+	pev->model = 0;
+	pev->solid = SOLID_NOT;
 
-	edict_t* edict = EdictFromEntvars(pev);
+	WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+	WRITE_BYTE(MSG_BROADCAST, TE_EXPLOSION);
+	WRITE_COORD(MSG_BROADCAST, pev->origin.x);
+	WRITE_COORD(MSG_BROADCAST, pev->origin.y);
+	WRITE_COORD(MSG_BROADCAST, pev->origin.z);
 
-	PevInt(pev, 128) = 0;
-	PevFloat(pev, PEV_SOLID) = 0.0f;
+	WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+	WRITE_BYTE(MSG_BROADCAST, TE_SPRITE_SPRAY);
+	WRITE_COORD(MSG_BROADCAST, pev->origin.x);
+	WRITE_COORD(MSG_BROADCAST, pev->origin.y);
+	WRITE_COORD(MSG_BROADCAST, pev->origin.z);
+	WRITE_COORD(MSG_BROADCAST, 400.0f);		// speed
+	WRITE_SHORT(MSG_BROADCAST, g_sModelIndexShrapnel);
+	WRITE_SHORT(MSG_BROADCAST, 30);			// count
+	WRITE_BYTE(MSG_BROADCAST, 15);			// life
 
-	EngineWriteByte(0, SVC_TEMPENTITY);
-	EngineWriteByte(0, TE_EXPLOSION);
-	EngineWriteCoord(0, PevVector(pev, PEV_ORIGIN).x);
-	EngineWriteCoord(0, PevVector(pev, PEV_ORIGIN).y);
-	EngineWriteCoord(0, PevVector(pev, PEV_ORIGIN).z);
+	entvars_t *pevOwner = FNullEnt(pev->owner) ? NULL : VARS(pev->owner);
+	RadiusDamage(pev, pevOwner, pev->dmg, CLASS_NONE);
 
-	EngineWriteByte(0, SVC_TEMPENTITY);
-	EngineWriteByte(0, TE_ALPHABREAKMODEL);
-	EngineWriteCoord(0, PevVector(pev, PEV_ORIGIN).x);
-	EngineWriteCoord(0, PevVector(pev, PEV_ORIGIN).y);
-	EngineWriteCoord(0, PevVector(pev, PEV_ORIGIN).z);
-	EngineWriteCoord(0, 400.0f);
-	EngineWriteShort(0, g_sModelIndexShrapnel);
-	EngineWriteShort(0, 30);
-	EngineWriteByte(0, 15);
+	// scorch mark where the grenade was going
+	Vector vecStart;
+	Vector vecEnd;
 
+	if (pev->velocity != g_vecZero)
 	{
-		int ownerIndex = PevInt(pev, PEV_OWNER_ENTINDEX);
-		edict_t* pOwnerEdict = ownerIndex ? EnginePEntityOfEntIndex(ownerIndex) : NULL;
-		entvars_t* pevOwner = pOwnerEdict ? EngineGetVarsOfEnt(pOwnerEdict) : NULL;
-		RadiusDamage(pev, pevOwner, PevFloat(pev, PEV_DMG), 0);
+		Vector vecDir = pev->velocity.Normalize();
+		vecStart = pev->origin - vecDir * 32.0f;
+		vecEnd = pev->origin;
+	}
+	else
+	{
+		vecStart = pev->origin;
+		vecStart.z += 8.0f;
+		vecEnd = vecStart;
+		vecEnd.z -= 24.0f;
 	}
 
+	TraceResult tr;
+	UTIL_TraceLine(vecStart, vecEnd, ignore_monsters, ENT(pev), &tr);
+
+	WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+	WRITE_BYTE(MSG_BROADCAST, TE_DECAL);
+	WRITE_COORD(MSG_BROADCAST, tr.vecEndPos.x);
+	WRITE_COORD(MSG_BROADCAST, tr.vecEndPos.y);
+	WRITE_COORD(MSG_BROADCAST, tr.vecEndPos.z);
+	WRITE_SHORT(MSG_BROADCAST, ENTINDEX(tr.pHit));
+
+	if (RANDOM_FLOAT(0.0f, 1.0f) < 0.5f)
+		WRITE_BYTE(MSG_BROADCAST, DECAL_SCORCH1);
+	else
+		WRITE_BYTE(MSG_BROADCAST, DECAL_SCORCH2);
+
+	float flRndSound = RANDOM_FLOAT(0.0f, 1.0f);	// not used
+
+	switch (RANDOM_LONG(0, 2))
 	{
-		float start[3];
-		float end[3];
+	case 0:
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, "weapons/debris1.wav", VOL_NORM, ATTN_NORM);
+		break;
 
-		float vel[3];
-		vel[0] = PevVector(pev, PEV_VELOCITY).x;
-		vel[1] = PevVector(pev, PEV_VELOCITY).y;
-		vel[2] = PevVector(pev, PEV_VELOCITY).z;
+	case 1:
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, "weapons/debris2.wav", VOL_NORM, ATTN_NORM);
+		break;
 
-		if ((vel[0] != 0.0f) || (vel[1] != 0.0f) || (vel[2] != 0.0f))
-		{
-			float dir[3];
-			VecCopy(dir, vel);
-			if (!VecNormalize(dir))
-				VecSet(dir, 0.0f, 0.0f, 0.0f);
-
-			start[0] = PevVector(pev, PEV_ORIGIN).x - dir[0] * 32.0f;
-			start[1] = PevVector(pev, PEV_ORIGIN).y - dir[1] * 32.0f;
-			start[2] = PevVector(pev, PEV_ORIGIN).z - dir[2] * 32.0f;
-
-			end[0] = PevVector(pev, PEV_ORIGIN).x;
-			end[1] = PevVector(pev, PEV_ORIGIN).y;
-			end[2] = PevVector(pev, PEV_ORIGIN).z;
-		}
-		else
-		{
-			start[0] = PevVector(pev, PEV_ORIGIN).x;
-			start[1] = PevVector(pev, PEV_ORIGIN).y;
-			start[2] = PevVector(pev, PEV_ORIGIN).z + 8.0f;
-
-			end[0] = start[0];
-			end[1] = start[1];
-			end[2] = start[2] - 24.0f;
-		}
-
-		TraceResult tr;
-		memset(&tr, 0, sizeof(tr));
-		EngineTraceLine(start, end, 0, edict, &tr);
-
-		EngineWriteByte(0, SVC_TEMPENTITY);
-		EngineWriteByte(0, TE_DECAL);
-		EngineWriteCoord(0, tr.vecEndPos[0]);
-		EngineWriteCoord(0, tr.vecEndPos[1]);
-		EngineWriteCoord(0, tr.vecEndPos[2]);
-		EngineWriteShort(0, (short)EngineModelIndex(TraceHitIndex(&tr)));
-		EngineWriteByte(0, (RandomFloat(0.0f, 1.0f) >= 0.5f) ? 13 : 12);
+	case 2:
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, "weapons/debris3.wav", VOL_NORM, ATTN_NORM);
+		break;
 	}
 
-	RandomFloat(0.0f, 1.0f);
-
-	{
-		int which = RandomLong(0, 2);
-		const char* sound = kDebris1;
-		if (which == 1)
-			sound = kDebris2;
-		else if (which == 2)
-			sound = kDebris3;
-
-		if (edict)
-			EngineEmitSound(edict, 2, sound, 1.0f, 0.8f);
-	}
-
-	SetRemoveThink();
-	SetNextThink(2.0f);
+	SetThink(&CBaseEntity::SUB_Remove);
+	pev->nextthink = gpGlobals->time + 2.0f;
 }
 
 //=========================================================
 // ShootTimedGrenade
 //=========================================================
-void ShootTimedGrenade(entvars_t* pevOwner, const float* start, const float* velocity)
+void ShootTimedGrenade(entvars_t *pevOwner, const Vector &vecStart, const Vector &vecVelocity)
 {
-	CGrenade* pGrenade = CreateGrenadeEntity();
-	if (!pGrenade)
-		return;
-
-	pGrenade->Init(pevOwner, start, velocity);
+	CGrenade *pGrenade = GetClassPtr((CGrenade *)NULL);
+	pGrenade->Init(pevOwner, vecStart, vecVelocity);
 }

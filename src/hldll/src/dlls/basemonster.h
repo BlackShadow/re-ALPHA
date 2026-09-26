@@ -1,100 +1,141 @@
-#pragma once
+/***
+*
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
+*
+*   This source code contains proprietary and confidential information of
+*   Valve LLC and its suppliers.  Access to this code is restricted to
+*   persons who have executed a written SDK license with Valve.  Any access,
+*   use or distribution of this code by or to any unlicensed person is illegal.
+*
+****/
+#ifndef BASEMONSTER_H
+#define BASEMONSTER_H
 
-#include "hl_types.h"
-#include "animating.h"
-#include "../public/vector.h"
+#include "cbase.h"
 
+//
+// Monster states. MonsterThink runs the AI for the current state and
+// SetActivity plays the matching animation.
+//
+enum
+{
+	MONSTERSTATE_NONE = 0,
+	MONSTERSTATE_IDLE,					// stand around, play idle sounds
+	MONSTERSTATE_IDLE2,
+	MONSTERSTATE_IDLE3,
+	MONSTERSTATE_WALK,					// follow the path_corner in pev->goalentity
+	MONSTERSTATE_COMBAT_FACE,			// face the enemy and attack when possible
+	MONSTERSTATE_COMBAT_IDLE,			// wait for the enemy to come into view
+	MONSTERSTATE_COMBAT,				// enemy in view, chase when it gets too far
+	MONSTERSTATE_CHASE,					// run to the enemy's last known position
+	MONSTERSTATE_HUNT,					// search for the enemy along the route
+	MONSTERSTATE_FOLLOW,				// follow the player that used us
+	MONSTERSTATE_MOVE_LEFT,				// move to m_vecMoveGoal, on the left
+	MONSTERSTATE_MOVE_RIGHT,			// move to m_vecMoveGoal, on the right
+	MONSTERSTATE_PAIN = 18,
+	MONSTERSTATE_ALERT = 20,			// turn to the enemy, then attack
+	MONSTERSTATE_WAIT = 22,				// do nothing until the state is changed
+	MONSTERSTATE_RETREAT,				// move to m_vecMoveGoal, then face the enemy
+	MONSTERSTATE_FIND_COVER = 25,
+	MONSTERSTATE_FIND_RETREAT,
+	MONSTERSTATE_FIND_SHOOT_POSITION,
+	MONSTERSTATE_MELEE_ATTACK = 29,
+	MONSTERSTATE_RANGE_ATTACK,
+	MONSTERSTATE_ATTACK,				// keep attacking while CheckAttacks succeeds
+	MONSTERSTATE_RELOAD,
+	MONSTERSTATE_HEAVY_PAIN,
+	MONSTERSTATE_FLINCH,
+	MONSTERSTATE_DIE1,					// death animations, see SetDeathActivity
+	MONSTERSTATE_DIE2,
+	MONSTERSTATE_DIE3,
+	MONSTERSTATE_DIE4,
+	MONSTERSTATE_DIE5,
+	MONSTERSTATE_DEAD = 42,				// death animation finished
+};
+
+// SetDeathActivity types, each plays MONSTERSTATE_DIE1 + type
+#define DEATH_NORMAL		0
+#define DEATH_VIOLENT		1			// health driven below GIB_HEALTH
+#define NUM_DEATH_TYPES		5
+
+#define GIB_HEALTH			-30.0f		// health below which a monster is blown apart
+
+// m_afEnemyFlags
+#define ENEMY_IN_VIEWCONE	(1<<0)
+#define ENEMY_VISIBLE		(1<<1)
+#define ENEMY_SEEN			(1<<2)		// m_vecEnemyLKP was updated from a sighting
+
+// spawnflags
+#define SF_MONSTER_WAIT_TILL_SEEN	1	// only notice the player when the player looks at us
+
+#define MONSTER_ROUTE_SIZE	5
+
+#define MONSTER_THINK_INTERVAL	0.1f
+
+//
+// generic Monster
+//
 class CBaseMonster : public CBaseAnimating
 {
 public:
+	int				m_MonsterState;
+	int				m_IdealMonsterState;	// state to return to after attacks and moves
+	float			m_flNextAttack;			// cannot attack again until this time
+	int				m_bloodColor;
+
+	Vector			m_vecMoveGoal;			// destination of the move states
+	Vector			m_vecEnemyLKP;			// last known position of enemy
+	Vector			m_vecRoute[MONSTER_ROUTE_SIZE];
+
+	entvars_t		*m_pMoveTarget;			// entity we follow
+	entvars_t		*m_pSquadLeader;
+	entvars_t		*m_pSquadNext;			// next member of the squad ring
+	unsigned int	m_iSquadSize;
+
+	float			m_flGoalRadius;			// how close to get to m_pMoveTarget
+	float			m_flDistTooFar;			// chase the enemy when it is further than this
+	float			m_flNextSoundTime;
+	float			m_flLastEnemySightTime;
+
+	int				m_iAmmo;
+	unsigned char	m_afEnemyFlags;
+	unsigned char	m_iRouteIndex;
+	unsigned char	m_iRouteGoal;
+	unsigned char	m_fSquadLeader;
+
+	entvars_t		*m_pevAttacker;			// last attacker that became our enemy
+	Vector			m_vecAttackerLKP;		// point towards the last attacker
+
 	CBaseMonster();
 
-	void WalkMonsterStart(CBaseEntity* pOther);
-	void MonsterThink(CBaseEntity* pOther);
+	virtual void	SetActivity(int activity);
+	virtual int		BloodColor();
+	virtual void	AlertSound();
+	virtual void	Pain(float flDamage);
+	virtual void	Death(int iDeathType);
+	virtual void	IdleSound();
+	virtual int		CheckAttacks(entvars_t *pevEnemy, float flDist);
+	virtual int		TakeDamage(entvars_t *pevInflictor, entvars_t *pevAttacker, float flDamage);
+
+	void WalkMonsterStart(CBaseEntity *pOther);
+	void MonsterThink(CBaseEntity *pOther);
+
+	void Killed(EOFFSET eoffsetAttacker);
+	void SetDeathActivity(int iDeathType);
+
 	int SquadRecruit(int searchRadius);
+	void TogglePlayerUse(entvars_t *pevPlayer);
 
-	void SetMonsterActivity(int activity) { m_Activity = activity; }
-	void SetMonsterIdealActivity(int activity) { m_IdealActivity = activity; }
-	int MonsterActivity() const { return m_Activity; }
-	int MonsterIdealActivity() const { return m_IdealActivity; }
-	void TogglePlayerUse(entvars_t* pevPlayer);
-
-	void SetSquadSize(unsigned int size) { m_iSquadSize = size; }
-	unsigned int SquadSize() const { return m_iSquadSize; }
-	entvars_t* SquadNext() const { return m_pSquadNext; }
-
-	// Shared monster damage handler (binary vtable slot 17).
-	// All ~13 monsters whose slot-17 resolves to the binary inherit this.
-	int TakeDamage(entvars_t* inflictor, entvars_t* attacker, float damage);
-
-	// Shared death/gib dispatch. Drives the per-monster
-	// death virtual (binary slot 14 = Death) once a monster runs out of
-	// health. The argument is the attacker's entity index, which the routine
-	// stashes into pev->enemy. Also reachable directly from custom TakeDamage
-	// handlers (e.g. the turret) like the original.
-	void Killed(int attackerIndex);
-
-protected:
-	float UpdateEnemyInfo(entvars_t* pevEnemy);
-	BOOL CheckMeleeAttack(entvars_t* pevEnemy);
-	BOOL CheckRangeAttack(entvars_t* pevEnemy);
-	Vector FindCover(entvars_t* pevEnemy);
-	Vector FindRetreat(entvars_t* pevEnemy);
-	Vector FindShootPosition(entvars_t* pevEnemy);
-
-	// Shared death-activity selector. Used as the default
-	// Death behavior (binary slot 14 stub == SetDeathActivity(0)).
-	void SetDeathActivity(int type);
-
-	virtual void SetActivity(int activity);
-	virtual void IdleSound();
-	virtual void AlertSound();
-	virtual int CheckAttacks(entvars_t* pevEnemy, float flDist);
-	virtual int BloodColor();
-
-	// Pain reaction (binary vtable slot 13). The shared TakeDamage dispatches
-	// this with the inbound damage when a monster survives a hit. Default does
-	// nothing (nullsub for monsters without a pain reaction).
-	virtual void Pain(float flDamage);
-
-	// Death reaction (binary vtable slot 14). The shared Killed dispatch raises
-	// this with the death/gib type. Default reproduces the binary
-	// SetDeathActivity(0); monsters with custom deaths override it.
-	virtual void Death(int gibType);
-
-	// Binary slot 18 is present on the monster/player vtable but has no known
-	// translated caller yet. Keeping it here preserves player slots 19-22.
-	virtual void MonsterSlot18();
-
-protected:
-	int m_Activity;
-	int m_IdealActivity;
-	float m_flNextAttack;
-	int m_bloodColor;
-
-	Vector m_vecMoveGoal;
-	Vector m_vecEnemyLKP;
-	Vector m_vecRoute[5];
-
-	entvars_t* m_pMoveTarget;
-	entvars_t* m_pSquadLeader;
-	entvars_t* m_pSquadNext;
-	unsigned int m_iSquadSize;
-
-	float m_flGoalRadius;
-	float m_flDistTooFar;
-	float m_flNextSoundTime;
-	float m_flLastEnemySightTime;
-
-	int m_iAmmo;
-	unsigned char m_afEnemyFlags;
-	unsigned char m_iRouteIndex;
-	unsigned char m_iRouteGoal;
-	unsigned char m_fSquadLeader;	// binary +0x138 squad-leader flag, DISTINCT from attack-bits m_afEnemyFlags (+0xf8); fills char-group padding (no size change)
-
-	// Set by the shared TakeDamage when an attacker becomes the new enemy
-	// (this+244 in the binary). The gib-direction goal the same path computes
-	// (this+232..240) is reproduced via m_vecDeathGoal.
-	entvars_t* m_hActivator;
-	Vector m_vecDeathGoal;
+	float UpdateEnemyInfo(entvars_t *pevEnemy);
+	BOOL CheckMeleeAttack(entvars_t *pevEnemy);
+	BOOL CheckRangeAttack(entvars_t *pevEnemy);
+	Vector FindCover(entvars_t *pevEnemy);
+	Vector FindRetreat(entvars_t *pevEnemy);
+	Vector FindShootPosition(entvars_t *pevEnemy);
 };
+
+#endif // BASEMONSTER_H

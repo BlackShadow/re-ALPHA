@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,161 +12,134 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// Polyrobo - Polyrobo monster (showcase monster)
+// PolyRobo - big robot that turns its head towards the
+// enemy
 //=========================================================
 
-#include <new>
-#include <string.h>
-#include "basemonster.h"
-#include "enginefuncs.h"
-#include "hl_exports.h"
+#include "extdll.h"
+#include "util.h"
+#include "cbase.h"
 #include "monsters.h"
-#include "utils.h"
+#include "studio.h"
 
 //=========================================================
-// monster-specific constants
+// monster-specific DEFINE's
 //=========================================================
-
+#define POLYROBO_HEALTH				99999.0f	// practically invulnerable
 #define POLYROBO_THINK_INTERVAL		0.1f
 
-// pev byte offset of the bone-controller value bytes (4 packed bytes).
-// Not yet a named PEV_ constant -> recorded in shared_needs.
-#define PEV_CONTROLLER				172
+// head sweep
+#define POLYROBO_SWEEP_SPEED		10.0f		// degrees per second
+#define POLYROBO_SWEEP_RANGE		45			// degrees
 
-static const char kPolyroboModel[] = "models/polyrobo.mdl";
-
-//=========================================================
-// Helpers
-//=========================================================
-
-//=========================================================
-// SetBoneController
-// Maps an angle value onto a packed bone-controller byte for the
-// monster's studio model.  Mirrors the engine model helper exactly.
-//=========================================================
-static void SetBoneController(entvars_t* pev, int controller, float value)
+// polyrobo.mdl sequences
+enum
 {
-	edict_t* edict = EdictFromEntvars(pev);
-	if (!edict)
+	POLYROBO_SEQ_IDLE = 0,
+	POLYROBO_SEQ_PAIN,
+	POLYROBO_SEQ_SPAWN = 3,
+};
+
+// polyrobo.mdl bone controllers
+#define POLYROBO_CONTROLLER_HEAD	0
+
+//=========================================================
+// SetBoneController - sets a bone controller of the model
+// to flValue, in degrees
+//=========================================================
+static void SetBoneController(entvars_t *pev, int iController, float flValue)
+{
+	studiohdr_t *pstudiohdr = (studiohdr_t *)GET_MODEL_PTR(ENT(pev));
+	if (!pstudiohdr)
 		return;
 
-	unsigned char* pStudioHdr = (unsigned char*)EngineGetModelPtr(edict);
-	if (!pStudioHdr)
+	if (iController >= pstudiohdr->numbonecontrollers)
 		return;
 
-	// studiohdr_t: numbonecontrollers at +84, bonecontrollerindex at +88.
-	int numControllers = *(int*)(pStudioHdr + 84);
-	if (controller >= numControllers)
-		return;
+	mstudiobonecontroller_t *pbonecontroller = (mstudiobonecontroller_t *)((unsigned char *)pstudiohdr + pstudiohdr->bonecontrollerindex) + iController;
 
-	// each mstudiobonecontroller_t is 16 bytes: +4 type flags, +8 start, +12 end.
-	unsigned char* pController = pStudioHdr + 16 * controller + *(int*)(pStudioHdr + 88);
+	float flStart = pbonecontroller->start;
+	float flEnd = pbonecontroller->end;
 
-	float flStart = *(float*)(pController + 8);
-	float flEnd = *(float*)(pController + 12);
-
-	if ((pController[4] & 0x38) != 0
+	// wrap the angle when the controller does not cover a full turn
+	if ((pbonecontroller->type & (STUDIO_XR | STUDIO_YR | STUDIO_ZR))
 		&& flStart + 359.0f >= flEnd
-		&& (flStart + flEnd) * 0.5f + 180.0f < value)
+		&& (flStart + flEnd) * 0.5f + 180.0f < flValue)
 	{
-		value = value - 360.0f;
+		flValue = flValue - 360.0f;
 	}
 
-	int setting = (int)((value - flStart) / (flEnd - flStart) * 255.0f);
-	if (setting < 0)
-		setting = 0;
-	if (setting > 255)
-		setting = 255;
+	int iSetting = (int)((flValue - flStart) / (flEnd - flStart) * 255.0f);
+	if (iSetting < 0)
+		iSetting = 0;
+	if (iSetting > 255)
+		iSetting = 255;
 
-	int* pControllerBytes = (int*)((unsigned char*)pev + PEV_CONTROLLER);
-	*pControllerBytes = (*pControllerBytes & ~(255 << (8 * controller))) | (setting << (8 * controller));
+	pev->controller[iController] = iSetting;
 }
-
-//=========================================================
-// CPolyRobo
-//=========================================================
 
 class CPolyRobo : public CBaseMonster
 {
 public:
 	void Spawn();
-	void Think(CBaseEntity* pOther);
-
-private:
-	void Pain(float flDamage);		// vtable slot 13
+	void Pain(float flDamage);
+	void Think(CBaseEntity *pOther);
 };
-
-HL_COMPILE_TIME_ASSERT(sizeof(CPolyRobo) <= 336, CPolyRobo_private_data_size);
 
 //=========================================================
 // Spawn
 //=========================================================
 void CPolyRobo::Spawn()
 {
-	EnginePrecacheModel(kPolyroboModel);
+	PRECACHE_MODEL("models/polyrobo.mdl");
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineSetModel(edict, kPolyroboModel);
+	SET_MODEL(ENT(pev), "models/polyrobo.mdl");
+	UTIL_SetSize(pev, Vector(-48, -48, 0), Vector(48, 48, 212));
 
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 48.0f, 48.0f, 212.0f);
-		VecSet(mins, -48.0f, -48.0f, 0.0f);
-		if (edict)
-			EngineSetSize(edict, mins, maxs);
-	}
+	pev->solid = SOLID_SLIDEBOX;
+	pev->movetype = MOVETYPE_STEP;
+	pev->effects = 0;
+	pev->health = POLYROBO_HEALTH;
+	pev->yaw_speed = 10.0f;
+	pev->sequence = POLYROBO_SEQ_SPAWN;
+	pev->takedamage = DAMAGE_AIM;
 
-	PevFloat(pev, PEV_SOLID) = 3.0f;
-	PevFloat(pev, PEV_MOVETYPE) = 4.0f;
-	PevFloat(pev, PEV_STUCK) = 0.0f;
-	PevFloat(pev, PEV_HEALTH) = 99999.0f;
-	PevFloat(pev, PEV_YAWSPEED) = 10.0f;
-	PevInt(pev, PEV_SEQUENCE) = 3;
-	PevFloat(pev, PEV_TAKEDAMAGE) = 2.0f;
+	pev->flags = (float)((int)pev->flags | FL_MONSTER);
 
-	// pev->flags is a float field: the binary loads it, __ftol to int, ORs the
-	// flag bit, then stores it back as a float (FL_FLY = 0x20).
-	PevFloat(pev, PEV_FLAGS) = (float)((int)PevFloat(pev, PEV_FLAGS) | 0x20);
+	m_flFrameRate = 10000.0f;	// hurry through the spawn sequence
 
-	m_flFrameRate = 10000.0f;
-
-	PevFloat(pev, PEV_NEXTTHINK) = PevFloat(pev, PEV_NEXTTHINK) + RandomFloat(0.0f, 0.5f);
+	pev->nextthink = pev->nextthink + RANDOM_FLOAT(0.0f, 0.5f);
 }
 
 //=========================================================
-// Pain - vtable slot 13
+// Pain - flinches when idle
 //=========================================================
 void CPolyRobo::Pain(float flDamage)
 {
-	HL_UNUSED(flDamage);
-
-	if (PevInt(pev, PEV_SEQUENCE) == 0)
+	if (pev->sequence == POLYROBO_SEQ_IDLE)
 	{
-		PevInt(pev, PEV_SEQUENCE) = 1;
-		PevFloat(pev, PEV_FRAME) = 0.0f;
+		pev->sequence = POLYROBO_SEQ_PAIN;
+		pev->frame = 0;
 		ResetSequenceInfo(POLYROBO_THINK_INTERVAL);
 	}
 }
 
 //=========================================================
-// Think
+// Think - plays the one shot sequences, then idles, and
+// turns the head towards the enemy
 //=========================================================
-void CPolyRobo::Think(CBaseEntity* pOther)
+void CPolyRobo::Think(CBaseEntity *pOther)
 {
-	PevFloat(pev, PEV_NEXTTHINK) =
-		GlobalsTime(m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev)) + POLYROBO_THINK_INTERVAL;
+	pev->nextthink = gpGlobals->time + POLYROBO_THINK_INTERVAL;
 
 	if (m_fSequenceFinished)
 	{
-		int sequence = PevInt(pev, PEV_SEQUENCE);
-		if (sequence >= 1 && sequence <= 3)
+		// the one shot sequences go back to idle
+		if (pev->sequence >= POLYROBO_SEQ_PAIN && pev->sequence <= POLYROBO_SEQ_SPAWN)
 		{
-			PevInt(pev, PEV_SEQUENCE) = 0;
-			PevFloat(pev, PEV_FRAME) = 0.0f;
+			pev->sequence = POLYROBO_SEQ_IDLE;
+			pev->frame = 0;
 		}
 
 		ResetSequenceInfo(POLYROBO_THINK_INTERVAL);
@@ -175,60 +148,16 @@ void CPolyRobo::Think(CBaseEntity* pOther)
 	GetAnimationEventFlags(POLYROBO_THINK_INTERVAL);
 	AdvanceAnimation(POLYROBO_THINK_INTERVAL);
 
-	{
-		float flTime = GlobalsTime(m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev));
-		int frac = (int)(flTime * 10.0f) % 45;
-		SetBoneController(pev, 0, (float)frac);
-	}
+	// a slow head sweep, overridden by the aim below
+	int iSweep = (int)(gpGlobals->time * POLYROBO_SWEEP_SPEED) % POLYROBO_SWEEP_RANGE;
+	SetBoneController(pev, POLYROBO_CONTROLLER_HEAD, (float)iSweep);
 
-	// aim the turret bone controller at the current enemy (if any)
-	float flYaw = PevVector(pev, PEV_ANGLES).y;
+	// look at the enemy
+	float flYaw = pev->angles.y;
+	if (!FNullEnt(pev->enemy))
+		flYaw = UTIL_VecToYaw(VARS(pev->enemy)->origin - pev->origin);
 
-	int enemyIndex = PevInt(pev, PEV_ENEMY);
-	if (enemyIndex)
-	{
-		edict_t* pEnemyEdict = EnginePEntityOfEntIndex(enemyIndex);
-		entvars_t* pevEnemy = pEnemyEdict ? EngineGetVarsOfEnt(pEnemyEdict) : NULL;
-		if (pevEnemy)
-		{
-			float vecDir[3];
-			vecDir[0] = PevVector(pevEnemy, PEV_ORIGIN).x - PevVector(pev, PEV_ORIGIN).x;
-			vecDir[1] = PevVector(pevEnemy, PEV_ORIGIN).y - PevVector(pev, PEV_ORIGIN).y;
-			vecDir[2] = PevVector(pevEnemy, PEV_ORIGIN).z - PevVector(pev, PEV_ORIGIN).z;
-			flYaw = EngineVecToYaw(vecDir);
-		}
-	}
-
-	SetBoneController(pev, 0, flYaw - PevVector(pev, PEV_ANGLES).y);
+	SetBoneController(pev, POLYROBO_CONTROLLER_HEAD, flYaw - pev->angles.y);
 }
 
-//=========================================================
-// monster_polyrobo
-//=========================================================
-DLLEXPORT void monster_polyrobo(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 336);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 336);
-
-		CPolyRobo* monster = new (privateData) CPolyRobo();
-		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
-	}
-}
+LINK_ENTITY_TO_CLASS(monster_polyrobo, CPolyRobo);

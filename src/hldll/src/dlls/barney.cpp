@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,46 +12,54 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// Barney - Security guard monster
+// Barney - security guard
 //=========================================================
 
-#include <new>
-#include <string.h>
-#include "basemonster.h"
-#include "enginefuncs.h"
-#include "hl_exports.h"
+#include "extdll.h"
+#include "util.h"
+#include "cbase.h"
 #include "monsters.h"
-#include "utils.h"
-
-//=========================================================
-// Monster-specific constants
-//=========================================================
+#include "weapons.h"
 
 #define BARNEY_THINK_INTERVAL	0.1f
+#define BARNEY_HEALTH			7.0f
+#define BARNEY_YAW_SPEED		8.0f
+#define BARNEY_CHASE_DIST		384.0f	// chases an enemy that is further away
+#define BARNEY_FOLLOW_DIST		128.0f	// distance kept to the player he follows
 #define BARNEY_MELEE_DIST		64.0f
-#define BARNEY_RANGE_DIST		1024.0f
-
+#define BARNEY_RANGE_DIST		1024.0f	// also the range of his bullets
 #define BARNEY_BULLET_SPREAD	0.05f
 
-#define BARNEY_VOL				1.0f
-#define BARNEY_ATTN_IDLE		2.0f
-#define BARNEY_ATTN_COMBAT		0.8f
+// GetAnimationEventFlags() bits
+#define BARNEY_AE_SHOOT			(1<<1)
 
-static const char kBarneyModel[] = "models/barney.mdl";
+// barney.mdl sequences, named by the monster state that plays them
+enum
+{
+	BARNEY_SEQ_IDLE = 0,
+	BARNEY_SEQ_IDLE2,
+	BARNEY_SEQ_IDLE3,
+	BARNEY_SEQ_WALK,
+	BARNEY_SEQ_RUN,					// also MONSTERSTATE_HUNT and MONSTERSTATE_MELEE_ATTACK
+	BARNEY_SEQ_COMBAT_IDLE = 9,		// also MONSTERSTATE_COMBAT
+	BARNEY_SEQ_SHOOT,				// MONSTERSTATE_RANGE_ATTACK
+	BARNEY_SEQ_UNUSED = 12,			// accepted by SetActivity, but no state plays it
+	BARNEY_SEQ_DIE3,
+	BARNEY_SEQ_DIE1,				// also MONSTERSTATE_DIE4
+	BARNEY_SEQ_DIE2,
+	BARNEY_SEQ_SPAWN = 17,			// matches no state, so the first SetActivity always switches
+};
 
-//=========================================================
-// Sound Table
-//=========================================================
+static const char szBarneyModel[] = "models/barney.mdl";
 
-static const char* pAttackSounds[] =
+static const char *pAttackSounds[] =
 {
 	"barney/ba_attack1.wav",
 	"barney/ba_attack2.wav",
 };
 
-static const char* pDieSounds[] =
+static const char *pDieSounds[] =
 {
 	"barney/ba_die1.wav",
 	"barney/ba_die2.wav",
@@ -59,14 +67,10 @@ static const char* pDieSounds[] =
 	"barney/ba_die4.wav",
 };
 
-static const char* pPainSounds[] =
+static const char *pPainSounds[] =
 {
 	"barney/ba_pain1.wav",
 };
-
-//=========================================================
-// CBarney
-//=========================================================
 
 class CBarney : public CBaseMonster
 {
@@ -75,22 +79,18 @@ public:
 
 	void Spawn();
 	int Classify();
-
-private:
 	void SetActivity(int activity);
-	int CheckAttacks(entvars_t* pevEnemy, float flDist);
-
+	int CheckAttacks(entvars_t *pevEnemy, float flDist);
 	void AlertSound();
-	void Pain(float flDamage);		// vtable slot 13
-	void Death(int gibType);		// vtable slot 14
+	void Pain(float flDamage);
+	void Death(int iDeathType);
 
-	void ShootThink(CBaseEntity* pOther);
+	void ShootThink(CBaseEntity *pOther);
 
-private:
-	float m_flFollowDist;
+	float	m_flFollowDist;
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CBarney) <= 336, CBarney_private_data_size);
+LINK_ENTITY_TO_CLASS(monster_barney, CBarney);
 
 CBarney::CBarney()
 {
@@ -104,43 +104,33 @@ void CBarney::Spawn()
 {
 	int i;
 
-	for (i = 0; i < (int)ARRAYSIZE(pAttackSounds); ++i)
-		EnginePrecacheSound(pAttackSounds[i]);
+	for (i = 0; i < ARRAYSIZE(pAttackSounds); i++)
+		PRECACHE_SOUND(pAttackSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pDieSounds); ++i)
-		EnginePrecacheSound(pDieSounds[i]);
+	for (i = 0; i < ARRAYSIZE(pDieSounds); i++)
+		PRECACHE_SOUND(pDieSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pPainSounds); ++i)
-		EnginePrecacheSound(pPainSounds[i]);
+	for (i = 0; i < ARRAYSIZE(pPainSounds); i++)
+		PRECACHE_SOUND(pPainSounds[i]);
 
-	EnginePrecacheModel(kBarneyModel);
+	PRECACHE_MODEL(szBarneyModel);
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineSetModel(edict, kBarneyModel);
+	SET_MODEL(ENT(pev), szBarneyModel);
+	UTIL_SetSize(pev, Vector(-18.0f, -18.0f, 0.0f), Vector(18.0f, 18.0f, 72.0f));
 
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 18.0f, 18.0f, 72.0f);
-		VecSet(mins, -18.0f, -18.0f, 0.0f);
-		if (edict)
-			EngineSetSize(edict, mins, maxs);
-	}
-
-	PevFloat(pev, PEV_SOLID) = 3.0f;
-	PevFloat(pev, PEV_MOVETYPE) = 4.0f;
-	PevFloat(pev, PEV_STUCK) = 0.0f;
-	PevFloat(pev, PEV_HEALTH) = 7.0f;
-	PevFloat(pev, PEV_YAWSPEED) = 8.0f;
-	PevInt(pev, PEV_SEQUENCE) = 17;
+	pev->solid = SOLID_SLIDEBOX;
+	pev->movetype = MOVETYPE_STEP;
+	pev->effects = 0;
+	pev->health = BARNEY_HEALTH;
+	pev->yaw_speed = BARNEY_YAW_SPEED;
+	pev->sequence = BARNEY_SEQ_SPAWN;
 
 	m_iSquadSize = 1;
-	m_bloodColor = 70;
-	m_flDistTooFar = 384.0f;
-	m_flFollowDist = 128.0f;
+	m_bloodColor = BLOOD_COLOR_RED;
+	m_flDistTooFar = BARNEY_CHASE_DIST;
+	m_flFollowDist = BARNEY_FOLLOW_DIST;
 
-	PevFloat(pev, PEV_NEXTTHINK) = RandomFloat(0.0f, 0.5f) + PevFloat(pev, PEV_NEXTTHINK) + 0.5f;
+	pev->nextthink = RANDOM_FLOAT(0.0f, 0.5f) + pev->nextthink + 0.5f;
 
 	SetThink(&CBaseMonster::WalkMonsterStart);
 }
@@ -154,139 +144,134 @@ void CBarney::SetActivity(int activity)
 
 	switch (activity)
 	{
-	case 1:
-		sequence = 0;
+	case MONSTERSTATE_IDLE:
+		sequence = BARNEY_SEQ_IDLE;
 		break;
 
-	case 2:
-		sequence = 1;
+	case MONSTERSTATE_IDLE2:
+		sequence = BARNEY_SEQ_IDLE2;
 		break;
 
-	case 3:
-		sequence = 2;
+	case MONSTERSTATE_IDLE3:
+		sequence = BARNEY_SEQ_IDLE3;
 		break;
 
-	case 4:
-		sequence = 3;
+	case MONSTERSTATE_WALK:
+		sequence = BARNEY_SEQ_WALK;
 		break;
 
-	case 6:
-	case 7:
-		sequence = 9;
+	case MONSTERSTATE_COMBAT_IDLE:
+	case MONSTERSTATE_COMBAT:
+		sequence = BARNEY_SEQ_COMBAT_IDLE;
 		break;
 
-	case 8:
-	case 9:
-	case 29:
-		sequence = 4;
+	case MONSTERSTATE_CHASE:
+	case MONSTERSTATE_HUNT:
+	case MONSTERSTATE_MELEE_ATTACK:
+		sequence = BARNEY_SEQ_RUN;
 		break;
 
-	case 10:
+	case MONSTERSTATE_FOLLOW:
 		{
-			Vector vecDelta;
-			vecDelta.x = PevVector(pev, PEV_ORIGIN).x - PevVector(m_pMoveTarget, PEV_ORIGIN).x;
-			vecDelta.y = PevVector(pev, PEV_ORIGIN).y - PevVector(m_pMoveTarget, PEV_ORIGIN).y;
-			vecDelta.z = PevVector(pev, PEV_ORIGIN).z - PevVector(m_pMoveTarget, PEV_ORIGIN).z;
-
-			float flDist = (float)sqrt(vecDelta.x * vecDelta.x + vecDelta.y * vecDelta.y + vecDelta.z * vecDelta.z);
+			// stand close to the player, walk to keep up, run when far behind
+			Vector vecDelta = pev->origin - m_pMoveTarget->origin;
+			float flDist = (float)sqrt(DotProduct(vecDelta, vecDelta));
 
 			if (m_flFollowDist * 2.0f >= flDist)
 			{
 				if (m_flFollowDist < flDist)
-					sequence = 3;
+					sequence = BARNEY_SEQ_WALK;
 				else
-					sequence = 0;
+					sequence = BARNEY_SEQ_IDLE;
 			}
 			else
 			{
-				sequence = 4;
+				sequence = BARNEY_SEQ_RUN;
 			}
 		}
 		break;
 
-	case 30:
-		sequence = 10;
+	case MONSTERSTATE_RANGE_ATTACK:
+		sequence = BARNEY_SEQ_SHOOT;
 		break;
 
-	case 35:
-	case 38:
-		sequence = 14;
+	case MONSTERSTATE_DIE1:
+	case MONSTERSTATE_DIE4:
+		sequence = BARNEY_SEQ_DIE1;
 		break;
 
-	case 36:
-		sequence = 15;
+	case MONSTERSTATE_DIE2:
+		sequence = BARNEY_SEQ_DIE2;
 		break;
 
-	case 37:
-		sequence = 13;
+	case MONSTERSTATE_DIE3:
+		sequence = BARNEY_SEQ_DIE3;
 		break;
 
 	default:
-		EngineAlertMessage(1, "Barney's monster state is bogus: %d", activity);
+		ALERT(at_console, "Barney's monster state is bogus: %d", activity);
 		return;
 	}
 
-	if (PevInt(pev, PEV_SEQUENCE) == sequence)
+	if (pev->sequence == sequence)
 		return;
 
-	PevInt(pev, PEV_SEQUENCE) = sequence;
+	pev->sequence = sequence;
 
-	if (sequence != 4 && sequence != 3)
-		PevFloat(pev, PEV_FRAME) = 0.0f;
+	// walking and running blend into each other
+	if (sequence != BARNEY_SEQ_RUN && sequence != BARNEY_SEQ_WALK)
+		pev->frame = 0;
 
 	ResetSequenceInfo(BARNEY_THINK_INTERVAL);
 
 	switch (sequence)
 	{
-	case 0:
-	case 1:
-	case 2:
-	case 3:
-	case 4:
-	case 9:
-	case 10:
-	case 12:
-	case 13:
-	case 14:
-	case 15:
+	case BARNEY_SEQ_IDLE:
+	case BARNEY_SEQ_IDLE2:
+	case BARNEY_SEQ_IDLE3:
+	case BARNEY_SEQ_WALK:
+	case BARNEY_SEQ_RUN:
+	case BARNEY_SEQ_COMBAT_IDLE:
+	case BARNEY_SEQ_SHOOT:
+	case BARNEY_SEQ_UNUSED:
+	case BARNEY_SEQ_DIE3:
+	case BARNEY_SEQ_DIE1:
+	case BARNEY_SEQ_DIE2:
 		break;
 
 	default:
-		EngineAlertMessage(1, "Bogus Barney anim: %d", sequence);
+		ALERT(at_console, "Bogus Barney anim: %d", sequence);
 		m_flFrameRate = 0.0f;
 		m_flGroundSpeed = 0.0f;
 		break;
 	}
 }
 
-//=========================================================
-// Classify (returns 5)
-//=========================================================
 int CBarney::Classify()
 {
-	return 5;
+	return CLASS_PLAYER_ALLY;
 }
 
 //=========================================================
-// CheckAttacks
+// CheckAttacks - he shoots at close range too
 //=========================================================
-int CBarney::CheckAttacks(entvars_t* pevEnemy, float flDist)
+int CBarney::CheckAttacks(entvars_t *pevEnemy, float flDist)
 {
 	if (flDist <= BARNEY_MELEE_DIST && CheckMeleeAttack(pevEnemy))
 	{
-		m_IdealActivity = 7;
+		m_IdealMonsterState = MONSTERSTATE_COMBAT;
 		SetThink(&CBarney::ShootThink);
-		return 1;
+		return TRUE;
 	}
 
 	if (CheckRangeAttack(pevEnemy) && flDist <= BARNEY_RANGE_DIST)
 	{
-		m_IdealActivity = 7;
+		m_IdealMonsterState = MONSTERSTATE_COMBAT;
 		SetThink(&CBarney::ShootThink);
-		return 1;
+		return TRUE;
 	}
 
-	return 0;
+	return FALSE;
 }
 
 //=========================================================
@@ -294,151 +279,88 @@ int CBarney::CheckAttacks(entvars_t* pevEnemy, float flDist)
 //=========================================================
 void CBarney::AlertSound()
 {
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, pAttackSounds[0], BARNEY_VOL, BARNEY_ATTN_COMBAT);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pAttackSounds[0], VOL_NORM, ATTN_NORM);
 
-	m_Activity = 6;
-	m_flNextAttack = GlobalTime() + 1.0f;
+	m_MonsterState = MONSTERSTATE_COMBAT_IDLE;
+	m_flNextAttack = gpGlobals->time + 1.0f;
 }
 
 //=========================================================
-// Pain - vtable slot 13
+// Pain
 //=========================================================
 void CBarney::Pain(float flDamage)
 {
-	HL_UNUSED(flDamage);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pPainSounds[0], VOL_NORM, ATTN_NORM);
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, pPainSounds[0], BARNEY_VOL, BARNEY_ATTN_COMBAT);
-
-	// The original tail-calls the alert/signal virtual (slot 12).
 	AlertSound();
 }
 
 //=========================================================
-// Death - vtable slot 14
+// Death
 //=========================================================
-void CBarney::Death(int gibType)
+void CBarney::Death(int iDeathType)
 {
-	HL_UNUSED(gibType);
-
-	if (PevFloat(pev, PEV_HEALTH) <= -30.0f)
+	if (pev->health <= GIB_HEALTH)
 	{
-		SetDeathActivity(1);
+		SetDeathActivity(DEATH_VIOLENT);
 		return;
 	}
 
-	int index = rand() % 4;
-	edict_t* edict = EdictFromEntvars(pev);
-
-	switch (index)
+	switch (RANDOM_LONG(0, 3))
 	{
 	case 0:
-		if (edict)
-			EngineEmitSound(edict, 2, pDieSounds[0], BARNEY_VOL, BARNEY_ATTN_COMBAT);
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pDieSounds[0], VOL_NORM, ATTN_NORM);
 		break;
 	case 1:
-		if (edict)
-			EngineEmitSound(edict, 2, pDieSounds[1], BARNEY_VOL, BARNEY_ATTN_COMBAT);
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pDieSounds[1], VOL_NORM, ATTN_NORM);
 		break;
 	case 2:
-		if (edict)
-			EngineEmitSound(edict, 2, pDieSounds[2], BARNEY_VOL, BARNEY_ATTN_COMBAT);
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pDieSounds[2], VOL_NORM, ATTN_NORM);
 		break;
 	case 3:
-		if (edict)
-			EngineEmitSound(edict, 2, pDieSounds[3], BARNEY_VOL, BARNEY_ATTN_COMBAT);
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pDieSounds[3], VOL_NORM, ATTN_NORM);
 		break;
 	}
 
-	SetDeathActivity(0);
+	SetDeathActivity(DEATH_NORMAL);
 }
 
 //=========================================================
-// TakeDamage routes through the shared CBaseMonster::TakeDamage
-// (vtable slot 17), which raises Pain
-// Death.
+// ShootThink - fires one shot per shoot event of the animation
 //=========================================================
-
-//=========================================================
-// ShootThink
-//=========================================================
-void CBarney::ShootThink(CBaseEntity* pOther)
+void CBarney::ShootThink(CBaseEntity *pOther)
 {
-	SetNextThink(BARNEY_THINK_INTERVAL);
+	pev->nextthink = gpGlobals->time + BARNEY_THINK_INTERVAL;
 
-	if (m_Activity != 30)
+	if (m_MonsterState != MONSTERSTATE_RANGE_ATTACK)
 	{
-		m_Activity = 30;
-		SetActivity(30);
-		m_flNextAttack = RandomFloat(0.5f, 1.5f) + GlobalTime();
+		m_MonsterState = MONSTERSTATE_RANGE_ATTACK;
+		SetActivity(MONSTERSTATE_RANGE_ATTACK);
+		m_flNextAttack = RANDOM_FLOAT(0.5f, 1.5f) + gpGlobals->time;
 	}
 
-	int events = GetAnimationEventFlags(BARNEY_THINK_INTERVAL);
+	int iEvents = GetAnimationEventFlags(BARNEY_THINK_INTERVAL);
 	AdvanceAnimation(BARNEY_THINK_INTERVAL);
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineChangeYaw(edict);
+	CHANGE_YAW(ENT(pev));
 
-	if ((events & 2) != 0)
+	if (iEvents & BARNEY_AE_SHOOT)
 	{
-		if (edict)
-			EngineEmitSound(edict, 2, pAttackSounds[1], BARNEY_VOL, BARNEY_ATTN_COMBAT);
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pAttackSounds[1], VOL_NORM, ATTN_NORM);
 
-		EngineMakeVectors((const float*)&PevVector(pev, PEV_ANGLES));
+		UTIL_MakeVectors(pev->angles);
 
-		void* globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
-		const float* forward = GlobalsForward(globals);
+		// FireBullets makes its own vectors, so pass a copy
+		Vector vecDir = gpGlobals->v_forward;
 
-		float dir[3];
-		dir[0] = forward ? forward[0] : 0.0f;
-		dir[1] = forward ? forward[1] : 0.0f;
-		dir[2] = forward ? forward[2] : 0.0f;
+		FireBullets(1, vecDir, BARNEY_BULLET_SPREAD, BARNEY_BULLET_SPREAD, BULLET_NONE, BARNEY_RANGE_DIST);
 
-		FireBullets(1, dir, BARNEY_BULLET_SPREAD, BARNEY_BULLET_SPREAD, 0, BARNEY_RANGE_DIST);
-
-		// pev->effects |= EF_MUZZLEFLASH (the field at +140 is stored as
-		// a float but OR'd as an integer, matching the original).
-		PevFloat(pev, PEV_STUCK) = (float)(((int)PevFloat(pev, PEV_STUCK)) | 2);
+		pev->effects = (int)pev->effects | EF_MUZZLEFLASH;
 	}
 
 	if (m_fSequenceFinished)
 	{
 		SetThink(&CBaseMonster::MonsterThink);
-		m_Activity = m_IdealActivity;
-	}
-}
-
-//=========================================================
-// monster_barney
-//=========================================================
-DLLEXPORT void monster_barney(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 336);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 336);
-
-		CBarney* monster = new (privateData) CBarney();
-		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
+		m_MonsterState = m_IdealMonsterState;
 	}
 }

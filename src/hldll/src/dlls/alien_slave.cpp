@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,78 +12,69 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// ISlave - Alien slave monster
+// Alien slave - wanders around, has no attacks
 //=========================================================
 
-#include <new>
-#include <string.h>
-#include "basemonster.h"
-#include "enginefuncs.h"
-#include "hl_exports.h"
-#include "utils.h"
+#include "extdll.h"
+#include "util.h"
+#include "cbase.h"
+#include "monsters.h"
 
-static const char kISlaveModel[] = "models/islave.mdl";
+#define ISLAVE_HEALTH			30.0f
+#define ISLAVE_YAW_SPEED		8.0f
 
-//=========================================================
-// CISlave
-//=========================================================
+// islave.mdl sequences, named by the monster state that plays them
+enum
+{
+	ISLAVE_SEQ_IDLE = 0,		// also MONSTERSTATE_IDLE2
+	ISLAVE_SEQ_IDLE3,
+	ISLAVE_SEQ_WALK = 3,
+	ISLAVE_SEQ_RUN,				// MONSTERSTATE_CHASE
+	ISLAVE_SEQ_SPAWN = 13,		// matches no state, so the first SetActivity always switches
+};
+
+static const char szISlaveModel[] = "models/islave.mdl";
 
 class CISlave : public CBaseMonster
 {
 public:
 	void Spawn();
 	int Classify();
-
-private:
 	void SetActivity(int activity);
-	int CheckAttacks(entvars_t* pevEnemy, float flDist);
-	void Death(int gibType);		// vtable slot 14
-	void RemoveThink(CBaseEntity* pOther);
+	int CheckAttacks(entvars_t *pevEnemy, float flDist);
+	void Death(int iDeathType);
+	void RemoveThink(CBaseEntity *pOther);
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CISlave) <= 336, CISlave_private_data_size);
+LINK_ENTITY_TO_CLASS(monster_alien_slave, CISlave);
 
 //=========================================================
 // Spawn
 //=========================================================
 void CISlave::Spawn()
 {
-	EnginePrecacheModel(kISlaveModel);
+	PRECACHE_MODEL(szISlaveModel);
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineSetModel(edict, kISlaveModel);
+	SET_MODEL(ENT(pev), szISlaveModel);
+	UTIL_SetSize(pev, Vector(-18.0f, -18.0f, 0.0f), Vector(18.0f, 18.0f, 72.0f));
 
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 18.0f, 18.0f, 72.0f);
-		VecSet(mins, -18.0f, -18.0f, 0.0f);
-		if (edict)
-			EngineSetSize(edict, mins, maxs);
-	}
+	pev->solid = SOLID_SLIDEBOX;
+	pev->movetype = MOVETYPE_STEP;
+	pev->effects = 0;
+	pev->health = ISLAVE_HEALTH;
+	pev->yaw_speed = ISLAVE_YAW_SPEED;
+	pev->sequence = ISLAVE_SEQ_SPAWN;
 
-	PevFloat(pev, PEV_SOLID) = 3.0f;		// 0x40400000
-	PevFloat(pev, PEV_MOVETYPE) = 4.0f;		// 0x40800000
-	PevFloat(pev, PEV_STUCK) = 0.0f;
-	PevFloat(pev, PEV_HEALTH) = 30.0f;		// 0x41F00000
-	PevFloat(pev, PEV_YAWSPEED) = 8.0f;		// 0x41000000
-	PevInt(pev, PEV_SEQUENCE) = 13;
+	m_MonsterState = MONSTERSTATE_IDLE;
 
-	m_Activity = 1;
-
-	PevFloat(pev, PEV_NEXTTHINK) = PevFloat(pev, PEV_NEXTTHINK) + 1.0f;
+	pev->nextthink += 1.0f;
 	WalkMonsterStart(NULL);
 }
 
-//=========================================================
-// Classify (vtable slot 9 = shared base, returns 0)
-//=========================================================
 int CISlave::Classify()
 {
-	return 0;
+	return CLASS_NONE;
 }
 
 //=========================================================
@@ -95,49 +86,44 @@ void CISlave::SetActivity(int activity)
 
 	switch (activity)
 	{
-	case 1:
-	case 2:
-		sequence = 0;
+	case MONSTERSTATE_IDLE:
+	case MONSTERSTATE_IDLE2:
+		sequence = ISLAVE_SEQ_IDLE;
 		break;
 
-	case 3:
-		sequence = 1;
+	case MONSTERSTATE_IDLE3:
+		sequence = ISLAVE_SEQ_IDLE3;
 		break;
 
-	case 4:
-		sequence = 3;
+	case MONSTERSTATE_WALK:
+		sequence = ISLAVE_SEQ_WALK;
 		break;
 
-	case 8:
-		sequence = 4;
+	case MONSTERSTATE_CHASE:
+		sequence = ISLAVE_SEQ_RUN;
 		break;
 
 	default:
-		EngineAlertMessage(1, "ISlave's monster state is bogus: %d", activity);
+		ALERT(at_console, "ISlave's monster state is bogus: %d", activity);
 		return;
 	}
 
-	if (PevInt(pev, PEV_SEQUENCE) == sequence)
+	if (pev->sequence == sequence)
 		return;
 
-	PevInt(pev, PEV_SEQUENCE) = sequence;
-	PevFloat(pev, PEV_FRAME) = 0.0f;
+	pev->sequence = sequence;
+	pev->frame = 0;
 
-	// The binary validates the resolved sequence against {0,1,3,4}; the outer
-	// switch only ever produces those, so the error arm is unreachable in
-	// practice. Reproduced for byte-fidelity: on an out-of-range sequence it
-	// emits "Bogus ISlave anim: %d" (engine ALERT level 1) and zeroes the
-	// cached animation rates.
 	switch (sequence)
 	{
-	case 0:
-	case 1:
-	case 3:
-	case 4:
+	case ISLAVE_SEQ_IDLE:
+	case ISLAVE_SEQ_IDLE3:
+	case ISLAVE_SEQ_WALK:
+	case ISLAVE_SEQ_RUN:
 		break;
 
 	default:
-		EngineAlertMessage(1, "Bogus ISlave anim: %d", sequence);
+		ALERT(at_console, "Bogus ISlave anim: %d", sequence);
 		m_flFrameRate = 0.0f;
 		m_flGroundSpeed = 0.0f;
 		break;
@@ -145,77 +131,20 @@ void CISlave::SetActivity(int activity)
 }
 
 //=========================================================
-// Death (vtable slot 14) - the death handler the shared
-// Killed/gib dispatch invokes when HP runs out.
+// Death - the body is removed right away
 //=========================================================
-void CISlave::Death(int gibType)
+void CISlave::Death(int iDeathType)
 {
-	HL_UNUSED(gibType);
-
-	// this+12 = think = the binary (shared "remove entity" think)
-	SetRemoveThink();
-	// pev->nextthink = *(*(pev+524) + 124) = globals time (read straight off pev, not m_pGlobals)
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(GlobalsFromEntvars(pev));
+	SetThink(&CBaseEntity::SUB_Remove);
+	pev->nextthink = gpGlobals->time;
 }
 
-//=========================================================
-// CheckAttacks (vtable slot 16 = shared base, returns 0)
-//=========================================================
-int CISlave::CheckAttacks(entvars_t* pevEnemy, float flDist)
+int CISlave::CheckAttacks(entvars_t *pevEnemy, float flDist)
 {
-	HL_UNUSED(pevEnemy);
-	HL_UNUSED(flDist);
-	return 0;
+	return FALSE;
 }
 
-//=========================================================
-// RemoveThink
-//=========================================================
-void CISlave::RemoveThink(CBaseEntity* pOther)
+void CISlave::RemoveThink(CBaseEntity *pOther)
 {
-	if (!pev)
-		return;
-
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineRemoveEntity(edict);
-}
-
-//=========================================================
-// TakeDamage - alien_slave does NOT override the damage slot; the shared
-// CBaseMonster::TakeDamage (vtable slot 17) handles it and
-// on HP <= 0, routes through Killed to the Death virtual
-// (slot 14). The pain virtual (slot 13) is a nullsub for the slave, so it
-// inherits the empty CBaseMonster::Pain default.
-//=========================================================
-
-//=========================================================
-// monster_alien_slave
-//=========================================================
-DLLEXPORT void monster_alien_slave(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 336);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 336);
-
-		CISlave* monster = new (privateData) CISlave();
-		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
-	}
+	REMOVE_ENTITY(ENT(pev));
 }

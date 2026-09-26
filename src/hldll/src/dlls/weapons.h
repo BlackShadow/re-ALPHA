@@ -1,34 +1,38 @@
-#pragma once
+/***
+*
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
+*
+*   This source code contains proprietary and confidential information of
+*   Valve LLC and its suppliers.  Access to this code is restricted to
+*   persons who have executed a written SDK license with Valve.  Any access,
+*   use or distribution of this code by or to any unlicensed person is illegal.
+*
+****/
+#ifndef WEAPONS_H
+#define WEAPONS_H
 
-#include "hl_types.h"
+// player weapon ids (pev->weapon), also the bit numbers in pev->weapons
+#define WEAPON_NONE			0
+#define WEAPON_CROWBAR		1
+#define WEAPON_GLOCK		2
+#define WEAPON_MP5			4
 
-struct entvars_t;
+// item types below MAX_WEAPONS are pev->weapons bits, the others pev->items bits
+#define MAX_WEAPONS			32
 
-//=========================================================
-// weapons.h - Spawn API for the player-instantiated weapon
-// and projectile entity classes (Half-Life 0.52 alpha).
-//
-// None of these are map entities (no DLLEXPORT factory): the
-// player code creates the entity, installs the C++ vtable via
-// placement-new, then calls one of the Deploy* helpers below
-// to run the original constructor (sub_*).
-//=========================================================
+#define BULLET_NONE			0		// FireBullets ignores the bullet type
 
-// The binary (336 bytes) - thrown contact grenade
-// (IN_ATTACK2). Bounces, explodes on a 2s fuse (or sooner via Touch),
-// damages on impact. start[3]/velocity[3] are world-space.
-void ThrowGrenade(entvars_t* pevOwner, const float* start, const float* velocity);
+// impulse 201: sprays the six lambda decals along the owner's aim
+void SprayLambdas(entvars_t *pevOwner);
 
-// The binary (32 bytes) - repeating "sprayer" decal
-// projectile (impulse 201). Paints up to six decals along the owner's
-// aim then removes itself.
-void DeploySprayerRepeat(entvars_t* pevOwner);
+// impulse 202: sprays one random blood decal along the owner's aim
+void SprayBlood(entvars_t *pevOwner);
 
-// The binary (28 bytes) - single-shot "sprayer" decal
-// projectile (impulse 202). Paints one random decal then removes itself.
-void DeploySprayerSingle(entvars_t* pevOwner);
+// drops item iItem in front of the owner, NULL when there is no room for it
+CBaseEntity *DropItem(entvars_t *pevOwner, int iItem);
 
-// The binary (32 bytes) - deployed satchel / "Item"
-// pickup (impulse). itemId is the weapon-slot bit the satchel grants
-// back to whoever touches it. Returns the spawned entity, or NULL.
-void* DeploySatchel(entvars_t* pevOwner, int itemId);
+#endif // WEAPONS_H

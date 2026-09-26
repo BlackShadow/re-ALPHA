@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,55 +12,54 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// Houndeye - Houndeye monster
+// Houndeye - squad monster with a sonic area attack
 //=========================================================
 
-#include <new>
-#include <string.h>
-#include <stdlib.h>
-#include "basemonster.h"
-#include "enginefuncs.h"
-#include "hl_exports.h"
+#include "extdll.h"
+#include "util.h"
+#include "cbase.h"
 #include "monsters.h"
-#include "utils.h"
 
 //=========================================================
-// monster-specific constants
+// monster-specific DEFINE's
 //=========================================================
-
+#define HOUNDEYE_HEALTH				15.0f
 #define HOUNDEYE_THINK_INTERVAL		0.1f
 #define HOUNDEYE_MAX_ATTACK_DIST	1024.0f
-#define HOUNDEYE_ATTACK_RADIUS		384.0f
-#define HOUNDEYE_ATTACK_COOLDOWN	9.0f
+#define HOUNDEYE_SQUAD_RADIUS		512		// AlertSound recruits the houndeyes this close
+#define HOUNDEYE_ATTACK_DELAY		9.0f	// between two sonic attacks
 
-#define HOUNDEYE_ATTACK_DMG_MIN		30
-#define HOUNDEYE_ATTACK_DMG_MAX		50
+#define HOUNDEYE_SONIC_RADIUS		384.0f
+#define HOUNDEYE_SONIC_DAMAGE		30		// per squad member, at the blast center
+#define HOUNDEYE_SONIC_DAMAGE_MAX	50		// per squad member, only printed
+#define HOUNDEYE_SONIC_FALLOFF		0.2f	// damage lost per unit of distance
 
-#define HOUNDEYE_VOL				1.0f
-#define HOUNDEYE_ATTN_IDLE			2.0f
-#define HOUNDEYE_ATTN_COMBAT		0.8f
+// houndeye.mdl sequences
+enum
+{
+	HOUND_SEQ_IDLE2 = 0,
+	HOUND_SEQ_IDLE,
+	HOUND_SEQ_IDLE3,
+	HOUND_SEQ_ATTACK,
+	HOUND_SEQ_RUN,
+	HOUND_SEQ_DIE,
+	HOUND_SEQ_SPAWN,			// set by Spawn, until the first think
+};
 
-static const char kHoundeyeModel[] = "models/houndeye.mdl";
-
-//=========================================================
-// Sound Table
-//=========================================================
-
-static const char* pAlertSounds[] =
+static const char *pAlertSounds[] =
 {
 	"houndeye/he_alert1.wav",
 };
 
-static const char* pDieSounds[] =
+static const char *pDieSounds[] =
 {
 	"houndeye/he_die1.wav",
 	"houndeye/he_die2.wav",
 	"houndeye/he_die3.wav",
 };
 
-static const char* pIdleSounds[] =
+static const char *pIdleSounds[] =
 {
 	"houndeye/he_idle1.wav",
 	"houndeye/he_idle2.wav",
@@ -68,41 +67,20 @@ static const char* pIdleSounds[] =
 	"houndeye/he_idle4.wav",
 };
 
-static const char* pAttackSounds[] =
+static const char *pAttackSounds[] =
 {
 	"houndeye/he_attack1.wav",
 	"houndeye/he_attack2.wav",
 	"houndeye/he_attack3.wav",
 };
 
-static const char* pPainSounds[] =
+static const char *pPainSounds[] =
 {
 	"houndeye/he_pain1.wav",
 	"houndeye/he_pain2.wav",
 	"houndeye/he_pain4.wav",
 	"houndeye/he_pain5.wav",
 };
-
-//=========================================================
-// Helpers
-//=========================================================
-
-static entvars_t* EnemyVars(entvars_t* pevSelf)
-{
-	if (!pevSelf)
-		return NULL;
-
-	int enemyIndex = PevInt(pevSelf, PEV_ENEMY);
-	if (!enemyIndex)
-		return NULL;
-
-	edict_t* pEdict = EnginePEntityOfEntIndex(enemyIndex);
-	return pEdict ? EngineGetVarsOfEnt(pEdict) : NULL;
-}
-
-//=========================================================
-// CHoundeye
-//=========================================================
 
 class CHoundeye : public CBaseMonster
 {
@@ -111,27 +89,22 @@ public:
 
 	void Spawn();
 	int Classify();
-
-private:
 	void SetActivity(int activity);
-	void IdleSound();
+	int CheckAttacks(entvars_t *pevEnemy, float flDist);
 	void AlertSound();
-	int CheckAttacks(entvars_t* pevEnemy, float flDist);
+	void IdleSound();
+	void Pain(float flDamage);
+	void Death(int iDeathType);
 
-	void Pain(float flDamage);		// vtable slot 13
-	void Death(int gibType);		// vtable slot 14
-	void SonicAttackThink(CBaseEntity* pOther);
-	void SonicFollowThink(CBaseEntity* pOther);
+	void SonicAttackThink(CBaseEntity *pOther);
+	void SonicFollowThink(CBaseEntity *pOther);
 
-private:
-	int m_fSonicActive;
+	int		m_fSonicActive;		// a squad was formed, the sonic attack is enabled
 };
-
-HL_COMPILE_TIME_ASSERT(sizeof(CHoundeye) <= 336, CHoundeye_private_data_size);
 
 CHoundeye::CHoundeye()
 {
-	m_fSonicActive = 0;
+	m_fSonicActive = FALSE;
 }
 
 //=========================================================
@@ -141,48 +114,38 @@ void CHoundeye::Spawn()
 {
 	int i;
 
-	for (i = 0; i < (int)ARRAYSIZE(pAlertSounds); ++i)
-		EnginePrecacheSound(pAlertSounds[i]);
+	for (i = 0; i < (int)ARRAYSIZE(pAlertSounds); i++)
+		PRECACHE_SOUND(pAlertSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pDieSounds); ++i)
-		EnginePrecacheSound(pDieSounds[i]);
+	for (i = 0; i < (int)ARRAYSIZE(pDieSounds); i++)
+		PRECACHE_SOUND(pDieSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pIdleSounds); ++i)
-		EnginePrecacheSound(pIdleSounds[i]);
+	for (i = 0; i < (int)ARRAYSIZE(pIdleSounds); i++)
+		PRECACHE_SOUND(pIdleSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pAttackSounds); ++i)
-		EnginePrecacheSound(pAttackSounds[i]);
+	for (i = 0; i < (int)ARRAYSIZE(pAttackSounds); i++)
+		PRECACHE_SOUND(pAttackSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pPainSounds); ++i)
-		EnginePrecacheSound(pPainSounds[i]);
+	for (i = 0; i < (int)ARRAYSIZE(pPainSounds); i++)
+		PRECACHE_SOUND(pPainSounds[i]);
 
-	EnginePrecacheModel(kHoundeyeModel);
+	PRECACHE_MODEL("models/houndeye.mdl");
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineSetModel(edict, kHoundeyeModel);
+	SET_MODEL(ENT(pev), "models/houndeye.mdl");
+	UTIL_SetSize(pev, Vector(-18, -18, 0), Vector(18, 18, 36));
 
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 18.0f, 18.0f, 36.0f);
-		VecSet(mins, -18.0f, -18.0f, 0.0f);
-		if (edict)
-			EngineSetSize(edict, mins, maxs);
-	}
-
-	PevFloat(pev, PEV_SOLID) = 3.0f;
-	PevFloat(pev, PEV_MOVETYPE) = 4.0f;
-	PevFloat(pev, PEV_STUCK) = 0.0f;
-	PevFloat(pev, PEV_HEALTH) = 15.0f;
-	PevFloat(pev, PEV_YAWSPEED) = 10.0f;
-	PevInt(pev, PEV_SEQUENCE) = 6;
+	pev->solid = SOLID_SLIDEBOX;
+	pev->movetype = MOVETYPE_STEP;
+	pev->effects = 0;
+	pev->health = HOUNDEYE_HEALTH;
+	pev->yaw_speed = 10.0f;
+	pev->sequence = HOUND_SEQ_SPAWN;
 
 	m_flDistTooFar = 128.0f;
-	m_bloodColor = 195;
+	m_bloodColor = BLOOD_COLOR_YELLOW;
 	m_iSquadSize = 1;
 
-	PevFloat(pev, PEV_NEXTTHINK) = PevFloat(pev, PEV_NEXTTHINK) + 1.0f;
+	pev->nextthink += 1.0f;
 	SetThink(&CBaseMonster::WalkMonsterStart);
 }
 
@@ -191,118 +154,115 @@ void CHoundeye::Spawn()
 //=========================================================
 int CHoundeye::Classify()
 {
-	return 3;
+	return CLASS_HOUNDEYE;
 }
 
 //=========================================================
-// SetActivity
+// SetActivity - plays the sequence for a monster state
 //=========================================================
 void CHoundeye::SetActivity(int activity)
 {
-	int sequence;
+	int iSequence;
 
 	switch (activity)
 	{
-	case 1:
-		sequence = 1;
+	case MONSTERSTATE_IDLE:
+	case MONSTERSTATE_COMBAT_IDLE:
+	case MONSTERSTATE_COMBAT:
+		iSequence = HOUND_SEQ_IDLE;
 		break;
-	case 2:
-		sequence = 0;
+	case MONSTERSTATE_IDLE2:
+		iSequence = HOUND_SEQ_IDLE2;
 		break;
-	case 3:
-		sequence = 2;
+	case MONSTERSTATE_IDLE3:
+		iSequence = HOUND_SEQ_IDLE3;
 		break;
-	case 4:
-	case 8:
-	case 9:
-		sequence = 4;
+	case MONSTERSTATE_WALK:
+	case MONSTERSTATE_CHASE:
+	case MONSTERSTATE_HUNT:
+		iSequence = HOUND_SEQ_RUN;
 		break;
-	case 6:
-	case 7:
-		sequence = 1;
+	case MONSTERSTATE_MELEE_ATTACK:
+	case MONSTERSTATE_RANGE_ATTACK:
+		iSequence = HOUND_SEQ_ATTACK;
 		break;
-	case 29:
-	case 30:
-		sequence = 3;
-		break;
-	case 35:
-		sequence = 5;
+	case MONSTERSTATE_DIE1:
+		iSequence = HOUND_SEQ_DIE;
 		break;
 	default:
-		EngineAlertMessage(1, "Houndeye's monster state is bogus: %d", activity);
+		ALERT(at_console, "Houndeye's monster state is bogus: %d", activity);
 		return;
 	}
 
-	if (PevInt(pev, PEV_SEQUENCE) == sequence)
+	if (pev->sequence == iSequence)
 		return;
 
-	PevInt(pev, PEV_SEQUENCE) = sequence;
-	PevFloat(pev, PEV_FRAME) = 0.0f;
+	pev->sequence = iSequence;
+	pev->frame = 0;
 	ResetSequenceInfo(HOUNDEYE_THINK_INTERVAL);
 
-	volatile int validatedSequence = sequence;
-	if (validatedSequence < 0 || validatedSequence > 5)
+	if (pev->sequence < 0 || pev->sequence > HOUND_SEQ_DIE)
 	{
-		EngineAlertMessage(1, "Bogus Houndeye anim: %d", validatedSequence);
-		m_flFrameRate = 0.0f;
-		m_flGroundSpeed = 0.0f;
+		ALERT(at_console, "Bogus Houndeye anim: %d", pev->sequence);
+		m_flFrameRate = 0;
+		m_flGroundSpeed = 0;
 	}
 }
 
 //=========================================================
-// CheckAttacks
+// CheckAttacks - starts the sonic attack when the enemy
+// is in range
 //=========================================================
-int CHoundeye::CheckAttacks(entvars_t* pevEnemy, float flDist)
+int CHoundeye::CheckAttacks(entvars_t *pevEnemy, float flDist)
 {
 	if (!CheckRangeAttack(pevEnemy) || flDist > HOUNDEYE_MAX_ATTACK_DIST)
-		return 0;
+		return FALSE;
 
-	m_IdealActivity = 7;
+	m_IdealMonsterState = MONSTERSTATE_COMBAT;
 	SetThink(&CHoundeye::SonicAttackThink);
-	return 1;
+	return TRUE;
 }
 
 //=========================================================
-// AlertSound
+// AlertSound - the first houndeye to see the enemy
+// recruits a squad and sends it after the enemy
 //=========================================================
 void CHoundeye::AlertSound()
 {
 	if (m_iSquadSize > 1)
 		return;
 
-	int recruits = SquadRecruit(512);
-	if (!recruits)
+	int iRecruits = SquadRecruit(HOUNDEYE_SQUAD_RADIUS);
+	if (!iRecruits)
 	{
-		EngineAlertMessage(1, "No Squad\n");
-		m_Activity = 7;
+		ALERT(at_console, "No Squad\n");
+		m_MonsterState = MONSTERSTATE_COMBAT;
 		return;
 	}
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, pAlertSounds[0], HOUNDEYE_VOL, HOUNDEYE_ATTN_COMBAT);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pAlertSounds[0], VOL_NORM, ATTN_NORM);
 
-	m_iSquadSize += recruits;
+	m_iSquadSize += iRecruits;
 
-	entvars_t* pevMember = m_pSquadNext;
+	// send the whole squad after the enemy
+	entvars_t *pevMember = m_pSquadNext;
 	while (pevMember && pevMember != pev)
 	{
-		edict_t* pMemberEdict = EdictFromEntvars(pevMember);
-		CBaseMonster* pMember = pMemberEdict ? (CBaseMonster*)EngineGetPrivateData(pMemberEdict) : NULL;
+		CBaseMonster *pMember = (CBaseMonster *)CBaseEntity::Instance(pevMember);
 		if (!pMember)
 			break;
 
-		pMember->SetMonsterActivity(8);
-		pMember->SetSquadSize(m_iSquadSize);
+		pMember->m_MonsterState = MONSTERSTATE_CHASE;
+		pMember->m_iSquadSize = m_iSquadSize;
 
-		pevMember = pMember->SquadNext();
+		pevMember = pMember->m_pSquadNext;
 	}
 
-	EngineAlertMessage(1, "group of: %d\n", m_iSquadSize);
+	ALERT(at_console, "group of: %d\n", m_iSquadSize);
 
-	m_Activity = 8;
-	m_fSonicActive = 1;
-	m_iSquadSize = recruits;
+	m_MonsterState = MONSTERSTATE_CHASE;
+	m_fSonicActive = TRUE;
+	m_iSquadSize = iRecruits;
 }
 
 //=========================================================
@@ -310,145 +270,117 @@ void CHoundeye::AlertSound()
 //=========================================================
 void CHoundeye::IdleSound()
 {
-	float rnd = RandomFloat(0.0f, 1.0f);
-	const char* sample;
+	float flRand = RANDOM_FLOAT(0.0f, 1.0f);
+	const char *pszSound;
 
-	if (rnd <= 0.25f)
-		sample = pIdleSounds[0];
-	else if (rnd <= 0.5f)
-		sample = pIdleSounds[1];
-	else if (rnd <= 0.75f)
-		sample = pIdleSounds[2];
+	if (flRand <= 0.25f)
+		pszSound = pIdleSounds[0];
+	else if (flRand <= 0.5f)
+		pszSound = pIdleSounds[1];
+	else if (flRand <= 0.75f)
+		pszSound = pIdleSounds[2];
 	else
-		sample = pIdleSounds[3];
+		pszSound = pIdleSounds[3];
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, sample, HOUNDEYE_VOL, HOUNDEYE_ATTN_IDLE);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSound, VOL_NORM, ATTN_IDLE);
 
-	m_flNextSoundTime = (float)RandomLong(0, 3) + GlobalTime() + 1.0f;
+	m_flNextSoundTime = (float)RANDOM_LONG(0, 3) + gpGlobals->time + 1.0f;
 }
 
 //=========================================================
-// Pain - vtable slot 13
+// Pain
 //=========================================================
 void CHoundeye::Pain(float flDamage)
 {
-	HL_UNUSED(flDamage);
+	float flRand = RANDOM_FLOAT(0.0f, 1.0f);
+	const char *pszSound;
 
-	float rnd = RandomFloat(0.0f, 1.0f);
-	const char* sample;
-
-	if (rnd <= 0.25f)
-		sample = pPainSounds[0];
-	else if (rnd <= 0.5f)
-		sample = pPainSounds[1];
-	else if (rnd <= 0.75f)
-		sample = pPainSounds[2];
+	if (flRand <= 0.25f)
+		pszSound = pPainSounds[0];
+	else if (flRand <= 0.5f)
+		pszSound = pPainSounds[1];
+	else if (flRand <= 0.75f)
+		pszSound = pPainSounds[2];
 	else
-		sample = pPainSounds[3];
+		pszSound = pPainSounds[3];
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, sample, HOUNDEYE_VOL, HOUNDEYE_ATTN_COMBAT);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSound, VOL_NORM, ATTN_NORM);
 
-	if (m_Activity == 1 || m_Activity == 4)
+	if (m_MonsterState == MONSTERSTATE_IDLE || m_MonsterState == MONSTERSTATE_WALK)
 		AlertSound();
 }
 
 //=========================================================
-// Death - vtable slot 14
+// Death
 //=========================================================
-void CHoundeye::Death(int gibType)
+void CHoundeye::Death(int iDeathType)
 {
-	HL_UNUSED(gibType);
+	float flRand = RANDOM_FLOAT(0.0f, 1.0f);
 
-	float rnd = RandomFloat(0.0f, 1.0f);
-
-	if (PevFloat(pev, PEV_HEALTH) > -30.0f)
+	// no death cry when gibbed
+	if (pev->health > GIB_HEALTH)
 	{
-		edict_t* edict = EdictFromEntvars(pev);
+		if (flRand <= 0.33f)
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, pDieSounds[0], VOL_NORM, ATTN_NORM);
 
-		if (rnd <= 0.33f)
-		{
-			if (edict)
-				EngineEmitSound(edict, 2, pDieSounds[0], HOUNDEYE_VOL, HOUNDEYE_ATTN_COMBAT);
-		}
-
-		const char* sample;
-		if (rnd <= 0.66f)
-			sample = pDieSounds[1];
+		const char *pszSound;
+		if (flRand <= 0.66f)
+			pszSound = pDieSounds[1];
 		else
-			sample = pDieSounds[2];
+			pszSound = pDieSounds[2];
 
-		if (edict)
-			EngineEmitSound(edict, 2, sample, HOUNDEYE_VOL, HOUNDEYE_ATTN_COMBAT);
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSound, VOL_NORM, ATTN_NORM);
 	}
 
-	// Binary tail-calls the binary(this, 0): the shared SetDeathActivity
-	// helper (selects the death animation, faces the corpse along its yaw and
-	// hands off to MonsterThink). Death type 0 == DEAD activity (35).
-	SetDeathActivity(0);
+	SetDeathActivity(DEATH_NORMAL);
 }
 
 //=========================================================
-// TakeDamage routes through the shared CBaseMonster::TakeDamage
-// (vtable slot 17), which raises Pain / Death.
+// SonicAttackThink - the squad plays the attack animation
+// together, then the blast hurts everything in range that
+// is not a houndeye. The damage grows with the squad size.
 //=========================================================
-
-//=========================================================
-// SonicAttackThink
-//=========================================================
-void CHoundeye::SonicAttackThink(CBaseEntity* pOther)
+void CHoundeye::SonicAttackThink(CBaseEntity *pOther)
 {
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + HOUNDEYE_THINK_INTERVAL;
+	pev->nextthink = gpGlobals->time + HOUNDEYE_THINK_INTERVAL;
 
+	// a houndeye without a squad has no sonic attack
 	if (!m_fSonicActive)
 	{
-		m_flNextAttack = GlobalTime() + 99999.0f;
+		m_flNextAttack = gpGlobals->time + 99999.0f;	// never
 		return;
 	}
 
-	if (m_Activity != 30)
+	if (m_MonsterState != MONSTERSTATE_RANGE_ATTACK)
 	{
-		int soundIndex = rand() % 3;
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineEmitSound(edict, 2, pAttackSounds[soundIndex], HOUNDEYE_VOL, HOUNDEYE_ATTN_COMBAT);
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pAttackSounds[RANDOM_LONG(0, ARRAYSIZE(pAttackSounds) - 1)], VOL_NORM, ATTN_NORM);
 
-		entvars_t* pevMember = m_pSquadNext;
+		// the rest of the squad joins in
+		entvars_t *pevMember = m_pSquadNext;
 		while (pevMember && pevMember != pev)
 		{
-			edict_t* pMemberEdict = EdictFromEntvars(pevMember);
-			CBaseMonster* pMember = pMemberEdict ? (CBaseMonster*)EngineGetPrivateData(pMemberEdict) : NULL;
+			CBaseMonster *pMember = (CBaseMonster *)CBaseEntity::Instance(pevMember);
 			if (!pMember)
 				break;
 
-			if (PevFloat(pevMember, PEV_HEALTH) > 0.0f)
+			if (pevMember->health > 0)
 			{
-				CHoundeye* pHoundeye = (CHoundeye*)pMember;
+				CHoundeye *pHoundeye = (CHoundeye *)pMember;
 				pHoundeye->SetThink(&CHoundeye::SonicFollowThink);
-				pHoundeye->SetMonsterIdealActivity(7);
+				pHoundeye->m_IdealMonsterState = MONSTERSTATE_COMBAT;
 			}
 
-			pevMember = pMember->SquadNext();
+			pevMember = pMember->m_pSquadNext;
 		}
 
-		m_Activity = 30;
-		SetActivity(30);
+		m_MonsterState = MONSTERSTATE_RANGE_ATTACK;
+		SetActivity(MONSTERSTATE_RANGE_ATTACK);
 	}
 
-	{
-		entvars_t* pevEnemy = EnemyVars(pev);
-		if (pevEnemy)
-			UpdateEnemyInfo(pevEnemy);
-	}
+	if (!FNullEnt(pev->enemy))
+		UpdateEnemyInfo(VARS(pev->enemy));
 
-	{
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineChangeYaw(edict);
-	}
+	CHANGE_YAW(ENT(pev));
 
 	GetAnimationEventFlags(HOUNDEYE_THINK_INTERVAL);
 	AdvanceAnimation(HOUNDEYE_THINK_INTERVAL);
@@ -456,140 +388,85 @@ void CHoundeye::SonicAttackThink(CBaseEntity* pOther)
 	if (!m_fSequenceFinished)
 		return;
 
+	int iSquadSize = (int)m_iSquadSize;
+	Vector vecSrc = pev->origin;
+
+	// the engine chains the entities in range through pev->chain, ending at the world
+	edict_t *pentHit = FIND_ENTITY_IN_SPHERE(vecSrc, HOUNDEYE_SONIC_RADIUS);
+	while (!FNullEnt(pentHit))
 	{
-		int attackScale = (int)m_iSquadSize;
+		entvars_t *pevHit = VARS(pentHit);
 
-		edict_t* edict = EdictFromEntvars(pev);
-		Vector vecSrc = PevVector(pev, PEV_ORIGIN);
-		edict_t* pEdict = EngineFindEntityInSphere(VecPtr(vecSrc), HOUNDEYE_ATTACK_RADIUS);
-
-		while (pEdict)
+		if (pevHit->takedamage != DAMAGE_NO)
 		{
-			int hitIndex = EngineIndexOfEdict(pEdict);
-			if (!hitIndex)
-				break;
-
-			entvars_t* pevHit = EngineGetVarsOfEnt(pEdict);
-			if (!pevHit)
-				break;
-
-			if ((PevInt(pevHit, PEV_TAKEDAMAGE) & 0x7FFFFFFF) != 0)
+			CBaseEntity *pEntity = CBaseEntity::Instance(pentHit);
+			if (!pEntity || pEntity->Classify() != CLASS_HOUNDEYE)
 			{
-				CBaseEntity* pEntity = (CBaseEntity*)EngineGetPrivateData(pEdict);
-				if (!pEntity || pEntity->Classify() != 3)
+				// aim at the middle of the target
+				Vector vecEnd = pevHit->origin;
+				vecEnd.z += pevHit->size.z * 0.5f;
+
+				TraceResult tr;
+				memset(&tr, 0, sizeof(tr));
+				UTIL_TraceLine(vecSrc, vecEnd, ignore_monsters, ENT(pev), &tr);
+
+				if (tr.flFraction == 1.0f)
 				{
-					float vecEnd[3];
-					vecEnd[0] = PevVector(pevHit, PEV_ORIGIN).x;
-					vecEnd[1] = PevVector(pevHit, PEV_ORIGIN).y;
-					vecEnd[2] = PevVector(pevHit, PEV_ORIGIN).z + PevVector(pevHit, PEV_SIZE).z * 0.5f;
+					float flDamage = (float)(HOUNDEYE_SONIC_DAMAGE * iSquadSize) - (pev->origin - pevHit->origin).Length() * HOUNDEYE_SONIC_FALLOFF;
+					if (flDamage < 0.0f)
+						flDamage = 0.0f;
 
-					TraceResult tr;
-					memset(&tr, 0, sizeof(tr));
-					EngineTraceLine(VecPtr(vecSrc), vecEnd, 0, edict, &tr);
+					ALERT(at_console, "%f/%f\n", flDamage, (float)(HOUNDEYE_SONIC_DAMAGE_MAX * iSquadSize));
 
-					if (tr.flFraction == 1.0f)
-					{
-						float vecDelta[3];
-						vecDelta[0] = PevVector(pev, PEV_ORIGIN).x - PevVector(pevHit, PEV_ORIGIN).x;
-						vecDelta[1] = PevVector(pev, PEV_ORIGIN).y - PevVector(pevHit, PEV_ORIGIN).y;
-						vecDelta[2] = PevVector(pev, PEV_ORIGIN).z - PevVector(pevHit, PEV_ORIGIN).z;
-
-						float flDamage = (float)(HOUNDEYE_ATTACK_DMG_MIN * attackScale) - VecLength(vecDelta) * 0.2f;
-						if (flDamage < 0.0f)
-							flDamage = 0.0f;
-
-						EngineAlertMessage(1, "%f/%f\n", flDamage, (float)(HOUNDEYE_ATTACK_DMG_MAX * attackScale));
-
-						if (pEntity)
-							pEntity->TakeDamage(pev, pev, flDamage);
-					}
+					if (pEntity)
+						pEntity->TakeDamage(pev, pev, flDamage);
 				}
 			}
-
-			{
-				int nextChain = PevInt(pevHit, PEV_CHAIN);
-				pEdict = nextChain ? EnginePEntityOfEntIndex(nextChain) : NULL;
-			}
 		}
+
+		if (FNullEnt(pevHit->chain))
+			break;
+
+		pentHit = ENT(pevHit->chain);
 	}
 
-	m_Activity = m_IdealActivity;
+	m_MonsterState = m_IdealMonsterState;
 	SetThink(&CBaseMonster::MonsterThink);
-	m_flNextAttack = GlobalTime() + HOUNDEYE_ATTACK_COOLDOWN;
+	m_flNextAttack = gpGlobals->time + HOUNDEYE_ATTACK_DELAY;
 }
 
 //=========================================================
-// SonicFollowThink
+// SonicFollowThink - the other squad members play the
+// attack animation while facing the leader
 //=========================================================
-void CHoundeye::SonicFollowThink(CBaseEntity* pOther)
+void CHoundeye::SonicFollowThink(CBaseEntity *pOther)
 {
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + HOUNDEYE_THINK_INTERVAL;
+	pev->nextthink = gpGlobals->time + HOUNDEYE_THINK_INTERVAL;
 
-	if (m_Activity != 30)
+	if (m_MonsterState != MONSTERSTATE_RANGE_ATTACK)
 	{
-		m_Activity = 30;
-		SetActivity(30);
+		m_MonsterState = MONSTERSTATE_RANGE_ATTACK;
+		SetActivity(MONSTERSTATE_RANGE_ATTACK);
 	}
 
 	GetAnimationEventFlags(HOUNDEYE_THINK_INTERVAL);
 	AdvanceAnimation(HOUNDEYE_THINK_INTERVAL);
 
-	{
-		entvars_t* pevEnemy = EnemyVars(pev);
-		if (pevEnemy)
-			UpdateEnemyInfo(pevEnemy);
-	}
+	if (!FNullEnt(pev->enemy))
+		UpdateEnemyInfo(VARS(pev->enemy));
 
+	// face the squad leader
 	if (m_pSquadLeader)
-	{
-		float vecLeaderDelta[3];
-		vecLeaderDelta[0] = PevVector(m_pSquadLeader, PEV_ORIGIN).x - PevVector(pev, PEV_ORIGIN).x;
-		vecLeaderDelta[1] = PevVector(m_pSquadLeader, PEV_ORIGIN).y - PevVector(pev, PEV_ORIGIN).y;
-		vecLeaderDelta[2] = PevVector(m_pSquadLeader, PEV_ORIGIN).z - PevVector(pev, PEV_ORIGIN).z;
-		PevFloat(pev, PEV_IDEAL_YAW) = EngineVecToYaw(vecLeaderDelta);
-	}
+		pev->ideal_yaw = UTIL_VecToYaw(m_pSquadLeader->origin - pev->origin);
 
-	{
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineChangeYaw(edict);
-	}
+	CHANGE_YAW(ENT(pev));
 
 	if (!m_fSequenceFinished)
 		return;
 
-	m_Activity = m_IdealActivity;
+	m_MonsterState = m_IdealMonsterState;
 	SetThink(&CBaseMonster::MonsterThink);
-	m_flNextAttack = GlobalTime() + HOUNDEYE_ATTACK_COOLDOWN;
+	m_flNextAttack = gpGlobals->time + HOUNDEYE_ATTACK_DELAY;
 }
 
-//=========================================================
-// monster_houndeye
-//=========================================================
-DLLEXPORT void monster_houndeye(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 336);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 336);
-
-		CHoundeye* monster = new (privateData) CHoundeye();
-		monster->pev = entvars;
-		monster->m_pGlobals = GlobalsFromEntvars(entvars);
-	}
-}
+LINK_ENTITY_TO_CLASS(monster_houndeye, CHoundeye);

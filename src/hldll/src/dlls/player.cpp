@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,2179 +12,1562 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// Player - CBasePlayer (the local player)
-//
-//   PutClientInServer export the binary (size 452, vtable)
-//   Spawn vtable slot 0 the binary
-//   SetAnimation vtable slot 10 the binary
-//   Death vtable slot 14 the binary
-//   WaterMove vtable slot 19 the binary (drown/jump out of water)
-//   UpdateWaterLevel vtable slot 20 the binary (duck/uncrouch box swap)
-//   PreThink vtable slot 21 the binary
-//   PostThink vtable slot 22 the binary
-//
-// entvars_t is opaque (alpha byte offsets via PevFloat/PevInt/
-// PevVector). Player-private state past the CBaseMonster C++
-// members is reached at the binary byte offsets the original
-// methods used (SelfInt/SelfFloat), since the object is a flat
-// 452-byte block constructed in place.
+// CBasePlayer - the player: movement, water, ladders,
+// weapons and impulse commands
 //=========================================================
 
-#include <new>
-#include <math.h>
-#include <string.h>
-#include "basemonster.h"
+#include "extdll.h"
+#include "util.h"
 #include "cbase.h"
-#include "cbase_toggle.h"
-#include "player.h"
-#include "enginefuncs.h"
-#include "hl_exports.h"
 #include "monsters.h"
-#include "utils.h"
+#include "player.h"
+#include "doors.h"
 #include "weapons.h"
+#include "studio.h"
+#include "ggrenade.h"
+#include "client.h"
 
-//=========================================================
-// player private-data layout (byte offsets into the object)
-//=========================================================
+// SetAnimation() values: the monster states the player animates
+#define PLAYER_IDLE					MONSTERSTATE_IDLE
+#define PLAYER_WALK					MONSTERSTATE_WALK
+#define PLAYER_ATTACK1				MONSTERSTATE_RANGE_ATTACK
+#define PLAYER_DIE					MONSTERSTATE_DIE1
+#define PLAYER_JUMP					40
+
+// models/doctor.mdl sequences
 enum
 {
-	PLR_VIEWMODEL			= 272,	// active weapon id (drives view model)  pev+0x110
-	PLR_WEAPONMODEL			= 276,	// items / weapon-model bitfield (23 at spawn) pev+0x114
-	PLR_VIEWMODEL_STR		= 280,	// view model string index (pev+0x118)
-	PLR_FIRE_LATCH			= 284,	// pev+0x11c per-fire latch zeroed by the
-									// fire dispatch (the binary clears 0x11c
-									// NOT the 0x118 view-model string)
-	PLR_VIEWMODEL_FRAME		= 288,	// view model frame
-	PLR_FREEZE_TIME			= 292,	// this+0x124 freeze/duck-hold time (zeroes velocity)
-	PLR_FOV					= 296,	// this+0x128 70 byte at spawn (m_iFOV-ish)
-	PLR_300					= 300,	// scratch float (anim-done flag)
-	PLR_USE_TIME			= 340,	// this+0x154 next +USE scan time
-	PLR_NEXT_GRENADE		= 332,	// this+0x14c next IN_ATTACK2 grenade-launch time
-	PLR_FLASH_TIME			= 336,	// this+0x150 next flashlight battery tick
-	PLR_NEXT_FOOTSTEP		= 364,	// this+0x16c next footstep sound time
-	PLR_NEXT_FLASH			= 368,	// this+0x170 next flashlight think time
-	PLR_CLIMB_LATCH			= 372,	// this+0x174 ladder-grab latch (bit0)
-	PLR_FALL_VELOCITY		= 348,	// this+0x15c fall velocity
-	PLR_WATER_SOUND_TIME	= 344,	// this+0x158 next deep-water entry-splash sound time
-	PLR_STEP_COUNT			= 440,	// this+0x1b8 ladder-climb gait accumulator
-	PLR_PAIN_SIDE			= 444,	// this+0x1bc climb view-punch left/right toggle
-	PLR_STEP_SIZE			= 448,	// this+0x1c0 ladder-climb stride (signed short)
-	PLR_GAIT_FRAME			= 264,	// this+0x108 SetAnimation gait-frame scratch
-	PLR_GAIT_YAW			= 268,	// this+0x10c SetAnimation gait-yaw scratch
+	PLAYER_SEQ_RUN = 0,
+	PLAYER_SEQ_ATTACK_MOVE = 2,
+	PLAYER_SEQ_ATTACK = 3,
+	PLAYER_SEQ_JUMP = 5,
+	PLAYER_SEQ_DIE = 6,
+	PLAYER_SEQ_IDLE = 7,
+	PLAYER_SEQ_SPAWN = 9,
 };
 
-//=========================================================
-// entvars_t byte offsets used by the player that are not yet
-// named in utils.h (values verified against the decompile)
-//=========================================================
-enum
-{
-	PEV_PUNCHANGLE_X		= 112,	// pev+0x70 view punch.x
-	PEV_PUNCHANGLE_Z		= 120,	// pev+0x78 view punch.z component reused by code
-	PEV_WATERLEVEL			= 408,	// pev+0x198 water level (0,1,2,3 as floats *0.5)
-	PEV_WATERTYPE			= 412,	// pev+0x19c water contents type (-1..-5 as floats)
-	PEV_DEADFLAG			= 324,	// pev+0x144 dead state (0,1,2,3 as floats)
-	PEV_BUTTON				= 340,	// pev+0x154 pev->button bitfield
-	PEV_THINK_ANGLES		= 352,	// pev+0x160 angle vector fed to MakeVectors in PreThink
-	PEV_PLR_VIEWOFS			= 328,	// pev+0x148 view offset vector (== PEV_VIEWOFS); the
-									// PreThink/PostThink guard compares it against
-									// the engine spawn-sentinel vector g_vecSpawnSentinel
-	PEV_DMGTAKE				= 500,	// pev+0x1f4 damage taken this frame (drown dmg)
-	PEV_DMGSAVE				= 504,	// pev+0x1f8 dmg save (lava/slime re-tick)
-	PEV_AIRTIME				= 508,	// pev+0x1fc drown air clock
-	PEV_PAINTIME			= 512,	// pev+0x200 pain finished
-	PEV_MAXSPEED			= 392,	// pev+0x188 max speed (alias of gravity slot in alpha)
-	PEV_WATERJUMPTIME		= 396,	// pev+0x18c FL_WATERJUMP timeout
-	PEV_IMPULSE				= 344,	// pev+0x158 pev->impulse
-	PEV_EXTRA1				= 232,	// pev+0xe8 nextthink / extra scratch reused on respawn
-	PEV_WEAPONMODEL_FRAME	= 280,	// pev+0x118 weapon model frame
-};
+#define PLAYER_ANIM_INTERVAL		0.1f	// the end of a sequence is flagged this long before
 
-//=========================================================
-// flags (pev->flags, pev+380)
-//=========================================================
-enum
-{
-	FL_ONGROUND				= 0x200,
-	FL_INWATER				= 0x10,
-	FL_WATERJUMP			= 0x800,
-	FL_ONGROUND_HINT		= 0x1000,	// engine "want ground" bit toggled each frame
-	FL_DUCKING				= 0x4000,
-};
+#define VEC_DEAD_VIEW				Vector(0.0f, 0.0f, -8.0f)
 
-//=========================================================
-// player-state accessors (opaque, byte offset into object)
-//=========================================================
-static inline float& SelfFloat(void* self, size_t off)
-{
-	return *(float *)((unsigned char *)self + off);
-}
+#define PLAYER_MAX_HEALTH			100.0f
+#define PLAYER_GIB_HEALTH			-40.0f	// below this the player dies without sound or animation
+#define PLAYER_DEATH_TOSS			300.0f	// most upward speed added when killed
 
-static inline int& SelfInt(void* self, size_t off)
-{
-	return *(int *)((unsigned char *)self + off);
-}
+#define DM_SPAWN_TRIES				25		// deathmatch spawns skip up to this many spots
 
-static inline short& SelfShort(void* self, size_t off)
-{
-	return *(short *)((unsigned char *)self + off);
-}
+#define PLAYER_JUMP_SPEED			270.0f
+#define PLAYER_SWIM_SPEED_WATER		100.0f	// upward speed with jump held in deep water
+#define PLAYER_SWIM_SPEED_SLIME		80.0f
+#define PLAYER_SWIM_SPEED_OTHER		50.0f
+#define PLAYER_STEP_SPEED			200.0f	// faster than this plays footsteps
+#define PLAYER_STEP_INTERVAL		0.3f
+#define PLAYER_CORPSE_FRICTION		20.0f	// speed a corpse on the ground loses each frame
 
-//=========================================================
-// constants pulled from the decompile
-//=========================================================
-#define PLR_VOL				1.0f
-#define PLR_GLAUNCHER_VOL	0.75f
-#define PLR_ATTN			0.8f	// 0x3f4ccccd
+// drowning, lava and slime
+#define PLAYER_AIR_TIME				12.0f	// seconds under water before drowning
+#define PLAYER_GASP_AIR_TIME		9.0f	// surfacing with less air left than this gasps
+#define DROWN_DAMAGE				2.0f	// the drowning damage grows by this every second
+#define DROWN_DAMAGE_MAX			15.0f	// then drops back to DROWN_DAMAGE_RESET
+#define DROWN_DAMAGE_RESET			10.0f
+#define LAVA_DAMAGE					10.0f	// per water level
+#define SLIME_DAMAGE				4.0f	// per water level
+#define WATER_FRICTION				0.8f
 
-static const char kPlayer[]			= "player";
-static const char kModelsDoctor[]	= "models/doctor.mdl";
+// jumping out of water onto a ledge
+#define WATERJUMP_HEIGHT			8.0f	// the wall probe starts this far above the origin
+#define WATERJUMP_DIST				24.0f
+#define WATERJUMP_WALL_PUSH			50.0f
+#define WATERJUMP_SPEED				225.0f
+#define WATERJUMP_TIME				2.0f	// FL_WATERJUMP times out after this
 
-static const char kStep1[] = "player/pl_step1.wav";
-static const char kStep2[] = "player/pl_step2.wav";
-static const char kStep3[] = "player/pl_step3.wav";
-static const char kStep4[] = "player/pl_step4.wav";
+// ladders
+#define LADDER_DIST					24.0f	// a ladder is found this far in front of the player
+#define LADDER_TOP_HEIGHT			8.0f	// the top of the ladder is checked this far up
+#define LADDER_CLIMB_SPEED			200		// speed at the start of a climbing stroke
+#define LADDER_CLIMB_DECEL			15		// speed lost every frame of the stroke
+#define LADDER_SIDE_FRICTION		0.6f	// horizontal speed kept each frame while climbing up
+#define LADDER_DISMOUNT_SPEED		200.0f
+#define LADDER_DISMOUNT_LIFT		275.0f
+#define LADDER_STEP_FRAMES			22		// climbing frames between two climbing sounds
+#define LADDER_PUNCH				7.0f
 
-static const char kJump1[] = "player/pl_jump1.wav";
-static const char kJump2[] = "player/pl_jump2.wav";
-static const char kJumpLand[] = "player/pl_jumpland2.wav";
+// +use
+#define PLAYER_USE_RADIUS			64.0f
+#define PLAYER_USE_DOT				0.7f	// in front of the player, about 45 degrees each side
+#define PLAYER_USE_DELAY			0.5f
 
-static const char kWater1[] = "common/water1.wav";
-static const char kWater2[] = "common/water2.wav";
+// landing
+#define PLAYER_FALL_LAND_SPEED		-300.0f	// landing faster than this plays a sound
+#define PLAYER_FALL_DAMAGE_SPEED	-650.0f	// landing faster than this hurts
+#define PLAYER_FALL_DAMAGE			5.0f
+#define PLAYER_FALL_PUNCH_PITCH		-0.018f	// view punch per unit of fall speed
+#define PLAYER_FALL_PUNCH_ROLL		-0.009f
 
-static const char kOutWater[] = "common/outwater.wav";
-static const char kInH2O[] = "player/inh2o.wav";
-static const char kInLava[] = "player/inlava.wav";
-static const char kSlimeBurn[] = "player/slimbrn2.wav";
+// impulse commands (1 to 8 select that weapon)
+#define IMPULSE_NEXT_WEAPON			10
+#define IMPULSE_PREV_WEAPON			11
+#define IMPULSE_FLASHLIGHT			100
+#define IMPULSE_DRAW_LINES			200
+#define IMPULSE_SPRAY_LOGO			201
+#define IMPULSE_SPRAY_BLOOD			202
+#define IMPULSE_REMOVE_ENTITY		203
 
-static const char kGasp1[] = "player/gasp1.wav";
-static const char kGasp2[] = "player/gasp2.wav";
+#define REMOVE_ENTITY_DIST			1024.0f	// impulse 203 range
+#define REMOVE_ENTITY_HEIGHT		16.0f	// impulse 203 aims from this far above the origin
+#define SPRAY_DISTANCE				128.0f	// impulses 201 and 202 need a wall this close
 
-static const char kGLauncher1[] = "weapons/glauncher.wav";
-static const char kGLauncher2[] = "weapons/glauncher2.wav";
+// weapons
+#define PLAYER_START_WEAPONS		((1 << WEAPON_NONE) | (1 << WEAPON_CROWBAR) | (1 << WEAPON_GLOCK) | (1 << WEAPON_MP5))
+#define WEAPON_AMMO_DISPLAY			99.0f	// pev->currentammo of every weapon with a view model
 
-static const char kPain2[] = "player/pl_pain2.wav";	// ladder-climb gait
-static const char kPain4[] = "player/pl_pain4.wav";
-static const char kPain5[] = "player/pl_pain5.wav";
-static const char kPain6[] = "player/pl_pain6.wav";
-static const char kPain7[] = "player/pl_pain7.wav";
+// pev->weapon: the low byte is the weapon in use. While a new weapon is being
+// selected, the low byte is the new weapon, WEAPON_SELECTING is set and the third
+// byte is the weapon to go back to on +cancel. +attack takes the new weapon.
+#define WEAPON_ID_MASK				0x000000FF
+#define WEAPON_SELECTING			0x00000700
+#define WEAPON_PREVIOUS_MASK		0x00FF0000
+#define WEAPON_PENDING_MASK			0xFFFF0000
+#define WEAPON_PREVIOUS_SHIFT		16
 
-static const char kFallPain1[] = "player/pl_fallpain1.wav";	// hard-landing pain
-static const char kFallPain2[] = "player/pl_fallpain2.wav";
-static const char kFallPain3[] = "player/pl_fallpain3.wav";
+// view model animations
+#define CROWBAR_ATTACK1				1
+#define CROWBAR_ATTACK2				2
+#define GLOCK_SHOOT					0
+#define MP5_FIRE					0
+#define MP5_IDLE					1
+#define MP5_LAUNCH					2
 
-static const char kClassname[] = "classname";
-static const char kTargetname[] = "targetname";
-static const char kInfoPlayerCoop[] = "info_player_coop";
-static const char kInfoPlayerStart[] = "info_player_start";
-static const char kInfoPlayerStart2[] = "info_player_start2";
-static const char kInfoPlayerDeathmatch[] = "info_player_deathmatch";
+#define CROWBAR_RANGE				64.0f
+#define CROWBAR_AIM_SPEED			1000.0f
+#define CROWBAR_SPREAD				0.025f
+#define CROWBAR_DELAY				1.0f
+#define GLOCK_RANGE					2048.0f
+#define GLOCK_SPREAD				0.025f
+#define GLOCK_DELAY					0.3f
+#define MP5_RANGE					2048.0f
+#define MP5_SPREAD					0.01f
+#define MP5_DELAY					0.1f
+#define MP5_IDLE_DELAY				1.0f	// no idle animation this soon after firing
+#define MP5_IDLE_TIME				10.0f	// the idle animation plays every 10 to 15 seconds
+#define MP5_IDLE_TIME_RANDOM		5.0f
+#define MP5_GRENADE_SPEED			800.0f
+#define MP5_GRENADE_OFFSET			24.0f	// the grenade starts this far in front of the eyes
+#define MP5_GRENADE_DELAY			1.0f
 
-static const char kFunc_ladder[] = "func_ladder";
-static const char kFuncButton[] = "func_button";
-static const char kFuncRotButton[] = "func_rot_button";
-static const char kMomentaryRotButton[] = "momentary_rot_button";
-static const char kFuncDoor[] = "func_door";
-static const char kFuncDoorRotating[] = "func_door_rotating";
-static const char kMonsterScientist[] = "monster_scientist";
-static const char kMonsterBarney[] = "monster_barney";
+int g_LastSpawnEntIndex = 0;		// spawn spot searches start after this one
+int g_PlayerModelIndex = 0;			// models/doctor.mdl
 
-//=========================================================
-// "last spawn spot" round-robin cursor (DLL .data
-// The binary). The spawn selector advances this so that
-// successive players spawn at successive info_player spots.
-//=========================================================
-int g_LastSpawnEntIndex = 0;
-
-//=========================================================
-// Doctor player model index (DLL.data). Spawn
-// stamps it after SetModel; PostThink and the
-// engine ClientKill/Killed handlers restore pev->modelindex
-// from it so a respawning/killed player keeps the doctor model.
-// Shared with h_export.cpp (ClientKill).
-//=========================================================
-int g_PlayerModelIndex = 0;
-
-// Engine respawn handshake, defined in h_export.cpp.
-extern int ClientRespawn(entvars_t *pev);
-
-//=========================================================
-// IN_ATTACK2 / IN_ATTACK edge-debounce latches (DLL .data
-// The binary). PlayerImpulseCommands fires
-// the secondary (satchel / grenade) and primary attacks once
-// per press; these gate the repeat until the button releases.
-//=========================================================
+// the attack buttons act once per press
 static int g_fAttack2Pressed = 0;
 static int g_fAttackPressed = 0;
+
 int g_fDrawLines = 0;				// toggled by impulse 200
 
-static void PlayerWeaponEvent(entvars_t* pev, void* globals, int animValue);
-static void PlayerUseEntity(CBasePlayer* pPlayer, CBaseEntity* pEntity, int setToggleActivator);
+static void SendWeaponAnim(entvars_t *pev, int iAnim);
 
 //=========================================================
-// spawn-sentinel view-offset vector (DLL.data).
-// PreThink / PostThink run only
-// when pev->view_ofs (pev+328) is NOT equal to this vector; it
-// is the value the engine stores while the player slot is not
-// yet fully in the world.
+// PlayerUseEntity - pEntity->Use() with the player as the
+// activator (m_hActivator and gpGlobals->other)
 //=========================================================
-static float g_vecSpawnSentinel[3] = { 0.0f, 0.0f, 0.0f };
-
-static inline int ViewOfsIsSentinel(entvars_t* pev)
+static void PlayerUseEntity(CBasePlayer *pPlayer, CBaseEntity *pEntity)
 {
-	return PevVector(pev, PEV_PLR_VIEWOFS).x == g_vecSpawnSentinel[0]
-		&& PevVector(pev, PEV_PLR_VIEWOFS).y == g_vecSpawnSentinel[1]
-		&& PevVector(pev, PEV_PLR_VIEWOFS).z == g_vecSpawnSentinel[2];
-}
+	EOFFSET eoffsetPlayer = OFFSET(pPlayer->pev);
 
-static void PlayerUseEntity(CBasePlayer* pPlayer, CBaseEntity* pEntity, int setToggleActivator)
-{
-	if (!pPlayer || !pEntity)
-		return;
+	// alpha bug: a momentary_rot_button is no CBaseToggle, this writes past its end
+	((CBaseToggle *)pEntity)->m_hActivator = eoffsetPlayer;
 
-	int playerIndex = EngineIndexOfEdict(EdictFromEntvars(pPlayer->pev));
+	EOFFSET eoffsetSelf = gpGlobals->self;
+	EOFFSET eoffsetOther = gpGlobals->other;
 
-	if (setToggleActivator)
-		((CBaseToggle*)pEntity)->SetActivator(playerIndex);
-
-	void* globals = pPlayer->m_pGlobals;
-	if (!globals)
-	{
-		pEntity->Use(pPlayer);
-		return;
-	}
-
-	int oldSelf = *GlobalsInt(globals, GLOBALS_SELF_ENTINDEX);
-	int oldActivator = *GlobalsInt(globals, GLOBALS_OTHER_ENTINDEX);
-
-	*GlobalsInt(globals, GLOBALS_SELF_ENTINDEX) = EngineIndexOfEdict(EdictFromEntvars(pEntity->pev));
-	*GlobalsInt(globals, GLOBALS_OTHER_ENTINDEX) = playerIndex;
+	gpGlobals->self = OFFSET(pEntity->pev);
+	gpGlobals->other = eoffsetPlayer;
 
 	pEntity->Use(pPlayer);
 
-	*GlobalsInt(globals, GLOBALS_SELF_ENTINDEX) = oldSelf;
-	*GlobalsInt(globals, GLOBALS_OTHER_ENTINDEX) = oldActivator;
+	gpGlobals->self = eoffsetSelf;
+	gpGlobals->other = eoffsetOther;
 }
 
-//=========================================================
-// HL_COMPILE_TIME_ASSERT - object must fit the 452 byte block
-//=========================================================
-HL_COMPILE_TIME_ASSERT(sizeof(CBasePlayer) <= 452, CBasePlayer_private_data_size);
-
-//=========================================================
-// CBasePlayer ctor
-//=========================================================
 CBasePlayer::CBasePlayer()
-	: m_playerData()	// zero the trailing private-data filler (already memset(0) before placement-new; satisfies C26495)
 {
+	m_iSquadSize = 0;	// players are never in a squad
 }
 
 //=========================================================
-// AdvanceAnimation / move-anim integration
+// PlayerResetSequenceInfo - picks up the frame rate and
+// ground speed (per flInterval) of the player's sequence
 //=========================================================
-typedef struct PlayerStudioHeader
+static void PlayerResetSequenceInfo(CBasePlayer *pPlayer, float flInterval)
 {
-	unsigned char	pad0[92];
-	int				numseq;
-	int				seqindex;
-} PlayerStudioHeader;
+	entvars_t *pev = pPlayer->pev;
 
-static unsigned char* PlayerGetSequenceDesc(const PlayerStudioHeader* hdr, int sequence)
-{
-	unsigned char* base;
+	GetSequenceInfo(GET_MODEL_PTR(ENT(pev)), pev, &pPlayer->m_flPlayerFrameRate, &pPlayer->m_flPlayerGroundSpeed);
 
-	if (!hdr)
-		return NULL;
+	pev->animtime = gpGlobals->time;
+	pev->framerate = 1.0f;
 
-	if (sequence < 0 || sequence >= hdr->numseq)
-		return NULL;
-
-	base = (unsigned char *)hdr;
-	return base + hdr->seqindex + 104 * sequence;
-}
-
-static void PlayerGetSequenceInfo(void* pModel, entvars_t* pev, float* pFrameRate, float* pGroundSpeed)
-{
-	PlayerStudioHeader* hdr;
-	unsigned char* seq;
-	int sequence;
-	int numFrames;
-	float fps;
-	float moveX;
-	float moveY;
-	float moveZ;
-	float moveLength;
-
-	if (!pFrameRate || !pGroundSpeed)
-		return;
-
-	if (!pModel || !pev)
-		return;
-
-	hdr = (PlayerStudioHeader *)pModel;
-	sequence = PevInt(pev, PEV_SEQUENCE);
-	seq = PlayerGetSequenceDesc(hdr, sequence);
-	if (!seq)
-	{
-		*pFrameRate = 0.0f;
-		*pGroundSpeed = 0.0f;
-		return;
-	}
-
-	numFrames = *(int *)(seq + 48);
-	if (!numFrames)
-	{
-		*pFrameRate = 256.0f;
-		*pGroundSpeed = 0.0f;
-		return;
-	}
-
-	fps = *(float *)(seq + 32);
-	*pFrameRate = fps / (float)numFrames * 256.0f;
-
-	moveX = *(float *)(seq + 76);
-	moveY = *(float *)(seq + 80);
-	moveZ = *(float *)(seq + 84);
-	moveLength = (float)sqrt(moveX * moveX + moveY * moveY + moveZ * moveZ);
-	*pGroundSpeed = moveLength / (float)numFrames * fps;
-}
-
-static void PlayerResetSequenceInfo(CBasePlayer* pPlayer, float intervalScale)
-{
-	entvars_t* pev;
-	void* self;
-	float* pFrameRate;
-	float* pGroundSpeed;
-	void* pModel;
-
-	if (!pPlayer || !pPlayer->pev)
-		return;
-
-	pev = pPlayer->pev;
-	self = (void *)pPlayer;
-	pFrameRate = &SelfFloat(self, PLR_GAIT_FRAME);
-	pGroundSpeed = &SelfFloat(self, PLR_GAIT_YAW);
-	pModel = EngineGetModelPtr(EdictFromEntvars(pev));
-
-	PlayerGetSequenceInfo(pModel, pev, pFrameRate, pGroundSpeed);
-	PevFloat(pev, PEV_ANIMTIME) = GlobalsTime(pPlayer->m_pGlobals);
-	PevFloat(pev, PEV_FRAMERATE) = 1.0f;
-	SelfFloat(self, PLR_300) = 0.0f;
-	*pGroundSpeed = *pGroundSpeed * intervalScale;
-}
-
-static void PlayerStudioFrame(CBasePlayer* pPlayer, float interval)
-{
-	entvars_t* pev = pPlayer->pev;
-	void* self = (void*)pPlayer;
-	void* globals = pPlayer->m_pGlobals;
-	float now = GlobalsTime(globals);
-
-	// integrate yaw toward ideal
-	if ((PevInt(pev, PEV_ANIMTIME) & 0x7FFFFFFF) != 0)
-	{
-		PevFloat(pev, PEV_ANIMTIME + 4) =
-			(now - PevFloat(pev, PEV_ANIMTIME)) * PevFloat(pev, PEV_FRAMERATE)
-			* SelfFloat(self, PLR_GAIT_FRAME) + PevFloat(pev, PEV_ANIMTIME + 4);
-	}
-
-	PevFloat(pev, PEV_ANIMTIME) = now;
-
-	float& frame = PevFloat(pev, PEV_FRAME);
-	if (PevInt(pev, PEV_FRAME) > (int)0x80000000)
-		frame = (float)(int)(frame * 0.00390625f) * -256.0f + frame;
-	if (PevInt(pev, PEV_FRAME) >= 1132462080)
-		frame = (float)(int)(frame * 0.00390625f) * -256.0f + frame;
-
-	SelfInt(self, PLR_300) = 0;
-
-	float advance = PevFloat(pev, PEV_FRAMERATE) * SelfFloat(self, PLR_GAIT_FRAME) * interval
-		+ PevFloat(pev, PEV_FRAME);
-
-	if (SelfFloat(self, PLR_GAIT_FRAME) > 0.0f && advance > 256.0f)
-		SelfInt(self, PLR_300) = 1;
-	else if (advance <= 0.0f)
-		SelfInt(self, PLR_300) = 1;
+	pPlayer->m_fPlayerSequenceFinished = FALSE;
+	pPlayer->m_flPlayerGroundSpeed = pPlayer->m_flPlayerGroundSpeed * flInterval;
 }
 
 //=========================================================
-// SetAnimation (vtable slot 10)
-//   maps a player activity to a sequence and resets frame.
+// PlayerAdvanceAnimation - advances the frame and flags the
+// end of the sequence when it will be reached within
+// flInterval
+//=========================================================
+static void PlayerAdvanceAnimation(CBasePlayer *pPlayer, float flInterval)
+{
+	entvars_t *pev = pPlayer->pev;
+	float flTime = gpGlobals->time;
+
+	if (pev->animtime != 0.0f)
+		pev->frame = (flTime - pev->animtime) * pev->framerate * pPlayer->m_flPlayerFrameRate + pev->frame;
+
+	pev->animtime = flTime;
+
+	// keep the frame within 0..256
+	if (pev->frame != 0.0f)
+		pev->frame -= (int)(pev->frame / 256.0f) * 256.0f;
+
+	if (pev->frame >= 256.0f)
+		pev->frame -= (int)(pev->frame / 256.0f) * 256.0f;
+
+	pPlayer->m_fPlayerSequenceFinished = FALSE;
+
+	float flNextFrame = pev->framerate * pPlayer->m_flPlayerFrameRate * flInterval + pev->frame;
+
+	if (pPlayer->m_flPlayerFrameRate > 0.0f && flNextFrame > 256.0f)
+		pPlayer->m_fPlayerSequenceFinished = TRUE;
+	else if (flNextFrame <= 0.0f)
+		pPlayer->m_fPlayerSequenceFinished = TRUE;
+}
+
+//=========================================================
+// SetAnimation - plays the sequence for a player animation
 //=========================================================
 int CBasePlayer::SetAnimation(int playerAnim)
 {
-	entvars_t* pev = this->pev;
-	void* self = (void*)this;
-	int seq;
+	entvars_t *pev = this->pev;
+	int iSequence;
 
 	switch (playerAnim)
 	{
-	case 1:
-		seq = 7;
+	case PLAYER_IDLE:
+		iSequence = PLAYER_SEQ_IDLE;
 		break;
-	case 4:
-		seq = 0;
+	case PLAYER_WALK:
+		iSequence = PLAYER_SEQ_RUN;
 		break;
-	case 30:
-		if ((PevInt(pev, PEV_VELOCITY) & 0x7FFFFFFF) != 0
-			|| (PevInt(pev, PEV_VELOCITY + 4) & 0x7FFFFFFF) != 0)
-			seq = 2;
+	case PLAYER_ATTACK1:
+		if (pev->velocity.x != 0.0f || pev->velocity.y != 0.0f)
+			iSequence = PLAYER_SEQ_ATTACK_MOVE;
 		else
-			seq = 3;
+			iSequence = PLAYER_SEQ_ATTACK;
 		break;
-	case 35:
-		seq = 6;
+	case PLAYER_DIE:
+		iSequence = PLAYER_SEQ_DIE;
 		break;
-	case 40:
-		seq = 5;
+	case PLAYER_JUMP:
+		iSequence = PLAYER_SEQ_JUMP;
 		break;
 	default:
 		return playerAnim - 1;
 	}
 
-	if (PevInt(pev, PEV_SEQUENCE) != seq)
+	if (pev->sequence != iSequence)
 	{
-		PevInt(pev, PEV_SEQUENCE) = seq;
-		PevFloat(pev, PEV_FRAME) = 0.0f;
-		PlayerResetSequenceInfo(this, 0.1f);
-		if (seq > 6)
+		pev->sequence = iSequence;
+		pev->frame = 0.0f;
+		PlayerResetSequenceInfo(this, PLAYER_ANIM_INTERVAL);
+
+		// the idle pose does not animate
+		if (iSequence > PLAYER_SEQ_DIE)
 		{
-			SelfInt(self, PLR_GAIT_FRAME) = 0;
-			SelfInt(self, PLR_GAIT_YAW) = 0;
+			m_flPlayerFrameRate = 0.0f;
+			m_flPlayerGroundSpeed = 0.0f;
 		}
 	}
-	return seq;
+	return iSequence;
 }
 
-void CBasePlayer::SetActivity(int playerAnim)
+void CBasePlayer::SetActivity(int activity)
 {
-	SetAnimation(playerAnim);
+	SetAnimation(activity);
 }
 
-//=========================================================
-// PlayerDeathSound
-//=========================================================
-static void PlayerDeathSound(entvars_t* pev)
+static void PlayerDeathSound(entvars_t *pev)
 {
-	const char* sound = NULL;
+	const char *pszSound = NULL;
 
-	switch (RandomLong(1, 5))
+	switch (RANDOM_LONG(1, 5))
 	{
 	case 1:
-		sound = kPain5;
+		pszSound = "player/pl_pain5.wav";
 		break;
 	case 2:
-		sound = kPain6;
+		pszSound = "player/pl_pain6.wav";
 		break;
 	case 3:
-		sound = kPain7;
+		pszSound = "player/pl_pain7.wav";
 		break;
 	}
 
-	if (sound)
-		EngineEmitSound(EdictFromEntvars(pev), 2, sound, PLR_VOL, PLR_ATTN);
+	if (pszSound)
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSound, VOL_NORM, ATTN_NORM);
 }
 
 //=========================================================
-// Death (vtable slot 14)
+// Death
 //=========================================================
-void CBasePlayer::Death(int gibType)
+void CBasePlayer::Death(int iDeathType)
 {
-	HL_UNUSED(gibType);
+	entvars_t *pev = this->pev;
 
-	entvars_t* pev = this->pev;
-	if (!pev)
-		return;
+	pev->modelindex = (float)(unsigned int)g_PlayerModelIndex;
+	pev->weaponmodel = 0;
+	pev->view_ofs = VEC_DEAD_VIEW;
 
-	PevFloat(pev, PEV_MODELINDEX) = (float)(unsigned int)g_PlayerModelIndex;
-	PevInt(pev, PLR_VIEWMODEL_STR) = 0;
-	VecSet(VecPtr(PevVector(pev, PEV_PLR_VIEWOFS)), 0.0f, 0.0f, -8.0f);	// VEC_DEAD_VIEW z = -8.0 (0xC1000000), binary
+	pev->deadflag = DEAD_DYING;
+	pev->solid = SOLID_NOT;
+	pev->movetype = MOVETYPE_TOSS;
+	pev->flags = (float)((int)pev->flags & ~FL_ONGROUND);
 
-	PevInt(pev, PEV_DEADFLAG) = 0x3F800000;
-	PevInt(pev, PEV_SOLID) = 0;
-	PevFloat(pev, PEV_MOVETYPE) = 6.0f;
-	PevFloat(pev, PEV_FLAGS) = (float)(((int)PevFloat(pev, PEV_FLAGS)) & ~FL_ONGROUND);
+	if (pev->velocity.z < 10.0f)
+		pev->velocity.z += RANDOM_FLOAT(0.0f, PLAYER_DEATH_TOSS);
 
-	if (PevInt(pev, PEV_VELOCITY + 8) < 0x41200000)
-		PevFloat(pev, PEV_VELOCITY + 8) += RandomFloat(0.0f, 300.0f);
-
-	if ((unsigned int)PevInt(pev, PEV_HEALTH) <= 0xC2200000u)
+	if (pev->health >= PLAYER_GIB_HEALTH)
 	{
 		PlayerDeathSound(pev);
-		PevInt(pev, PEV_ANGLES) = 0;
-		PevInt(pev, PEV_ANGLES + 8) = 0;
-		SetAnimation(35);
+		pev->angles.x = 0.0f;
+		pev->angles.z = 0.0f;
+		SetAnimation(PLAYER_DIE);
 		SetThink(&CBasePlayer::DeadThink);
-		PevFloat(pev, PEV_NEXTTHINK) = 0.1f;
+		pev->nextthink = 0.1f;
 	}
 }
 
 //=========================================================
-// SwitchWeaponModel
+// SwitchWeaponModel - view model of the weapon in use
 //=========================================================
 void CBasePlayer::SwitchWeaponModel()
 {
-	entvars_t* pev = this->pev;
-	switch (PevInt(pev, PLR_VIEWMODEL))
+	entvars_t *pev = this->pev;
+
+	switch (pev->weapon)
 	{
-	case 1:
-		PevInt(pev, PLR_VIEWMODEL_STR) = EngineAllocString("models/v_crowbar.mdl");
-		PevFloat(pev, PLR_VIEWMODEL_FRAME) = 99.0f;	// 1120272384
+	case WEAPON_CROWBAR:
+		pev->weaponmodel = ALLOC_STRING("models/v_crowbar.mdl");
+		pev->currentammo = WEAPON_AMMO_DISPLAY;
 		break;
-	case 2:
-		PevInt(pev, PLR_VIEWMODEL_STR) = EngineAllocString("models/v_glock.mdl");
-		PevFloat(pev, PLR_VIEWMODEL_FRAME) = 99.0f;	// 1120272384
+	case WEAPON_GLOCK:
+		pev->weaponmodel = ALLOC_STRING("models/v_glock.mdl");
+		pev->currentammo = WEAPON_AMMO_DISPLAY;
 		break;
-	case 4:
-		PevInt(pev, PLR_VIEWMODEL_STR) = EngineAllocString("models/v_mp5.mdl");
-		PevFloat(pev, PLR_VIEWMODEL_FRAME) = 99.0f;	// 1120272384
+	case WEAPON_MP5:
+		pev->weaponmodel = ALLOC_STRING("models/v_mp5.mdl");
+		pev->currentammo = WEAPON_AMMO_DISPLAY;
 		break;
 	default:
-		PevInt(pev, PLR_VIEWMODEL_STR) = 0;
-		PevInt(pev, PLR_VIEWMODEL_FRAME) = 0;
+		pev->weaponmodel = 0;
+		pev->currentammo = 0.0f;
 		break;
 	}
 }
 
 //=========================================================
-// WaterMove (vtable slot 19)
-//   handle jumping/wading out of and dropping into water.
+// Jump - jumps off the ground, or swims up in deep water
 //=========================================================
-void CBasePlayer::WaterMove()
+void CBasePlayer::Jump()
 {
-	entvars_t* pev = this->pev;
-	void* self = (void*)this;
-	int flags = (int)PevFloat(pev, PEV_FLAGS);
+	entvars_t *pev = this->pev;
+	int iFlags = (int)pev->flags;
 
-	if ((flags & FL_WATERJUMP) != 0)		// FL_WATERJUMP set: skip
+	if (iFlags & FL_WATERJUMP)
 		return;
 
-	if (PevInt(pev, PEV_WATERLEVEL) < 0x40000000)	// waterlevel < 2.0f
+	if (pev->waterlevel < WATERLEVEL_WAIST)
 	{
-		// FL_ONGROUND + FL_ONGROUND_HINT -> jump out of water
-		if ((flags & FL_ONGROUND) != 0 && (flags & FL_ONGROUND_HINT) != 0)
+		// don't pogo stick
+		if ((iFlags & FL_ONGROUND) && (iFlags & FL_JUMPRELEASED))
 		{
-			PevFloat(pev, PEV_FLAGS) = (float)(flags & ~FL_ONGROUND_HINT);
-			int f2 = (int)PevFloat(pev, PEV_FLAGS);
-			PevFloat(pev, PEV_FLAGS) = (float)(f2 & ~FL_ONGROUND);
+			pev->flags = (float)(iFlags & ~FL_JUMPRELEASED);
+			pev->flags = (float)((int)pev->flags & ~FL_ONGROUND);	// don't stairwalk
 
-			SetAnimation(40);
-			PevInt(pev, PEV_BUTTON) &= ~2u;
+			SetAnimation(PLAYER_JUMP);
+			pev->button &= ~IN_JUMP;
 
-			if (RandomFloat(0.0f, 1.0f) < 0.5f)
-				EngineEmitSound(EdictFromEntvars(pev), 4, kJump1, PLR_VOL, PLR_ATTN);
+			if (RANDOM_FLOAT(0.0f, 1.0f) < 0.5f)
+				EMIT_SOUND(ENT(pev), CHAN_BODY, "player/pl_jump1.wav", VOL_NORM, ATTN_NORM);
 			else
-				EngineEmitSound(EdictFromEntvars(pev), 4, kJump2, PLR_VOL, PLR_ATTN);
+				EMIT_SOUND(ENT(pev), CHAN_BODY, "player/pl_jump2.wav", VOL_NORM, ATTN_NORM);
 
-			PevFloat(pev, PEV_VELOCITY + 8) += 270.0f;	// velocity.z
+			pev->velocity.z += PLAYER_JUMP_SPEED;
 		}
 	}
-	else	// fully submerged: drop velocity by content + entry splash
+	else
 	{
-		int watertype = (int)PevFloat(pev, PEV_WATERTYPE);
-		float depthVel;
-		if (watertype == -4)
-			depthVel = 80.0f;	// 0x42a00000
-		else if (watertype == -3)
-			depthVel = 100.0f;	// 0x42c80000
+		int iWaterType = (int)pev->watertype;
+		float flSpeed;
+
+		if (iWaterType == CONTENTS_SLIME)
+			flSpeed = PLAYER_SWIM_SPEED_SLIME;
+		else if (iWaterType == CONTENTS_WATER)
+			flSpeed = PLAYER_SWIM_SPEED_WATER;
 		else
-			depthVel = 50.0f;	// 0x42480000
+			flSpeed = PLAYER_SWIM_SPEED_OTHER;
 
-		PevFloat(pev, PEV_VELOCITY + 8) = depthVel;	// velocity.z
+		pev->velocity.z = flSpeed;
 
-		float now = GlobalsTime(this->m_pGlobals);
-		if (SelfFloat(self, PLR_WATER_SOUND_TIME) < now)
+		// swimming sound
+		float flTime = gpGlobals->time;
+		if (m_flSwimSoundTime < flTime)
 		{
-			SelfFloat(self, PLR_WATER_SOUND_TIME) = now + 1.0f;
-			if (RandomFloat(0.0f, 1.0f) >= 0.5f)
-				EngineEmitSound(EdictFromEntvars(pev), 4, kWater2, PLR_VOL, PLR_ATTN);
+			m_flSwimSoundTime = flTime + 1.0f;
+			if (RANDOM_FLOAT(0.0f, 1.0f) >= 0.5f)
+				EMIT_SOUND(ENT(pev), CHAN_BODY, "common/water2.wav", VOL_NORM, ATTN_NORM);
 			else
-				EngineEmitSound(EdictFromEntvars(pev), 4, kWater1, PLR_VOL, PLR_ATTN);
+				EMIT_SOUND(ENT(pev), CHAN_BODY, "common/water1.wav", VOL_NORM, ATTN_NORM);
 		}
 	}
 }
 
 //=========================================================
-// UpdateWaterLevel / duck box swap (vtable slot 20)
-//   IN_DUCK toggles the hull between standing and crouched.
-//   Standing back up is gated on a WalkMove (engine slot 0x60)
-//   test: if blocked, the player stays crouched.
+// Duck - IN_DUCK crouches; standing up again needs room
+// for the standing hull
 //=========================================================
-void CBasePlayer::UpdateWaterLevel()
+void CBasePlayer::Duck()
 {
-	entvars_t* pev = this->pev;
+	entvars_t *pev = this->pev;
 
-	if ((PevInt(pev, PEV_BUTTON) & 4) == 0)		// not crouching -> try to stand up
+	if (!(pev->button & IN_DUCK))
 	{
-		float savedOrigin[3];
-		VecCopy(savedOrigin, VecPtr(PevVector(pev, PEV_ORIGIN)));
+		Vector vecSavedOrigin = pev->origin;
 
-		float standMins[3];
-		float standMaxs[3];
-		VecSet(standMaxs, 16.0f, 16.0f, 36.0f);
-		VecSet(standMins, -16.0f, -16.0f, -36.0f);
-		EngineSetSize(EdictFromEntvars(pev), standMins, standMaxs);
+		SET_SIZE(ENT(pev), VEC_HULL_MIN, VEC_HULL_MAX);
 
-		PevVector(pev, PEV_ORIGIN).z += 18.0f;
-		PevFloat(pev, PEV_FLAGS) = (float)((int)PevFloat(pev, PEV_FLAGS) | 0x400);	// : OR 0x400 before WalkMove
+		// keep the feet in place
+		pev->origin.z += VEC_HULL_MAX.z - VEC_DUCK_HULL_MAX.z;
+		pev->flags = (float)((int)pev->flags | FL_PARTIALGROUND);
 
-		// gate the stand-up on whether the player fits there now
-		if (EngineWalkMove(EdictFromEntvars(pev), 0.0f, 0.0f) != 0.0f)
+		// a zero move tells whether the standing hull fits here
+		if (WALK_MOVE(ENT(pev), 0.0f, 0.0f) != 0.0f)
 		{
-			// clear, finish standing: un-duck and raise the eye
-			PevFloat(pev, PEV_FLAGS) = (float)((int)PevFloat(pev, PEV_FLAGS) & ~FL_DUCKING);
-			PevVector(pev, PEV_PLR_VIEWOFS).x = 0.0f;
-			PevVector(pev, PEV_PLR_VIEWOFS).y = 0.0f;
-			PevVector(pev, PEV_PLR_VIEWOFS).z = 28.0f;	// 0x41e00000
+			pev->flags = (float)((int)pev->flags & ~FL_DUCKING);
+			pev->view_ofs = VEC_VIEW;
 		}
 		else
 		{
-			// blocked: shrink back to the crouch hull and restore origin
-			float crouchMins[3];
-			float crouchMaxs[3];
-			VecSet(crouchMaxs, 16.0f, 16.0f, 18.0f);
-			VecSet(crouchMins, -16.0f, -16.0f, -18.0f);
-			EngineSetSize(EdictFromEntvars(pev), crouchMins, crouchMaxs);
-			VecCopy(VecPtr(PevVector(pev, PEV_ORIGIN)), savedOrigin);
+			SET_SIZE(ENT(pev), VEC_DUCK_HULL_MIN, VEC_DUCK_HULL_MAX);
+			pev->origin = vecSavedOrigin;
 		}
 	}
-	else	// IN_DUCK held -> crouch
+	else
 	{
-		int flags = (int)PevFloat(pev, PEV_FLAGS);
-		if ((flags & FL_DUCKING) == 0)				// not already ducked
+		int iFlags = (int)pev->flags;
+		if (!(iFlags & FL_DUCKING))
 		{
-			float crouchMins[3];
-			float crouchMaxs[3];
-			VecSet(crouchMaxs, 16.0f, 16.0f, 18.0f);
-			VecSet(crouchMins, -16.0f, -16.0f, -18.0f);
-			EngineSetSize(EdictFromEntvars(pev), crouchMins, crouchMaxs);
+			SET_SIZE(ENT(pev), VEC_DUCK_HULL_MIN, VEC_DUCK_HULL_MAX);
 
-			PevVector(pev, PEV_PLR_VIEWOFS).x = 0.0f;
-			PevVector(pev, PEV_PLR_VIEWOFS).y = 0.0f;
-			PevVector(pev, PEV_PLR_VIEWOFS).z = 12.0f;	// 0x41400000
-			PevFloat(pev, PEV_FLAGS) = (float)(flags | FL_DUCKING);
+			pev->view_ofs = VEC_DUCK_VIEW;
+			pev->flags = (float)(iFlags | FL_DUCKING);
 		}
 	}
 }
 
 //=========================================================
-// SelectSpawnPoint
-//   round-robins through the info_player_* entities, picking
-//   the next one for this player. Returns the spawn-spot edict.
+// SelectSpawnPoint - the next info_player_coop (coop), a
+// random info_player_deathmatch (deathmatch), else
+// info_player_start
 //=========================================================
-static edict_t* SelectSpawnPoint(void* globals)
+static edict_t *SelectSpawnPoint()
 {
-	// globals+0x90 / +0x94 / +0x9c are the deathmatch / coop /
-	// start2 mode flags the engine stamps onto the worldspawn
-	// globals block before PutClientInServer.
-	int deathmatchFlag = *(int*)((unsigned char*)globals + 144) & 0x7FFFFFFF;	// +0x90 (a1[36])
-	int coopFlag = *(int*)((unsigned char*)globals + 148) & 0x7FFFFFFF;	// +0x94 (a1[37])
-	int start2Flag = *(int*)((unsigned char*)globals + 156) & 0x7FFFFFFF;	// +0x9c (a1[39])
+	edict_t *pSpot = NULL;
 
-	edict_t* spot = NULL;
-
-	if (coopFlag != 0)
+	if (gpGlobals->coop != 0.0f)
 	{
-		// coop: prefer info_player_coop, then info_player_start
-		edict_t* start = EnginePEntityOfEntIndex(g_LastSpawnEntIndex);
-		spot = EngineFindEntityByString(start, kClassname, kInfoPlayerCoop);
-		if (spot && EngineIndexOfEdict(spot))
-			goto found;
+		pSpot = FIND_ENTITY_BY_STRING(ENT(g_LastSpawnEntIndex), "classname", "info_player_coop");
+		if (!FNullEnt(pSpot))
+			goto ReturnSpot;
 
-		start = EnginePEntityOfEntIndex(g_LastSpawnEntIndex);
-		spot = EngineFindEntityByString(start, kClassname, kInfoPlayerStart);
-		if (spot && EngineIndexOfEdict(spot))
-			goto found;
+		pSpot = FIND_ENTITY_BY_STRING(ENT(g_LastSpawnEntIndex), "classname", "info_player_start");
+		if (!FNullEnt(pSpot))
+			goto ReturnSpot;
 	}
-	else if (deathmatchFlag != 0)
+	else if (gpGlobals->deathmatch != 0.0f)
 	{
-		// deathmatch: walk a random number of info_player_deathmatch spots
-		int skip = (int)((double)(rand() & 0x7FFF) * 0.00076296274);
-		int tries = 25;
-		while (tries-- != 0)
+		// alpha bug: every search starts at the last spot, so they all find the same one
+		int iSkip = (rand() & RAND_MAX) * DM_SPAWN_TRIES / RAND_MAX;
+		int iTries = DM_SPAWN_TRIES;
+
+		while (iTries-- != 0)
 		{
-			edict_t* start = EnginePEntityOfEntIndex(g_LastSpawnEntIndex);
-			spot = EngineFindEntityByString(start, kClassname, kInfoPlayerDeathmatch);
-			if (spot && EngineIndexOfEdict(spot))
+			pSpot = FIND_ENTITY_BY_STRING(ENT(g_LastSpawnEntIndex), "classname", "info_player_deathmatch");
+			if (!FNullEnt(pSpot))
 			{
-				if (skip-- <= 0)
-					goto found;
+				if (iSkip-- <= 0)
+					goto ReturnSpot;
 			}
 		}
 	}
 
-	// single-player / fallback: info_player_start2 then info_player_start
-	if (start2Flag == 0
-		|| (spot = EngineFindEntityByString(NULL, kClassname, kInfoPlayerStart2)) == NULL
-		|| EngineIndexOfEdict(spot) == 0)
+	if (gpGlobals->serverflags != 0.0f)
 	{
-		spot = EngineFindEntityByString(NULL, kClassname, kInfoPlayerStart);
-		if (!spot || EngineIndexOfEdict(spot) == 0)
-			EngineAlertMessage(3, "PutClientInServer: no info_player_start on level\n", NULL);
+		pSpot = FIND_ENTITY_BY_STRING(NULL, "classname", "info_player_start2");
+		if (!FNullEnt(pSpot))
+			goto ReturnSpot;
 	}
 
-found:
-	g_LastSpawnEntIndex = EngineIndexOfEdict(spot);
-	return spot;
+	pSpot = FIND_ENTITY_BY_STRING(NULL, "classname", "info_player_start");
+	if (FNullEnt(pSpot))
+		ALERT(at_error, "PutClientInServer: no info_player_start on level\n", NULL);
+
+ReturnSpot:
+	g_LastSpawnEntIndex = OFFSET(pSpot);
+	return pSpot;
 }
 
 //=========================================================
-// Spawn (vtable slot 0)
+// Spawn
 //=========================================================
 void CBasePlayer::Spawn()
 {
-	entvars_t* pev = this->pev;
-	void* self = (void*)this;
-	void* globals = this->m_pGlobals;
+	entvars_t *pev = this->pev;
 
-	// landmark/transition parms left for us by the engine (globals+176)
-	void* parms = *(void**)((unsigned char*)globals + 176);
+	// set by the engine after a level change
+	SPAWNPARMS *pSavedParms = (SPAWNPARMS *)gpGlobals->pSpawnParms;
 
-	PevInt(pev, PEV_CLASSNAME) = EngineAllocString(kPlayer);
-	PevFloat(pev, PEV_HEALTH) = 100.0f;			// 1120403456
-	PevFloat(pev, PEV_TAKEDAMAGE) = 2.0f;
-	PevFloat(pev, PEV_SOLID) = 3.0f;
-	PevFloat(pev, PEV_MOVETYPE) = 3.0f;
-	PevFloat(pev, PEV_MAXSPEED) = 100.0f;		// 1120403456
-	PevFloat(pev, PEV_FLAGS) = 8.0f;			// 1090519040 (FL_CLIENT)
-	PevFloat(pev, PEV_AIRTIME) = GlobalsTime(globals) + 12.0f;
-	PevFloat(pev, PEV_DMGTAKE) = 2.0f;
-	PevInt(pev, PEV_STUCK) = 0;
-	PevInt(pev, PEV_SEQUENCE) = 9;
-	PevInt(pev, PEV_DEADFLAG) = 0;
+	pev->classname = ALLOC_STRING("player");
+	pev->health = PLAYER_MAX_HEALTH;
+	pev->takedamage = DAMAGE_AIM;
+	pev->solid = SOLID_SLIDEBOX;
+	pev->movetype = MOVETYPE_WALK;
+	pev->max_health = PLAYER_MAX_HEALTH;
+	pev->flags = FL_CLIENT;
+	pev->air_finished = gpGlobals->time + PLAYER_AIR_TIME;
+	pev->dmg = DROWN_DAMAGE;
+	pev->effects = 0;
+	pev->sequence = PLAYER_SEQ_SPAWN;
+	pev->deadflag = DEAD_NO;
 
-	// restore saved spawn parms
+	// restore the player state from the spawn parms
 	{
-		void* p2 = *(void**)((unsigned char*)globals + 176);
-		if (!p2)
+		SPAWNPARMS *pParms = (SPAWNPARMS *)gpGlobals->pSpawnParms;
+		if (!pParms)
 		{
-			SetNewParms((client_t*)globals);
-			p2 = *(void**)((unsigned char*)globals + 176);
+			SetNewParms(gpGlobals);
+			pParms = (SPAWNPARMS *)gpGlobals->pSpawnParms;
 		}
-		if (p2)
+
+		if (pParms)
 		{
-			float* p = (float*)p2;
-			int* pi = (int*)p2;
-			PevInt(pev, PEV_ITEMS_HIGH) = (int)p[0];	// pev+308
-			PevInt(pev, PEV_HEALTH) = pi[3];			// pev+264
-			PevInt(pev, 404) = pi[4];
-			PevInt(pev, 292) = (int)p[5];
-			PevInt(pev, 296) = (int)p[6];
-			PevInt(pev, 300) = (int)p[7];
-			PevInt(pev, 304) = (int)p[8];
-			PevInt(pev, PLR_VIEWMODEL) = (int)p[9];		// pev+272 (active weapon)
-			PevFloat(pev, 400) = p[10] * 0.01f;
-			if ((((unsigned char*)p2)[45] & 0x40) != 0)
+			pev->items = (int)pParms->items;
+			pev->health = pParms->health;
+			pev->armorvalue = pParms->armorvalue;
+			pev->ammo_1 = (int)pParms->ammo[0];
+			pev->ammo_2 = (int)pParms->ammo[1];
+			pev->ammo_3 = (int)pParms->ammo[2];
+			pev->ammo_4 = (int)pParms->ammo[3];
+			pev->weapon = (int)pParms->weapon;
+			pev->armortype = pParms->armortype * 0.01f;
+
+			if (pParms->iFlags & FL_DUCKING)
 			{
-				int fl = (int)PevFloat(pev, PEV_FLAGS) | FL_DUCKING;
-				PevFloat(pev, PEV_FLAGS) = (float)fl;
-				float mins[3];
-				float maxs[3];
-				VecSet(maxs, 16.0f, 16.0f, 18.0f);
-				VecSet(mins, -16.0f, -16.0f, -18.0f);
-				EngineSetSize(EdictFromEntvars(pev), mins, maxs);
+				pev->flags = (float)((int)pev->flags | FL_DUCKING);
+				SET_SIZE(ENT(pev), VEC_DUCK_HULL_MIN, VEC_DUCK_HULL_MAX);
 			}
 		}
 	}
 
-	// player-object scratch (object byte offsets, not pev)
-	SelfInt(self, PLR_FLASH_TIME) = 0;
-	SelfInt(self, PLR_NEXT_FOOTSTEP) = 0;
-	*((unsigned char*)self + PLR_FOV) = 70;
-	SelfInt(self, PLR_VIEWMODEL) = *(int*)((unsigned char*)globals + 124);	// next-idle time
-	SelfInt(self, PLR_FREEZE_TIME) = 0;
+	m_flFlashLightTime = 0.0f;
+	m_flTimeStepSound = 0.0f;
+	m_bBloodColor = BLOOD_COLOR_RED;
+	m_flAttackFinished = gpGlobals->time;
+	m_flPauseTime = 0.0f;
 
-	// place at spawn point (the binary selects the spot; the
-	// landmark path copies the relative transition offset)
-	if (!parms || *(int*)((unsigned char*)parms + 48) == 0)
+	if (!pSavedParms || !pSavedParms->fLandmark)
 	{
-		edict_t* spot = SelectSpawnPoint(globals);
-		PevInt(pev, PLR_VIEWMODEL) = 2;
-		entvars_t* spotVars = spot ? EngineGetVarsOfEnt(spot) : NULL;
-		if (spotVars)
+		edict_t *pSpot = SelectSpawnPoint();
+		pev->weapon = WEAPON_GLOCK;
+
+		if (pSpot)
 		{
-			PevVector(pev, PEV_ORIGIN).x = PevVector(spotVars, PEV_ORIGIN).x;
-			PevVector(pev, PEV_ORIGIN).y = PevVector(spotVars, PEV_ORIGIN).y;
-			PevVector(pev, PEV_ORIGIN).z = PevVector(spotVars, PEV_ORIGIN).z + 1.0f;
-			PevVector(pev, PEV_ANGLES).x = PevVector(spotVars, PEV_ANGLES).x;
-			PevVector(pev, PEV_ANGLES).y = PevVector(spotVars, PEV_ANGLES).y;
-			PevVector(pev, PEV_ANGLES).z = PevVector(spotVars, PEV_ANGLES).z;
+			entvars_t *pevSpot = VARS(pSpot);
+			pev->origin = pevSpot->origin;
+			pev->origin.z += 1.0f;
+			pev->angles = pevSpot->angles;
 		}
 	}
 	else
 	{
-		// landmark transition: find the named landmark and place
-		// relative to it, copying the saved view angles. The landmark
-		// name is stored at parms+52.
-		const char* landmarkName = (const char*)((unsigned char*)parms + 52);
-		edict_t* landmark = EngineFindEntityByString(NULL, kTargetname, landmarkName);
-		if (!landmark || EngineIndexOfEdict(landmark) == 0)
+		// level change: keep the position relative to the landmark
+		const char *pszLandmark = pSavedParms->szLandmarkName;
+		edict_t *pentLandmark = FIND_ENTITY_BY_STRING(NULL, "targetname", pszLandmark);
+
+		if (FNullEnt(pentLandmark))
 		{
-			EngineAlertMessage(1, "No Landmark:%s\n", landmarkName);
-			edict_t* spot = SelectSpawnPoint(globals);
-			entvars_t* spotVars = spot ? EngineGetVarsOfEnt(spot) : NULL;
-			if (spotVars)
+			ALERT(at_console, "No Landmark:%s\n", pszLandmark);
+
+			edict_t *pSpot = SelectSpawnPoint();
+			if (pSpot)
 			{
-				PevVector(pev, PEV_ORIGIN).x = PevVector(spotVars, PEV_ORIGIN).x;
-				PevVector(pev, PEV_ORIGIN).y = PevVector(spotVars, PEV_ORIGIN).y;
-				PevVector(pev, PEV_ORIGIN).z = PevVector(spotVars, PEV_ORIGIN).z + 1.0f;
-				PevVector(pev, PEV_ANGLES).x = PevVector(spotVars, PEV_ANGLES).x;
-				PevVector(pev, PEV_ANGLES).y = PevVector(spotVars, PEV_ANGLES).y;
-				PevVector(pev, PEV_ANGLES).z = PevVector(spotVars, PEV_ANGLES).z;
+				entvars_t *pevSpot = VARS(pSpot);
+				pev->origin = pevSpot->origin;
+				pev->origin.z += 1.0f;
+				pev->angles = pevSpot->angles;
 			}
 		}
 		else
 		{
-			entvars_t* lmVars = EngineGetVarsOfEnt(landmark);
-			float* rel = (float*)((unsigned char*)parms + 72);	// saved relative offset
-			PevVector(pev, PEV_ORIGIN).x = rel[0] + PevVector(lmVars, PEV_ORIGIN).x;
-			PevVector(pev, PEV_ORIGIN).y = rel[1] + PevVector(lmVars, PEV_ORIGIN).y;
-			PevVector(pev, PEV_ORIGIN).z = rel[2] + PevVector(lmVars, PEV_ORIGIN).z;
-			// active weapon id saved at parms+36 ( (int)*(float*)(v4+36) )
-			PevInt(pev, PLR_VIEWMODEL) = (int)*(float*)((unsigned char*)parms + 36);
-			// saved view angles (parms+96) -> pev->angles
-			float* savedAng = (float*)((unsigned char*)parms + 96);
-			PevVector(pev, PEV_ANGLES).x = savedAng[0];
-			PevVector(pev, PEV_ANGLES).y = savedAng[1];
-			PevVector(pev, PEV_ANGLES).z = savedAng[2];
-			// saved v_angle (parms+108) -> pev->v_angle (pev+352)
-			float* savedView = (float*)((unsigned char*)parms + 108);
-			PevVector(pev, PEV_THINK_ANGLES).x = savedView[0];
-			PevVector(pev, PEV_THINK_ANGLES).y = savedView[1];
-			PevVector(pev, PEV_THINK_ANGLES).z = savedView[2];
-			PevFloat(pev, PEV_THINK_ANGLES) = -PevFloat(pev, PEV_THINK_ANGLES);	// negate pitch
+			entvars_t *pevLandmark = VARS(pentLandmark);
+
+			pev->origin = pSavedParms->vecLandmarkOffset + pevLandmark->origin;
+			pev->weapon = (int)pSavedParms->weapon;
+			pev->angles = pSavedParms->angles;
+			pev->v_angle = pSavedParms->v_angle;
+			pev->v_angle.x = -pev->v_angle.x;
 		}
 	}
 
-	PevFloat(pev, PLR_FALL_VELOCITY) = 1.0f;		// 1065353216
+	pev->fixangle = TRUE;
 
-	free(parms);
-	*(void**)((unsigned char*)globals + 176) = NULL;
+	free(pSavedParms);
+	gpGlobals->pSpawnParms = NULL;
 
-	EngineSaveSpawnParms(EdictFromEntvars(pev));
-	EngineSetModel(EdictFromEntvars(pev), kModelsDoctor);
+	SAVE_SPAWN_PARMS(ENT(pev));
+	SET_MODEL(ENT(pev), "models/doctor.mdl");
+	g_PlayerModelIndex = (int)pev->modelindex;
 
-	// The binary = (int)pev->modelindex (the doctor model index the
-	// engine just assigned). Stashed for ClientKill / PostThink to
-	// restore the model after a respawn.
-	g_PlayerModelIndex = (int)PevFloat(pev, PEV_MODELINDEX);
+	SET_SIZE(ENT(pev), VEC_HULL_MIN, VEC_HULL_MAX);
 
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 16.0f, 16.0f, 36.0f);
-		VecSet(mins, -16.0f, -16.0f, -36.0f);
-		EngineSetSize(EdictFromEntvars(pev), mins, maxs);
-	}
-
-	PevInt(pev, PLR_WEAPONMODEL) = 23;
+	pev->weapons = PLAYER_START_WEAPONS;
 	SwitchWeaponModel();
 
-	PevVector(pev, PEV_VIEWOFS).x = 0.0f;
-	PevVector(pev, PEV_VIEWOFS).y = 0.0f;
-	PevVector(pev, PEV_VIEWOFS).z = 28.0f;	// 1105199104 / 0x41e00000
+	pev->view_ofs = VEC_VIEW;
 }
 
-//=========================================================
-// Classify
-//=========================================================
 int CBasePlayer::Classify()
 {
-	return 4;
+	return CLASS_PLAYER;
 }
 
 //=========================================================
-// TimeBasedDamage (vtable slot 20 helper hook)
-//=========================================================
-int CBasePlayer::TimeBasedDamage()
-{
-	UpdateWaterLevel();
-	return 0;
-}
-
-//=========================================================
-// CheckWaterJump
-//   traces 24 units forward along the (flattened) view vector
-//   and, if there is a wall in front but clear space above, sets
-//   FL_WATERJUMP and a +Z velocity to hop the player onto the
-//   ledge. Called from PreThink whenever waterlevel == 2.0f.
+// CheckWaterJump - jumps out of the water when there is a
+// wall in front at waist height and room above it
 //=========================================================
 void CBasePlayer::CheckWaterJump()
 {
-	entvars_t* pev = this->pev;
-	void* self = (void*)this;
-	void* globals = this->m_pGlobals;
+	entvars_t *pev = this->pev;
 
-	float origin[3];
-	VecCopy(origin, VecPtr(PevVector(pev, PEV_ORIGIN)));
-	float flatStart[3];
-	flatStart[0] = origin[0];
-	flatStart[1] = origin[1];
-	flatStart[2] = origin[2] + 8.0f;
+	Vector vecStart = pev->origin;
+	vecStart.z += WATERJUMP_HEIGHT;
 
-	EngineMakeVectors(VecPtr(PevVector(pev, PEV_ANGLES)));
+	UTIL_MakeVectors(pev->angles);
 
-	// flatten the forward vector (globals+240) onto the XY plane
-	float* fwd = (float*)GlobalsForward(globals);
-	fwd[2] = 0.0f;
-	float len = sqrtf(fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]);
-	if (len == 0.0f)
-	{
-		fwd[0] = 0.0f;
-		fwd[1] = 0.0f;
-		fwd[2] = 0.0f;
-	}
-	else
-	{
-		float inv = 1.0f / len;
-		fwd[0] = fwd[0] * inv;
-		fwd[1] = fwd[1] * inv;
-		fwd[2] = fwd[2] * inv;
-	}
-
-	// trace forward 24 units from the eye-ish start
-	float end[3];
-	end[0] = fwd[0] * 24.0f + flatStart[0];
-	end[1] = fwd[1] * 24.0f + flatStart[1];
-	end[2] = fwd[2] * 24.0f + flatStart[2];
+	// flat forward
+	gpGlobals->v_forward.z = 0.0f;
+	gpGlobals->v_forward = gpGlobals->v_forward.Normalize();
 
 	TraceResult tr;
-	memset(&tr, 0, sizeof(tr));
-	EngineTraceLine(flatStart, end, 0, EdictFromEntvars(pev), &tr);
+	UTIL_TraceLine(vecStart, gpGlobals->v_forward * WATERJUMP_DIST + vecStart, ignore_monsters, ENT(pev), &tr);
 
+	// nothing solid at waist height
 	if (tr.flFraction >= 1.0f)
-		return;	// nothing in front: no ledge to climb
+		return;
 
-	// there is a wall; trace from higher up (origin.z + maxs.z) to
-	// see if the space over the ledge is clear
-	float maxsZ = PevVector(pev, PEV_MAXS).z;	// pev+200
-	float highStart[3];
-	highStart[0] = origin[0];
-	highStart[1] = origin[1];
-	highStart[2] = origin[2] + maxsZ;
-	float highEnd[3];
-	highEnd[0] = fwd[0] * 24.0f + origin[0];
-	highEnd[1] = fwd[1] * 24.0f + origin[1];
-	highEnd[2] = fwd[2] * 24.0f + highStart[2];
+	// check at eye level
+	vecStart = pev->origin;
+	vecStart.z += pev->maxs.z;
 
-	// The binary writes -50 * planeNormal to pev+0x1CC (movedir, an unused
-	// scratch here) at the binary..f93 -- NOT to velocity. Writing velocity
-	// perturbed the player every time the waterjump probe ran.
-	PevFloat(pev, PEV_MOVEDIR) = tr.vecPlaneNormal[0] * -50.0f;
-	PevFloat(pev, PEV_MOVEDIR + 4) = tr.vecPlaneNormal[1] * -50.0f;
-	PevFloat(pev, PEV_MOVEDIR + 8) = tr.vecPlaneNormal[2] * -50.0f;
+	pev->movedir = tr.vecPlaneNormal * -WATERJUMP_WALL_PUSH;
 
-	TraceResult tr2;
-	memset(&tr2, 0, sizeof(tr2));
-	EngineTraceLine(highStart, highEnd, 0, EdictFromEntvars(pev), &tr2);
+	UTIL_TraceLine(vecStart, gpGlobals->v_forward * WATERJUMP_DIST + vecStart, ignore_monsters, ENT(pev), &tr);
 
-	if (tr2.flFraction == 1.0f)
+	if (tr.flFraction == 1.0f)
 	{
-		// clear above: hop onto the ledge
-		int flags = (int)PevFloat(pev, PEV_FLAGS);
-		PevFloat(pev, PEV_FLAGS) = (float)(flags | FL_WATERJUMP);
-		PevFloat(pev, PEV_VELOCITY + 8) = 225.0f;		// 0x43610000
-		flags = (int)PevFloat(pev, PEV_FLAGS);
-		PevFloat(pev, PEV_FLAGS) = (float)(flags & ~FL_ONGROUND_HINT);
-		PevFloat(pev, PEV_WATERJUMPTIME) = GlobalsTime(globals) + 2.0f;
+		// open at eye level
+		pev->flags = (float)((int)pev->flags | FL_WATERJUMP);
+		pev->velocity.z = WATERJUMP_SPEED;
+		pev->flags = (float)((int)pev->flags & ~FL_JUMPRELEASED);
+		pev->teleport_time = gpGlobals->time + WATERJUMP_TIME;
 	}
-
-	HL_UNUSED(self);
 }
 
 //=========================================================
-// PlayerClimb (ladder-climb tail of)
-//   trace 24 units along the view forward vector; if it hits a
-//   func_ladder set MOVETYPE_FLY and drive the climbing gait
-//   (footstep/pain sounds + view-punch), otherwise release.
+// PlayerClimb - holds on to a func_ladder in front of the
+// player and moves up and down it
 //=========================================================
 void CBasePlayer::PlayerClimb()
 {
-	entvars_t* pev = this->pev;
-	void* self = (void*)this;
-	void* globals = this->m_pGlobals;
+	entvars_t *pev = this->pev;
 
-	// The binary re-derives the aim vectors from pev->angles (pev+76)
-	// before the ladder trace, NOT from the v_angle used at the top of
-	// PreThink. Without this the climb traces along the wrong forward.
-	EngineMakeVectors(VecPtr(PevVector(pev, PEV_ANGLES)));
+	UTIL_MakeVectors(pev->angles);
 
-	float* fwd = (float*)GlobalsForward(globals);
-	float start[3];
-	VecCopy(start, VecPtr(PevVector(pev, PEV_ORIGIN)));
-	float end[3];
-	end[0] = start[0] + fwd[0] * 24.0f;
-	end[1] = start[1] + fwd[1] * 24.0f;
-	end[2] = start[2] + fwd[2] * 24.0f;
+	Vector vecStart = pev->origin;
 
 	TraceResult tr;
-	memset(&tr, 0, sizeof(tr));
-	EngineTraceLine(start, end, 0, EdictFromEntvars(pev), &tr);
+	UTIL_TraceLine(vecStart, vecStart + gpGlobals->v_forward * LADDER_DIST, ignore_monsters, ENT(pev), &tr);
 
-	int onLadder = 0;
-	if (TraceHitIndex(&tr))
-	{
-		edict_t* pHit = TraceHitEdict(&tr);
-		entvars_t* pevHit = pHit ? EngineGetVarsOfEnt(pHit) : NULL;
-		if (pevHit)
-		{
-			const char* cls = EngineStringFromIndex(PevInt(pevHit, PEV_CLASSNAME));
-			if (cls && strcmp(cls, kFunc_ladder) == 0)
-				onLadder = 1;
-		}
-	}
+	BOOL fOnLadder = !FNullEnt(tr.pHit) && FClassnameIs(VARS(tr.pHit), "func_ladder");
 
-	if (!onLadder || (PevInt(pev, PEV_BUTTON) & 2) != 0)
+	if (!fOnLadder || (pev->button & IN_JUMP))
 	{
-		// not on a ladder (or jumping off): release the grab
-		int latch = SelfInt(self, PLR_CLIMB_LATCH);
-		if ((latch & 1) != 0)
+		// let go
+		int iPhysicsFlags = m_afPhysicsFlags;
+		if (iPhysicsFlags & PFLAG_ONLADDER)
 		{
-			SelfInt(self, PLR_CLIMB_LATCH) = latch - 1;
-			PevFloat(pev, PEV_MOVETYPE) = 3.0f;	// MOVETYPE_WALK (1077936128)
+			m_afPhysicsFlags = iPhysicsFlags - PFLAG_ONLADDER;
+			pev->movetype = MOVETYPE_WALK;
 		}
 		return;
 	}
 
-	// on a ladder: fly and drive the climbing gait
-	PevFloat(pev, PEV_MOVETYPE) = 5.0f;		// MOVETYPE_FLY (1084227584)
-	SelfInt(self, PLR_CLIMB_LATCH) |= 1;
+	pev->movetype = MOVETYPE_FLY;
+	m_afPhysicsFlags |= PFLAG_ONLADDER;
 
-	int button = PevInt(pev, PEV_BUTTON);
-	if ((button & 8) != 0)				// IN_FORWARD: climb up
+	int iButtons = pev->button;
+	if (iButtons & IN_FORWARD)
 	{
-		if (SelfShort(self, PLR_STEP_SIZE) <= 0)
-			SelfShort(self, PLR_STEP_SIZE) = 200;
-		PevFloat(pev, PEV_VELOCITY) = PevFloat(pev, PEV_VELOCITY) * 0.6f;
-		PevFloat(pev, PEV_VELOCITY + 4) = PevFloat(pev, PEV_VELOCITY + 4) * 0.6f;
-		PevFloat(pev, PEV_VELOCITY + 8) = (float)(int)SelfShort(self, PLR_STEP_SIZE);
-		SelfShort(self, PLR_STEP_SIZE) -= 15;
-		SelfInt(self, PLR_STEP_COUNT) += 1;
+		// climb up in strokes that start fast and slow down
+		if (m_iLadderClimbSpeed <= 0)
+			m_iLadderClimbSpeed = LADDER_CLIMB_SPEED;
 
-		// re-trace forward 24 + up 8 to check for the top of the ladder
-		float climbStart[3];
-		climbStart[0] = start[0] + fwd[0] * 24.0f;
-		climbStart[1] = start[1] + fwd[1] * 24.0f;
-		climbStart[2] = start[2] + fwd[2] * 24.0f;
-		const float* up = GlobalsUp(globals);
-		climbStart[0] += up[0] * 8.0f;
-		climbStart[1] += up[1] * 8.0f;
-		climbStart[2] += up[2] * 8.0f;
-		float climbEnd[3];
-		climbEnd[0] = start[0] + up[0] * 8.0f;
-		climbEnd[1] = start[1] + up[1] * 8.0f;
-		climbEnd[2] = start[2] + up[2] * 8.0f;
+		pev->velocity.x = pev->velocity.x * LADDER_SIDE_FRICTION;
+		pev->velocity.y = pev->velocity.y * LADDER_SIDE_FRICTION;
+		pev->velocity.z = m_iLadderClimbSpeed;
+		m_iLadderClimbSpeed -= LADDER_CLIMB_DECEL;
+		m_iLadderStepCount += 1;
 
-		TraceResult tr2;
-		memset(&tr2, 0, sizeof(tr2));
-		EngineTraceLine(climbEnd, climbStart, 0, EdictFromEntvars(pev), &tr2);	// binary traces NEAR(origin+up*8) -> FAR(+fwd*24); endpoints were swapped
+		// is there still ladder above?
+		Vector vecTop = vecStart + gpGlobals->v_forward * LADDER_DIST + gpGlobals->v_up * LADDER_TOP_HEIGHT;
+		Vector vecAbove = vecStart + gpGlobals->v_up * LADDER_TOP_HEIGHT;
 
-		int topIsLadder = 0;
-		if (TraceHitIndex(&tr2))
+		UTIL_TraceLine(vecAbove, vecTop, ignore_monsters, ENT(pev), &tr);
+
+		// reached the top, climb over the edge
+		if (FNullEnt(tr.pHit) || !FClassnameIs(VARS(tr.pHit), "func_ladder"))
 		{
-			edict_t* pHit2 = TraceHitEdict(&tr2);
-			entvars_t* pevHit2 = pHit2 ? EngineGetVarsOfEnt(pHit2) : NULL;
-			if (pevHit2)
-			{
-				const char* cls2 = EngineStringFromIndex(PevInt(pevHit2, PEV_CLASSNAME));
-				if (cls2 && strcmp(cls2, kFunc_ladder) == 0)
-					topIsLadder = 1;
-			}
-		}
-
-		if (!topIsLadder)
-		{
-			// reached the top: fling onto the ledge
-			PevFloat(pev, PEV_VELOCITY) = fwd[0] * 200.0f;
-			PevFloat(pev, PEV_VELOCITY + 4) = fwd[1] * 200.0f;
-			PevFloat(pev, PEV_VELOCITY + 8) = fwd[2] * 200.0f + 275.0f;
+			pev->velocity = gpGlobals->v_forward * LADDER_DISMOUNT_SPEED;
+			pev->velocity.z += LADDER_DISMOUNT_LIFT;
 		}
 	}
-	else if ((button & 0x10) != 0)		// IN_BACK: climb down
+	else if (iButtons & IN_BACK)
 	{
-		if (SelfShort(self, PLR_STEP_SIZE) >= 0)
-			SelfShort(self, PLR_STEP_SIZE) = -200;
-		PevFloat(pev, PEV_VELOCITY) = 0.0f;
-		PevFloat(pev, PEV_VELOCITY + 4) = 0.0f;
-		PevFloat(pev, PEV_VELOCITY + 8) = (float)(int)SelfShort(self, PLR_STEP_SIZE);
-		SelfShort(self, PLR_STEP_SIZE) += 15;
-		SelfInt(self, PLR_STEP_COUNT) += 1;
+		if (m_iLadderClimbSpeed >= 0)
+			m_iLadderClimbSpeed = -LADDER_CLIMB_SPEED;
+
+		pev->velocity.x = 0.0f;
+		pev->velocity.y = 0.0f;
+		pev->velocity.z = m_iLadderClimbSpeed;
+		m_iLadderClimbSpeed += LADDER_CLIMB_DECEL;
+		m_iLadderStepCount += 1;
 	}
-	else								// idle on the ladder
+	else
 	{
-		PevFloat(pev, PEV_VELOCITY) = 0.0f;
-		PevFloat(pev, PEV_VELOCITY + 4) = 0.0f;
-		PevFloat(pev, PEV_VELOCITY + 8) = 0.0f;
+		pev->velocity = g_vecZero;
 	}
 
-	// every 22 gait ticks emit a climbing scuff and a view-punch
-	if (SelfInt(self, PLR_STEP_COUNT) >= 22)
+	// climbing sound and view punch
+	if (m_iLadderStepCount >= LADDER_STEP_FRAMES)
 	{
-		float r = RandomFloat(0.0f, 1.0f);
-		SelfInt(self, PLR_STEP_COUNT) = 0;
-		SelfShort(self, PLR_STEP_SIZE) = 200;
+		float flRand = RANDOM_FLOAT(0.0f, 1.0f);
+		m_iLadderStepCount = 0;
+		m_iLadderClimbSpeed = LADDER_CLIMB_SPEED;
 
-		// The binary: the original uses 0.25/0.5/0.75 buckets.
-		const char* sound;
-		if (r < 0.25f)
-			sound = kPain2;
-		else if (r < 0.5f)
-			sound = kPain4;
-		else if (r < 0.75f)
-			sound = kPain5;
+		const char *pszSound;
+		if (flRand < 0.25f)
+			pszSound = "player/pl_pain2.wav";
+		else if (flRand < 0.5f)
+			pszSound = "player/pl_pain4.wav";
+		else if (flRand < 0.75f)
+			pszSound = "player/pl_pain5.wav";
 		else
-			sound = kPain6;
-		EngineEmitSound(EdictFromEntvars(pev), 2, sound, PLR_VOL, PLR_ATTN);
+			pszSound = "player/pl_pain6.wav";
 
-		if (SelfInt(self, PLR_PAIN_SIDE))
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSound, VOL_NORM, ATTN_NORM);
+
+		if (m_iLadderPunchSide)
 		{
-			PevFloat(pev, PEV_PUNCHANGLE_Z) = 7.0f;		// 0x40e00000
-			PevFloat(pev, PEV_PUNCHANGLE_X) = -7.0f;	// 0xc0e00000
-			SelfInt(self, PLR_PAIN_SIDE) = 0;
+			pev->punchangle.z = LADDER_PUNCH;
+			pev->punchangle.x = -LADDER_PUNCH;
+			m_iLadderPunchSide = 0;
 		}
 		else
 		{
-			PevFloat(pev, PEV_PUNCHANGLE_Z) = -7.0f;	// 0xc0e00000
-			PevFloat(pev, PEV_PUNCHANGLE_X) = -7.0f;	// 0xc0e00000
-			SelfInt(self, PLR_PAIN_SIDE) = 1;
+			pev->punchangle.z = -LADDER_PUNCH;
+			pev->punchangle.x = -LADDER_PUNCH;
+			m_iLadderPunchSide = 1;
 		}
 	}
 }
 
 //=========================================================
-// PreThink (vtable slot 21)
+// PreThink
 //=========================================================
 void CBasePlayer::PreThink()
 {
-	entvars_t* pev = this->pev;
-	void* self = (void*)this;
-	void* globals = this->m_pGlobals;
+	entvars_t *pev = this->pev;
 
-	// The binary runs the think body only while the player is
-	// in the world: it returns when pev->view_ofs (pev+328) equals
-	// the engine spawn-sentinel vector. (FCOMP float compare.)
-	if (ViewOfsIsSentinel(pev))
+	// intermission or finale
+	if (pev->view_ofs == g_vecZero)
 		return;
 
-	EngineMakeVectors(VecPtr(PevVector(pev, PEV_THINK_ANGLES)));
+	UTIL_MakeVectors(pev->v_angle);
 
-	// drown / splash content damage and sounds, then the forward
-	// water-jump probe whenever the player is chest-deep (== 2.0f)
-	WaterMoveSplash();
-	if (PevInt(pev, PEV_WATERLEVEL) == 0x40000000)	// 2.0f
+	WaterMove();
+	if (pev->waterlevel == WATERLEVEL_WAIST)
 		CheckWaterJump();
 
-	if (PevInt(pev, PEV_DEADFLAG) >= 1065353216)	// dead (>= 1.0f)
+	if (pev->deadflag >= DEAD_DYING)
 	{
 		DeadThink(NULL);
 		return;
 	}
 
-	int button = PevInt(pev, PEV_BUTTON);
-	if ((button & 2) != 0)
-		WaterMove();								// IN_JUMP
+	int iButtons = pev->button;
+	if (iButtons & IN_JUMP)
+		Jump();
 	else
-		PevFloat(pev, PEV_FLAGS) = (float)((int)PevFloat(pev, PEV_FLAGS) | FL_ONGROUND_HINT);
+		pev->flags = (float)((int)pev->flags | FL_JUMPRELEASED);
 
-	if ((PevInt(pev, PEV_BUTTON) & 4) != 0
-		|| ((int)PevFloat(pev, PEV_FLAGS) & FL_DUCKING) != 0)
-		UpdateWaterLevel();							// IN_DUCK
+	if ((pev->button & IN_DUCK) || ((int)pev->flags & FL_DUCKING))
+		Duck();
 
-	// freeze: zero velocity while the duck/idle hold timer is active
-	if (GlobalsTime(globals) < SelfFloat(self, PLR_FREEZE_TIME))
+	// teleporters can hold the player still for a while
+	if (gpGlobals->time < m_flPauseTime)
+		pev->velocity = g_vecZero;
+
+	// footsteps
+	if (gpGlobals->time > m_flTimeStepSound && ((int)pev->flags & FL_ONGROUND))
 	{
-		PevVector(pev, PEV_VELOCITY).x = 0.0f;
-		PevVector(pev, PEV_VELOCITY).y = 0.0f;
-		PevVector(pev, PEV_VELOCITY).z = 0.0f;
-	}
-
-	// footstep sounds when moving fast on the ground
-	Vector vel = PevVector(pev, PEV_VELOCITY);
-	if (GlobalsTime(globals) > SelfFloat(self, PLR_NEXT_FOOTSTEP)
-		&& ((int)PevFloat(pev, PEV_FLAGS) & FL_ONGROUND) != 0)
-	{
-		if (vel.x != 0.0f || vel.y != 0.0f || vel.z != 0.0f)
+		if (pev->velocity != g_vecZero)
 		{
-			float speed = sqrtf(vel.x*vel.x + vel.y*vel.y + vel.z*vel.z);
-			if (speed > 200.0f)
+			if (pev->velocity.Length() > PLAYER_STEP_SPEED)
 			{
-				float r = RandomFloat(0.0f, 1.0f);
-				SetAnimation(4);
-				const char* step;
-				if (r <= 0.25f)
-					step = kStep1;
-				else if (r <= 0.5f)
-					step = kStep2;
-				else if (r <= 0.75f)
-					step = kStep3;
+				float flRand = RANDOM_FLOAT(0.0f, 1.0f);
+				SetAnimation(PLAYER_WALK);
+
+				const char *pszStep;
+				if (flRand <= 0.25f)
+					pszStep = "player/pl_step1.wav";
+				else if (flRand <= 0.5f)
+					pszStep = "player/pl_step2.wav";
+				else if (flRand <= 0.75f)
+					pszStep = "player/pl_step3.wav";
 				else
-					step = kStep4;
-				EngineEmitSound(EdictFromEntvars(pev), 4, step, PLR_VOL, PLR_ATTN);
-				SelfFloat(self, PLR_NEXT_FOOTSTEP) = GlobalsTime(globals) + 0.3f;
+					pszStep = "player/pl_step4.wav";
+
+				EMIT_SOUND(ENT(pev), CHAN_BODY, pszStep, VOL_NORM, ATTN_NORM);
+				m_flTimeStepSound = gpGlobals->time + PLAYER_STEP_INTERVAL;
 			}
 		}
 	}
 
-	if (GlobalsTime(globals) > SelfFloat(self, PLR_NEXT_FLASH))
-		FlashlightThink();
+	if (gpGlobals->time > m_flTimeWeaponIdle)
+		WeaponIdle();
 
-	// ladder grab / climbing gait
 	PlayerClimb();
 }
 
 //=========================================================
-// FlashlightThink hook
+// WeaponIdle - the MP5 idle animation
 //=========================================================
-void CBasePlayer::FlashlightThink()
+void CBasePlayer::WeaponIdle()
 {
-	entvars_t* pev = this->pev;
-	void* self = (void*)this;
-	if (PevInt(pev, PLR_VIEWMODEL) == 4)	// flashlight item active
+	entvars_t *pev = this->pev;
+
+	if (pev->weapon == WEAPON_MP5)
 	{
-		void* globals = this->m_pGlobals;
-		*(int*)((unsigned char*)globals + 328) = EngineIndexOfEdict(EdictFromEntvars(pev));
-		EngineWriteByte(1, 35);
-		EngineWriteByte(1, 1);
-		*(int*)((unsigned char*)globals + 328) = 0;
-		float r = RandomFloat(0.0f, 5.0f);
-		SelfFloat(self, PLR_NEXT_FLASH) = r + GlobalsTime(globals) + 10.0f;
+		SendWeaponAnim(pev, MP5_IDLE);
+		m_flTimeWeaponIdle = RANDOM_FLOAT(0.0f, MP5_IDLE_TIME_RANDOM) + gpGlobals->time + MP5_IDLE_TIME;
 	}
 }
 
 //=========================================================
-// WaterMoveSplash / drowning
+// WaterMove - drowning, lava and slime damage, water
+// sounds and friction
 //=========================================================
-void CBasePlayer::WaterMoveSplash()
+void CBasePlayer::WaterMove()
 {
-	entvars_t* pev = this->pev;
-	void* self = (void*)this;
-	void* globals = this->m_pGlobals;
-	float now = GlobalsTime(globals);
+	entvars_t *pev = this->pev;
+	float flTime = gpGlobals->time;
 
-	if (PevInt(pev, PEV_MOVETYPE) == 1090519040			// MOVETYPE_NOCLIP (8.0f)
-		|| (unsigned int)PevInt(pev, PEV_HEALTH) > 0x80000000)	// dead
+	if (pev->movetype == MOVETYPE_NOCLIP || pev->health < 0.0f)
 		return;
 
-	if (PevInt(pev, PEV_WATERLEVEL) == 0x40400000)		// waterlevel == 3.0f (head under)
+	if (pev->waterlevel == WATERLEVEL_HEAD)
 	{
-		// drowning: tick the air clock and apply drown damage
-		if (PevFloat(pev, PEV_AIRTIME) < now && PevFloat(pev, PEV_PAINTIME) < now)
+		// drown!
+		if (pev->air_finished < flTime && pev->pain_finished < flTime)
 		{
-			PevFloat(pev, PEV_DMGTAKE) += 2.0f;
-			if (PevInt(pev, PEV_DMGTAKE) > 0x41700000)	// clamp drown dmg (> 15)
-				PevInt(pev, PEV_DMGTAKE) = 0x41200000;	// to 10
-			// apply the primed drown damage (vtable slot 17 == shared
-			// CBaseMonster::TakeDamage / the binary, inflictor and
-			// attacker = worldspawn entvars).
-			entvars_t* world = EngineGetVarsOfEnt(EnginePEntityOfEntIndex(0));
-			TakeDamage(world, world, PevFloat(pev, PEV_DMGTAKE));
-			PevFloat(pev, PEV_PAINTIME) = now + 1.0f;
+			pev->dmg += DROWN_DAMAGE;
+			if (pev->dmg > DROWN_DAMAGE_MAX)
+				pev->dmg = DROWN_DAMAGE_RESET;
+
+			entvars_t *pevWorld = VARS(ENT(0));
+			TakeDamage(pevWorld, pevWorld, pev->dmg);
+			pev->pain_finished = flTime + 1.0f;
 		}
 	}
 	else
 	{
-		// surfacing: gasp for air keyed to how long we were under
-		if (PevFloat(pev, PEV_AIRTIME) < now)
-			EngineEmitSound(EdictFromEntvars(pev), 2, kGasp2, PLR_VOL, PLR_ATTN);
-		else if (PevFloat(pev, PEV_AIRTIME) < now + 9.0f)
-			EngineEmitSound(EdictFromEntvars(pev), 2, kGasp1, PLR_VOL, PLR_ATTN);
+		if (pev->air_finished < flTime)
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, "player/gasp2.wav", VOL_NORM, ATTN_NORM);
+		else if (pev->air_finished < flTime + PLAYER_GASP_AIR_TIME)
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, "player/gasp1.wav", VOL_NORM, ATTN_NORM);
 
-		PevFloat(pev, PEV_AIRTIME) = now + 12.0f;	// reset air clock
-		PevFloat(pev, PEV_DMGTAKE) = 2.0f;			// reset drown dmg
+		pev->air_finished = flTime + PLAYER_AIR_TIME;
+		pev->dmg = DROWN_DAMAGE;
 	}
 
-	// out of water: clear contents flags and play the exit sound
-	if (((int)PevFloat(pev, PEV_WATERLEVEL) & 0x7FFFFFFF) == 0)
+	if ((int)pev->waterlevel == WATERLEVEL_DRY)
 	{
-		if (((int)PevFloat(pev, PEV_FLAGS) & FL_INWATER) != 0)
+		if ((int)pev->flags & FL_INWATER)
 		{
-			EngineEmitSound(EdictFromEntvars(pev), 4, kOutWater, PLR_VOL, PLR_ATTN);
-			PevFloat(pev, PEV_FLAGS) = (float)((int)PevFloat(pev, PEV_FLAGS) & ~FL_INWATER);
+			EMIT_SOUND(ENT(pev), CHAN_BODY, "common/outwater.wav", VOL_NORM, ATTN_NORM);
+			pev->flags = (float)((int)pev->flags & ~FL_INWATER);
 		}
 		return;
 	}
 
-	// harmful contents content damage (vtable slot 17 == shared
-	// CBaseMonster::TakeDamage / the binary, inflictor and attacker
-	// = worldspawn entvars).
-	entvars_t* worldDmg = EngineGetVarsOfEnt(EnginePEntityOfEntIndex(0));
-	if (PevInt(pev, PEV_WATERTYPE) == -1063256064)		// CONTENTS_LAVA
+	entvars_t *pevWorld = VARS(ENT(0));
+	if (pev->watertype == CONTENTS_LAVA)
 	{
-		// lava re-tick gated on the per-second damage clock
-		if (now > PevFloat(pev, PEV_DMGSAVE))
-			TakeDamage(worldDmg, worldDmg, PevFloat(pev, PEV_WATERLEVEL) * 10.0f);
+		if (flTime > pev->dmgtime)
+			TakeDamage(pevWorld, pevWorld, pev->waterlevel * LAVA_DAMAGE);
 	}
-	else if (PevInt(pev, PEV_WATERTYPE) == -1065353216)	// CONTENTS_SLIME
+	else if (pev->watertype == CONTENTS_SLIME)
 	{
-		PevFloat(pev, PEV_DMGSAVE) = now + 1.0f;
-		TakeDamage(worldDmg, worldDmg, PevFloat(pev, PEV_WATERLEVEL) * 4.0f);
+		pev->dmgtime = flTime + 1.0f;
+		TakeDamage(pevWorld, pevWorld, pev->waterlevel * SLIME_DAMAGE);
 	}
 
-	// first frame in harmful water: content entry sound + FL_INWATER
-	if (((int)PevFloat(pev, PEV_FLAGS) & FL_INWATER) == 0)
+	if (!((int)pev->flags & FL_INWATER))
 	{
-		if (PevInt(pev, PEV_WATERTYPE) == -1063256064)	// lava
-			EngineEmitSound(EdictFromEntvars(pev), 4, kInLava, PLR_VOL, PLR_ATTN);
-		if (PevInt(pev, PEV_WATERTYPE) == -1069547520)	// water
-			EngineEmitSound(EdictFromEntvars(pev), 4, kInH2O, PLR_VOL, PLR_ATTN);
-		if (PevInt(pev, PEV_WATERTYPE) == -1065353216)	// slime
-			EngineEmitSound(EdictFromEntvars(pev), 4, kSlimeBurn, PLR_VOL, PLR_ATTN);
-		PevFloat(pev, PEV_FLAGS) = (float)((int)PevFloat(pev, PEV_FLAGS) | FL_INWATER);
-		PevFloat(pev, PEV_DMGSAVE) = 0.0f;
+		if (pev->watertype == CONTENTS_LAVA)
+			EMIT_SOUND(ENT(pev), CHAN_BODY, "player/inlava.wav", VOL_NORM, ATTN_NORM);
+		if (pev->watertype == CONTENTS_WATER)
+			EMIT_SOUND(ENT(pev), CHAN_BODY, "player/inh2o.wav", VOL_NORM, ATTN_NORM);
+		if (pev->watertype == CONTENTS_SLIME)
+			EMIT_SOUND(ENT(pev), CHAN_BODY, "player/slimbrn2.wav", VOL_NORM, ATTN_NORM);
+
+		pev->flags = (float)((int)pev->flags | FL_INWATER);
+		pev->dmgtime = 0.0f;
 	}
 
-	// water friction drag on velocity (unless mid water-jump)
-	if (((int)PevFloat(pev, PEV_FLAGS) & FL_WATERJUMP) == 0)
+	if (!((int)pev->flags & FL_WATERJUMP))
 	{
-		float drag = GlobalsFrameTime(globals) * PevFloat(pev, PEV_WATERLEVEL) * 0.8f;
-		Vector& v = PevVector(pev, PEV_VELOCITY);
-		v.x = v.x - v.x * drag;
-		v.y = v.y - v.y * drag;
-		v.z = v.z - v.z * drag;
+		float flFriction = gpGlobals->frametime * pev->waterlevel * WATER_FRICTION;
+		pev->velocity = pev->velocity - pev->velocity * flFriction;
 	}
-
-	HL_UNUSED(self);
 }
 
 //=========================================================
-// PlayerUse - the +USE scan
-//   FindEntityInSphere around the player; for each entity whose
-//   center lies in the player's forward cone (dot > 0.7) and is
-//   an activatable class, fire its Use. Called from ItemPreFrame
-//   when IN_USE (button & 0x20) is held.
+// PlayerUse - uses the buttons, doors and talking monsters
+// in front of the player
 //=========================================================
 void CBasePlayer::PlayerUse()
 {
-	entvars_t* pev = this->pev;
+	entvars_t *pev = this->pev;
 
-	float origin[3];
-	VecCopy(origin, VecPtr(PevVector(pev, PEV_ORIGIN)));
+	Vector vecOrigin = pev->origin;
 
-	edict_t* pEnt = EngineFindEntityInSphere(origin, 64.0f);	// 0x42800000
-	EngineMakeVectors(VecPtr(PevVector(pev, PEV_ANGLES)));
+	edict_t *pentEnt = FIND_ENTITY_IN_SPHERE(vecOrigin, PLAYER_USE_RADIUS);
+	UTIL_MakeVectors(pev->angles);
 
-	const float* fwd = GlobalsForward(this->m_pGlobals);
-
-	while (pEnt && EngineIndexOfEdict(pEnt))
+	while (!FNullEnt(pentEnt))
 	{
-		entvars_t* pevEnt = EngineGetVarsOfEnt(pEnt);
-		if (pevEnt)
+		entvars_t *pevEnt = VARS(pentEnt);
+		Vector vecCenter = pevEnt->origin + (pevEnt->mins + pevEnt->maxs) * 0.5f;
+
+		if (DotProduct(vecCenter - vecOrigin, gpGlobals->v_forward) > PLAYER_USE_DOT)
 		{
-			// center of the candidate's bounding box
-			float center[3];
-			center[0] = PevVector(pevEnt, PEV_ORIGIN).x
-				+ 0.5f * (PevVector(pevEnt, PEV_MINS).x + PevVector(pevEnt, PEV_MAXS).x);
-			center[1] = PevVector(pevEnt, PEV_ORIGIN).y
-				+ 0.5f * (PevVector(pevEnt, PEV_MINS).y + PevVector(pevEnt, PEV_MAXS).y);
-			center[2] = PevVector(pevEnt, PEV_ORIGIN).z
-				+ 0.5f * (PevVector(pevEnt, PEV_MINS).z + PevVector(pevEnt, PEV_MAXS).z);
+			const char *pszClassname = STRING(pevEnt->classname);
 
-			float dot = (center[0] - origin[0]) * fwd[0]
-				+ (center[1] - origin[1]) * fwd[1]
-				+ (center[2] - origin[2]) * fwd[2];
-
-			if (dot > 0.69999999f)
+			if (FStrEq(pszClassname, "func_button")
+				|| FStrEq(pszClassname, "func_rot_button")
+				|| FStrEq(pszClassname, "momentary_rot_button"))
 			{
-				const char* cls = EngineStringFromIndex(PevInt(pevEnt, PEV_CLASSNAME));
-				if (cls
-					&& (strcmp(cls, kFuncButton) == 0
-						|| strcmp(cls, kFuncRotButton) == 0
-						|| strcmp(cls, kMomentaryRotButton) == 0))
-				{
-					// buttons only fire when not already locked/busy
-					if ((PevInt(pevEnt, PEV_TAKEDAMAGE) & 0x7FFFFFFF) != 0)
-						return;
-					CBaseEntity* pEntity = GetEntity(pEnt);
-					if (pEntity)
-					{
-						// The binary stores the player
-						// index into the target's m_hActivator (+0x60) UNCONDITIONALLY
-						// for all three button classes, including momentary_rot_button.
-						PlayerUseEntity(this, pEntity, 1);
-					}
-				}
-				else if (cls
-					&& (strcmp(cls, kFuncDoor) == 0
-						|| strcmp(cls, kFuncDoorRotating) == 0))
-				{
-					// only USE-able doors (spawnflag 0x100) respond
-					if (((int)PevFloat(pevEnt, PEV_SPAWNFLAGS) & 0x100) != 0)
-					{
-						CBaseEntity* pEntity = GetEntity(pEnt);
-						if (pEntity)
-							PlayerUseEntity(this, pEntity, 1);
-					}
-				}
-				else if (cls
-					&& (strcmp(cls, kMonsterScientist) == 0
-						|| strcmp(cls, kMonsterBarney) == 0))
-				{
-					// talk-monster follow toggle handled by the monster
-					CBaseEntity* pEntity = GetEntity(pEnt);
-					if (pEntity)
-						((CBaseMonster*)pEntity)->TogglePlayerUse(pev);
+				// shootable buttons can't be used
+				if (pevEnt->takedamage != DAMAGE_NO)
 					return;
+
+				CBaseEntity *pEntity = CBaseEntity::Instance(pentEnt);
+				if (pEntity)
+					PlayerUseEntity(this, pEntity);
+			}
+			else if (FStrEq(pszClassname, "func_door") || FStrEq(pszClassname, "func_door_rotating"))
+			{
+				if ((int)pevEnt->spawnflags & SF_DOOR_USE_ONLY)
+				{
+					CBaseEntity *pEntity = CBaseEntity::Instance(pentEnt);
+					if (pEntity)
+						PlayerUseEntity(this, pEntity);
 				}
+			}
+			else if (FStrEq(pszClassname, "monster_scientist") || FStrEq(pszClassname, "monster_barney"))
+			{
+				// start or stop following the player
+				CBaseEntity *pEntity = CBaseEntity::Instance(pentEnt);
+				if (pEntity)
+					((CBaseMonster *)pEntity)->TogglePlayerUse(pev);
+				return;
 			}
 		}
 
-		// advance to the next entity in the sphere (pev->chain)
-		pEnt = EnginePEntityOfEntIndex(PevInt(pevEnt, PEV_CHAIN));
+		pentEnt = ENT(pevEnt->chain);
 	}
 }
 
 //=========================================================
-// PlayerImpulseCommands
+// ItemPostFrame - the weapon buttons, once the last attack
+// is finished
 //=========================================================
-void CBasePlayer::PlayerImpulseCommands()
+void CBasePlayer::ItemPostFrame()
 {
-	entvars_t* pev = this->pev;
-	void* self = (void*)this;
-	void* globals = this->m_pGlobals;
+	entvars_t *pev = this->pev;
+	int iWeapon = pev->weapon;
 
-	int viewmodel = PevInt(pev, PLR_VIEWMODEL);
-
-	// gate the whole pass on the weapon's next-ready time (this+0x110)
-	if (SelfFloat(self, PLR_VIEWMODEL) > GlobalsTime(globals))
+	if (m_flAttackFinished > gpGlobals->time)
 		return;
 
-	ItemPreFrame();
+	ImpulseCommands();
 
-	// all three attack gates key off pev->button (pev+0x154), NOT pev->flags
-	int button = PevInt(pev, PEV_BUTTON);
+	int iButtons = pev->button;
 
-	// IN_CANCEL (0x40): force-select the holstered weapon, skip the attacks
-	if ((button & 0x40) != 0)
+	// +cancel: go back to the previous weapon
+	if (iButtons & IN_CANCEL)
 	{
-		if ((viewmodel & 0xFFFF0000) != 0)
-			PevInt(pev, PLR_VIEWMODEL) = (int)(double)((unsigned int)(viewmodel & 0xFF0000) >> 16);
+		if (iWeapon & WEAPON_PENDING_MASK)
+			pev->weapon = (iWeapon & WEAPON_PREVIOUS_MASK) >> WEAPON_PREVIOUS_SHIFT;
 		return;
 	}
 
-	// IN_ATTACK2 (0x800): secondary fire - deploy a satchel or lob a grenade
-	if ((button & 0x800) != 0)
+	if (iButtons & IN_ATTACK2)
 	{
-		// a satchel-capable selection (high weapon bits set): drop one
-		// satchel per press, then release the secondary button.
-		if ((viewmodel & 0xFFFF0000) != 0 && !g_fAttack2Pressed)
+		// while selecting: drop the selected weapon
+		if ((iWeapon & WEAPON_PENDING_MASK) && !g_fAttack2Pressed)
 		{
-			int itemId = viewmodel & 0xFF;
-			unsigned int backupId = ((unsigned int)viewmodel & 0xFF0000u) >> 16;
-			if (itemId != 0 && DeploySatchel(pev, itemId))
+			int iDrop = iWeapon & WEAPON_ID_MASK;
+			unsigned int iPrevious = ((unsigned int)iWeapon & WEAPON_PREVIOUS_MASK) >> WEAPON_PREVIOUS_SHIFT;
+
+			if (iDrop != WEAPON_NONE && DropItem(pev, iDrop))
 			{
-				PevInt(pev, PLR_WEAPONMODEL) &= ~(1 << (itemId & 0x1F));
-				SelectWeapon(itemId + 1);
-				if (backupId == (unsigned int)viewmodel)
+				pev->weapons &= ~(1 << (iDrop & (MAX_WEAPONS - 1)));
+				SelectWeapon(iDrop + 1);
+
+				if (iPrevious == (unsigned int)iWeapon)
 				{
-					PevInt(pev, PLR_VIEWMODEL) = 0;
+					pev->weapon = WEAPON_NONE;
 					SwitchWeaponModel();
 				}
 			}
-			PevInt(pev, PEV_BUTTON) &= ~0x800;
-			g_fAttack2Pressed = 1;
+
+			pev->button &= ~IN_ATTACK2;
+			g_fAttack2Pressed = TRUE;
 			return;
 		}
 
-		// MP5 grenade launcher (active weapon id 4) on its own cadence
-		if (PevInt(pev, PLR_VIEWMODEL) == 4
-			&& GlobalsTime(globals) > SelfFloat(self, PLR_NEXT_GRENADE))
+		// MP5 grenade launcher
+		if (pev->weapon == WEAPON_MP5 && gpGlobals->time > m_flNextGrenadeTime)
 		{
-			g_fAttack2Pressed = 1;
+			g_fAttack2Pressed = TRUE;
 
-			EngineMakeVectors(VecPtr(PevVector(pev, PEV_THINK_ANGLES)));
-			PlayerWeaponEvent(pev, globals, 2);
-			EngineEmitSound(EdictFromEntvars(pev), 1,
-				(RandomFloat(0.0f, 1.0f) < 0.5f) ? kGLauncher1 : kGLauncher2,
-				PLR_GLAUNCHER_VOL, PLR_ATTN);
+			UTIL_MakeVectors(pev->v_angle);
+			SendWeaponAnim(pev, MP5_LAUNCH);
 
-			const float* fwd = GlobalsForward(globals);
+			EMIT_SOUND(ENT(pev), CHAN_WEAPON, (RANDOM_FLOAT(0.0f, 1.0f) < 0.5f) ? "weapons/glauncher.wav" : "weapons/glauncher2.wav", 0.75f, ATTN_NORM);
 
-			// velocity = forward * 800; start = eye + forward * 24
-			float velocity[3];
-			velocity[0] = fwd[0] * 800.0f;
-			velocity[1] = fwd[1] * 800.0f;
-			velocity[2] = fwd[2] * 800.0f;
+			Vector vecVelocity = gpGlobals->v_forward * MP5_GRENADE_SPEED;
+			Vector vecStart = pev->origin + pev->view_ofs + gpGlobals->v_forward * MP5_GRENADE_OFFSET;
 
-			float start[3];
-			start[0] = PevVector(pev, PEV_ORIGIN).x + PevVector(pev, PEV_VIEWOFS).x + fwd[0] * 24.0f;
-			start[1] = PevVector(pev, PEV_ORIGIN).y + PevVector(pev, PEV_VIEWOFS).y + fwd[1] * 24.0f;
-			start[2] = PevVector(pev, PEV_ORIGIN).z + PevVector(pev, PEV_VIEWOFS).z + fwd[2] * 24.0f;
+			ShootTimedGrenade(pev, vecStart, vecVelocity);
 
-			ThrowGrenade(pev, start, velocity);
-
-			PevInt(pev, PEV_BUTTON) &= ~0x800;
-			SelfFloat(self, PLR_NEXT_GRENADE) = GlobalsTime(globals) + 1.0f;
+			pev->button &= ~IN_ATTACK2;
+			m_flNextGrenadeTime = gpGlobals->time + MP5_GRENADE_DELAY;
 		}
 	}
 	else
 	{
-		g_fAttack2Pressed = 0;
+		g_fAttack2Pressed = FALSE;
 	}
 
-	// IN_ATTACK (0x1): primary fire / deploy-on-select
-	if ((button & 1) != 0)
+	if (iButtons & IN_ATTACK)
 	{
 		if (!g_fAttackPressed)
 		{
-			if ((viewmodel & 0xFFFF0000) != 0)
+			if (iWeapon & WEAPON_PENDING_MASK)
 			{
-				// a freshly selected weapon: commit its low byte and
-				// swap the view model instead of firing this frame.
-				PevInt(pev, PLR_VIEWMODEL) = viewmodel & 0xFF;
-				PevInt(pev, PEV_BUTTON) &= ~1;
+				// take the selected weapon instead of firing
+				pev->weapon = iWeapon & WEAPON_ID_MASK;
+				pev->button &= ~IN_ATTACK;
 				SwitchWeaponModel();
-				g_fAttackPressed = 1;
+				g_fAttackPressed = TRUE;
 			}
 			else
 			{
-				ItemPostFrame();
+				PrimaryAttack();
 			}
 		}
 	}
 	else
 	{
-		g_fAttackPressed = 0;
+		g_fAttackPressed = FALSE;
 	}
 }
 
 //=========================================================
-// SprayerAimHitsWall (the impulse 201/202 spawn gate inside
-// The binary): MakeVectors from the player's aim, then trace
-// 128 units forward from the eye. The sprayer projectile is only
-// spawned when that probe strikes a surface (fraction != 1.0).
+// CanSprayDecal - impulses 201 and 202 only spray on a wall
+// close in front of the player
 //=========================================================
-static int SprayerAimHitsWall(entvars_t* pev, void* globals)
+static BOOL CanSprayDecal(entvars_t *pev)
 {
-	EngineMakeVectors(VecPtr(PevVector(pev, PEV_THINK_ANGLES)));
-	const float* fwd = GlobalsForward(globals);
+	UTIL_MakeVectors(pev->v_angle);
 
-	float start[3];
-	start[0] = PevVector(pev, PEV_ORIGIN).x + PevVector(pev, PEV_VIEWOFS).x;
-	start[1] = PevVector(pev, PEV_ORIGIN).y + PevVector(pev, PEV_VIEWOFS).y;
-	start[2] = PevVector(pev, PEV_ORIGIN).z + PevVector(pev, PEV_VIEWOFS).z;
-
-	float end[3];
-	end[0] = start[0] + fwd[0] * 128.0f;
-	end[1] = start[1] + fwd[1] * 128.0f;
-	end[2] = start[2] + fwd[2] * 128.0f;
+	Vector vecStart = pev->origin + pev->view_ofs;
 
 	TraceResult tr;
-	memset(&tr, 0, sizeof(tr));
-	EngineTraceLine(start, end, 0, EdictFromEntvars(pev), &tr);
+	UTIL_TraceLine(vecStart, vecStart + gpGlobals->v_forward * SPRAY_DISTANCE, ignore_monsters, ENT(pev), &tr);
 
 	return tr.flFraction != 1.0f;
 }
 
 //=========================================================
-// RemoveAimedDamageable (impulse 203 in)
+// RemoveAimedEntity - impulse 203 removes the damageable
+// entity the player looks at
 //=========================================================
-static void RemoveAimedDamageable(entvars_t* pev, void* globals)
+static void RemoveAimedEntity(entvars_t *pev)
 {
-	EngineMakeVectors(VecPtr(PevVector(pev, PEV_THINK_ANGLES)));
-	const float* fwd = GlobalsForward(globals);
+	UTIL_MakeVectors(pev->v_angle);
 
-	float start[3];
-	start[0] = PevVector(pev, PEV_ORIGIN).x;
-	start[1] = PevVector(pev, PEV_ORIGIN).y;
-	start[2] = PevVector(pev, PEV_ORIGIN).z + 16.0f;
-
-	float end[3];
-	end[0] = start[0] + fwd[0] * 1024.0f;
-	end[1] = start[1] + fwd[1] * 1024.0f;
-	end[2] = start[2] + fwd[2] * 1024.0f;
+	Vector vecStart = pev->origin;
+	vecStart.z += REMOVE_ENTITY_HEIGHT;
 
 	TraceResult tr;
-	memset(&tr, 0, sizeof(tr));
-	EngineTraceLine(start, end, 1, EdictFromEntvars(pev), &tr);
+	UTIL_TraceLine(vecStart, vecStart + gpGlobals->v_forward * REMOVE_ENTITY_DIST, dont_ignore_monsters, ENT(pev), &tr);
 
-	edict_t* pHit = TraceHitEdict(&tr);
-	entvars_t* pevHit = pHit ? EngineGetVarsOfEnt(pHit) : NULL;
-	if (pevHit && (PevInt(pevHit, PEV_TAKEDAMAGE) & 0x7FFFFFFF) != 0)
+	if (FNullEnt(tr.pHit))
+		return;
+
+	edict_t *pentHit = ENT(tr.pHit);
+	if (VARS(pentHit)->takedamage != DAMAGE_NO)
 	{
-		CBaseEntity* pEntity = GetEntity(pHit);
+		CBaseEntity *pEntity = CBaseEntity::Instance(pentHit);
 		if (pEntity)
-			pEntity->SetRemoveThink();
+			pEntity->SetThink(&CBaseEntity::SUB_Remove);
 	}
 }
 
 //=========================================================
-// ItemPreFrame (impulse selector)
+// ImpulseCommands - +use and the impulse commands
 //=========================================================
-void CBasePlayer::ItemPreFrame()
+void CBasePlayer::ImpulseCommands()
 {
-	entvars_t* pev = this->pev;
-	void* self = (void*)this;
-	void* globals = this->m_pGlobals;
+	entvars_t *pev = this->pev;
 
-	// IN_USE (button & 0x20): scan for a nearby entity to activate
-	if ((PevInt(pev, PEV_BUTTON) & 0x20) != 0
-		&& GlobalsTime(globals) > SelfFloat(self, PLR_USE_TIME))
+	if ((pev->button & IN_USE) && gpGlobals->time > m_flNextUseTime)
 	{
 		PlayerUse();
-		SelfFloat(self, PLR_USE_TIME) = GlobalsTime(globals) + 0.5f;
+		m_flNextUseTime = gpGlobals->time + PLAYER_USE_DELAY;
 	}
 
-	// The binary: fld dword [edi+0x158]; call __ftol.
-	// pev->impulse (0x158) is FLOAT-encoded in this alpha; ftol-truncate before
-	// switching. Reading it as a raw int yields the float bit-pattern (e.g.
-	// 0x41200000 for impulse 10), which matches no case label, so the whole
-	// switch fell through to default and NO impulse command (weapon select,
-	// flashlight, sprayer) ever ran.
-	int impulse = (int)PevFloat(pev, PEV_IMPULSE);
-	switch (impulse)
+	int iImpulse = (int)pev->impulse;
+	switch (iImpulse)
 	{
-	case 1: case 2: case 3: case 4:
-	case 5: case 6: case 7: case 8:
-		SelectWeapon(impulse);
+	case 1:
+	case 2:
+	case 3:
+	case 4:
+	case 5:
+	case 6:
+	case 7:
+	case 8:
+		SelectWeapon(iImpulse);
 		break;
-	case 10:
-		// The binary case 10: MOV EAX,[pev+0x110]; AND 0xff; INC EAX
-		// (RAW INT read of weapon_id, NOT a float). The previous
-		// (int)PevFloat read garbage so next-weapon never advanced.
-		SelectWeapon((PevInt(pev, PLR_VIEWMODEL) & 0xFF) + 1);
+	case IMPULSE_NEXT_WEAPON:
+		SelectWeapon((pev->weapon & WEAPON_ID_MASK) + 1);
 		break;
-	case 11:
+	case IMPULSE_PREV_WEAPON:
 	{
-		// The binary case 0xb: MOV EAX,[pev+0x110]; AND 0xff; DEC EAX;
-		// JNS (signed) -> if (low - 1) < 0 use 0x1f. RAW INT read.
-		int w = (PevInt(pev, PLR_VIEWMODEL) & 0xFF) - 1;
-		if (w < 0)
-			w = 31;
-		SelectWeaponReverse(w);
+		int iWeapon = (pev->weapon & WEAPON_ID_MASK) - 1;
+		if (iWeapon < 0)
+			iWeapon = MAX_WEAPONS - 1;
+		SelectWeaponReverse(iWeapon);
 		break;
 	}
-	case 100:
+	case IMPULSE_FLASHLIGHT:
 	{
-		int f = (int)PevFloat(pev, PEV_STUCK);
-		if ((f & 8) != 0)
-			PevFloat(pev, PEV_STUCK) = (float)(f & 0xFFFFFFF7);
+		int iEffects = (int)pev->effects;
+		if (iEffects & EF_DIMLIGHT)
+			pev->effects = (float)(unsigned int)(iEffects & ~EF_DIMLIGHT);
 		else
-			PevFloat(pev, PEV_STUCK) = (float)(f | 8);
+			pev->effects = (float)(iEffects | EF_DIMLIGHT);
 		break;
 	}
-	case 200:
+	case IMPULSE_DRAW_LINES:
 		if (g_fDrawLines)
 		{
-			g_fDrawLines = 0;
-			EngineAlertMessage(1, "Lines Off\n");
+			g_fDrawLines = FALSE;
+			ALERT(at_console, "Lines Off\n");
 		}
 		else
 		{
-			g_fDrawLines = 1;
-			EngineAlertMessage(1, "Lines On\n");
+			g_fDrawLines = TRUE;
+			ALERT(at_console, "Lines On\n");
 		}
 		break;
-	case 201:
-		// repeating sprayer: paints a
-		// six-decal trail along the aim, gated on hitting a wall.
-		if (SprayerAimHitsWall(pev, globals))
-			DeploySprayerRepeat(pev);
+	case IMPULSE_SPRAY_LOGO:
+		if (CanSprayDecal(pev))
+			SprayLambdas(pev);
 		break;
-	case 202:
-		// single-shot sprayer: one decal.
-		if (SprayerAimHitsWall(pev, globals))
-			DeploySprayerSingle(pev);
+	case IMPULSE_SPRAY_BLOOD:
+		if (CanSprayDecal(pev))
+			SprayBlood(pev);
 		break;
-	case 203:
-		RemoveAimedDamageable(pev, globals);
+	case IMPULSE_REMOVE_ENTITY:
+		RemoveAimedEntity(pev);
 		break;
 	default:
 		break;
 	}
 
-	PevFloat(pev, PEV_IMPULSE) = 0.0f;	// stores 0 (field is float)
+	pev->impulse = 0.0f;
 }
 
 //=========================================================
-// Weapon-fire constants (decoded from the binary
-// The binary and the shared bullet-fire
-// The binary).
+// SendWeaponAnim - plays a view model animation
 //=========================================================
-enum
+static void SendWeaponAnim(entvars_t *pev, int iAnim)
 {
-	PEV_EFFECTS			= 140,	// pev+0x8c  effects bitfield (FLOAT-encoded int)
-	EF_MUZZLEFLASH		= 2,	// pev->effects |= 2 on every weapon fire
-
-	// per-weapon view-model SetAnimation activity argument
-	PLAYER_ATTACK1		= 30,	// vtable SetAnimation(0x1e) after each fire
-};
-
-// glock muzzle/view-weapon event sent to the firing client
-// (globals->msg_entity = IndexOfEdict(self); WriteByte(1, 35); ...).
-static const char kGlock1[] = "weapons/pl_gun1.wav";
-static const char kGlock2[] = "weapons/pl_gun2.wav";
-
-static const char kMP5_1[] = "weapons/hks1.wav";
-static const char kMP5_2[] = "weapons/hks2.wav";
-static const char kMP5_3[] = "weapons/hks3.wav";
-
-// muzzle / weapon-animation directed message (the WriteByte(1,35)
-// pattern shared by all three fires, == the binary prologue and
-// the FlashlightThink directed-message convention). 'animValue' is
-// the second byte (0 for glock/mp5, swing dir 1/2 for the crowbar).
-static void PlayerWeaponEvent(entvars_t* pev, void* globals, int animValue)
-{
-	*(int*)((unsigned char*)globals + 328) = EngineIndexOfEdict(EdictFromEntvars(pev));	// globals+0x148 msg_entity
-	EngineWriteByte(1, 35);
-	EngineWriteByte(1, animValue);
-	*(int*)((unsigned char*)globals + 328) = 0;
+	gpGlobals->msg_entity = OFFSET(pev);
+	WRITE_BYTE(MSG_ONE, SVC_WEAPONANIM);
+	WRITE_BYTE(MSG_ONE, iAnim);
+	gpGlobals->msg_entity = 0;
 }
 
-//=========================================================
-// FireGlock (weapon id 2)
-//   muzzleflash + random pl_gun sound, GetAimVector-derived
-//   forward, 0.025 cone, 2048-unit bullet, 0.3s cadence.
-//=========================================================
-static void FireGlock(CBasePlayer* pPlayer)
+static void FireGlock(CBasePlayer *pPlayer)
 {
-	entvars_t* pev = pPlayer->pev;
-	void* globals = pPlayer->m_pGlobals;
+	entvars_t *pev = pPlayer->pev;
 
-	// pev->effects |= EF_MUZZLEFLASH (FLOAT-encoded int, ftol round-trip)
-	PevFloat(pev, PEV_EFFECTS) = (float)((int)PevFloat(pev, PEV_EFFECTS) | EF_MUZZLEFLASH);
+	pev->effects = (float)((int)pev->effects | EF_MUZZLEFLASH);
 
-	// directed muzzle/weapon-anim message to the firing client
-	PlayerWeaponEvent(pev, globals, 0);
+	SendWeaponAnim(pev, GLOCK_SHOOT);
 
-	EngineEmitSound(EdictFromEntvars(pev), 1,
-		(rand() & 1) ? kGlock1 : kGlock2, PLR_VOL, PLR_ATTN);
+	EMIT_SOUND(ENT(pev), CHAN_WEAPON, (rand() & 1) ? "weapons/pl_gun1.wav" : "weapons/pl_gun2.wav", VOL_NORM, ATTN_NORM);
 
-	// shooting direction == engine aim vector.
-	EngineMakeVectors(VecPtr(PevVector(pev, PEV_THINK_ANGLES)));	// pev+0x160
-	float dir[3];
-	EngineGetAimVector(EdictFromEntvars(pev), 2048.0f, dir);
+	UTIL_MakeVectors(pev->v_angle);
 
-	pPlayer->FireBullets(1, dir, 0.025f, 0.025f, 0, 2048.0f);
+	Vector vecAiming;
+	GET_AIM_VECTOR(ENT(pev), GLOCK_RANGE, vecAiming);
 
-	// next-attack time = globals->time + 0.3 (this+0x110)
-	SelfFloat(pPlayer, PLR_VIEWMODEL) = GlobalsTime(globals) + 0.3f;
+	pPlayer->FireBullets(1, vecAiming, GLOCK_SPREAD, GLOCK_SPREAD, BULLET_NONE, GLOCK_RANGE);
+
+	pPlayer->m_flAttackFinished = gpGlobals->time + GLOCK_DELAY;
 }
 
-//=========================================================
-// FireCrowbar (weapon id 1)
-//   muzzle/swing message (1 or 2), no sound, 0.025 cone,
-//   64-unit melee trace, 1.0s cadence.
-//=========================================================
-static void FireCrowbar(CBasePlayer* pPlayer)
+static void FireCrowbar(CBasePlayer *pPlayer)
 {
-	entvars_t* pev = pPlayer->pev;
-	void* globals = pPlayer->m_pGlobals;
+	entvars_t *pev = pPlayer->pev;
 
-	// swing-direction byte = (rand & 1) ? 1: 2 (parity test)
-	int swing = ((rand() & 1) == 1) ? 1 : 2;
-	PlayerWeaponEvent(pev, globals, swing);
-
-	EngineMakeVectors(VecPtr(PevVector(pev, PEV_THINK_ANGLES)));	// pev+0x160
-	RandomFloat(100.0f, 150.0f);
-	RandomFloat(50.0f, 70.0f);
-	RandomFloat(-25.0f, 25.0f);
-
-	float dir[3];
-	EngineGetAimVector(EdictFromEntvars(pev), 1000.0f, dir);	// 0x447A0000 aim distance
-
-	pPlayer->FireBullets(1, dir, 0.025f, 0.025f, 0, 64.0f);	// range 0x42800000
-
-	// next-attack time = globals->time + 1.0 (this+0x110)
-	SelfFloat(pPlayer, PLR_VIEWMODEL) = GlobalsTime(globals) + 1.0f;
-}
-
-//=========================================================
-// FireMP5 (weapon id 4)
-//   muzzleflash + random hks sound, 0.01 cone, 2048-unit
-//   bullet, 0.1s cadence, sets the dynamic-light timer.
-//=========================================================
-static void FireMP5(CBasePlayer* pPlayer)
-{
-	entvars_t* pev = pPlayer->pev;
-	void* globals = pPlayer->m_pGlobals;
-
-	PevFloat(pev, PEV_EFFECTS) = (float)((int)PevFloat(pev, PEV_EFFECTS) | EF_MUZZLEFLASH);
-
-	PlayerWeaponEvent(pev, globals, 0);
-
-	const char* snd;
-	float pick = RandomFloat(0.0f, 1.0f);
-	if (pick < 0.33f)
-		snd = kMP5_1;
-	else if (pick < 0.66f)
-		snd = kMP5_2;
+	if ((rand() & 1) == 1)
+		SendWeaponAnim(pev, CROWBAR_ATTACK1);
 	else
-		snd = kMP5_3;
-	EngineEmitSound(EdictFromEntvars(pev), 1, snd, PLR_VOL, PLR_ATTN);
+		SendWeaponAnim(pev, CROWBAR_ATTACK2);
 
-	EngineMakeVectors(VecPtr(PevVector(pev, PEV_THINK_ANGLES)));	// pev+0x160
-	float dir[3];
-	EngineGetAimVector(EdictFromEntvars(pev), 2048.0f, dir);
+	UTIL_MakeVectors(pev->v_angle);
 
-	pPlayer->FireBullets(1, dir, 0.01f, 0.01f, 0, 2048.0f);
+	// unused random numbers
+	RANDOM_FLOAT(100.0f, 150.0f);
+	RANDOM_FLOAT(50.0f, 70.0f);
+	RANDOM_FLOAT(-25.0f, 25.0f);
 
-	// next-attack time = globals->time + 0.1 (this+0x110)
-	SelfFloat(pPlayer, PLR_VIEWMODEL) = GlobalsTime(globals) + 0.1f;
-	// muzzle dynamic-light timer = globals->time + 1.0 (this+0x170)
-	SelfFloat(pPlayer, PLR_NEXT_FLASH) = GlobalsTime(globals) + 1.0f;
+	Vector vecAiming;
+	GET_AIM_VECTOR(ENT(pev), CROWBAR_AIM_SPEED, vecAiming);
+
+	pPlayer->FireBullets(1, vecAiming, CROWBAR_SPREAD, CROWBAR_SPREAD, BULLET_NONE, CROWBAR_RANGE);
+
+	pPlayer->m_flAttackFinished = gpGlobals->time + CROWBAR_DELAY;
+}
+
+static void FireMP5(CBasePlayer *pPlayer)
+{
+	entvars_t *pev = pPlayer->pev;
+
+	pev->effects = (float)((int)pev->effects | EF_MUZZLEFLASH);
+
+	SendWeaponAnim(pev, MP5_FIRE);
+
+	const char *pszSound;
+	float flRand = RANDOM_FLOAT(0.0f, 1.0f);
+	if (flRand < 0.33f)
+		pszSound = "weapons/hks1.wav";
+	else if (flRand < 0.66f)
+		pszSound = "weapons/hks2.wav";
+	else
+		pszSound = "weapons/hks3.wav";
+	EMIT_SOUND(ENT(pev), CHAN_WEAPON, pszSound, VOL_NORM, ATTN_NORM);
+
+	UTIL_MakeVectors(pev->v_angle);
+
+	Vector vecAiming;
+	GET_AIM_VECTOR(ENT(pev), MP5_RANGE, vecAiming);
+
+	pPlayer->FireBullets(1, vecAiming, MP5_SPREAD, MP5_SPREAD, BULLET_NONE, MP5_RANGE);
+
+	pPlayer->m_flAttackFinished = gpGlobals->time + MP5_DELAY;
+	pPlayer->m_flTimeWeaponIdle = gpGlobals->time + MP5_IDLE_DELAY;
 }
 
 //=========================================================
-// ItemPostFrame == fire dispatch
-//   On primary attack: if alive, clear pev+0x11c (the
-//   per-frame fire latch, NOT the viewmodel string at
-//   0x118), run the active weapon's fire, then set the
-//   attack animation. The old stub zeroed pev+0x118 which
-//   hid the view model and never fired.
+// PrimaryAttack - fires the weapon in use
 //=========================================================
-void CBasePlayer::ItemPostFrame()
+void CBasePlayer::PrimaryAttack()
 {
-	entvars_t* pev = this->pev;
+	entvars_t *pev = this->pev;
 
-	// The binary: bail while permanently dead (deadflag == 2.0f)
-	if (PevInt(pev, PEV_DEADFLAG) == 0x40000000)
+	if (pev->deadflag == DEAD_DEAD)
 		return;
 
-	// pev->[0x11c] = 0 (fire-latch / button-hold scratch). 0x11c == 284.
-	PevInt(pev, PLR_FIRE_LATCH) = 0;
+	pev->weaponframe = 0.0f;
 
-	switch (PevInt(pev, PLR_VIEWMODEL))	// pev->weapon_id (pev+0x110)
+	switch (pev->weapon)
 	{
-	case 1:
+	case WEAPON_CROWBAR:
 		FireCrowbar(this);
 		break;
-	case 2:
+	case WEAPON_GLOCK:
 		FireGlock(this);
 		break;
-	case 4:
+	case WEAPON_MP5:
 		FireMP5(this);
 		break;
 	default:
-		return;	// nothing equipped that fires
+		return;
 	}
 
-	// vtable SetAnimation(0x1e) == player attack activity
 	SetAnimation(PLAYER_ATTACK1);
 }
 
 //=========================================================
-// PostThink (vtable slot 22)
-//   fall damage, landing sound, idle / run select.
+// PostThink - weapons, landing, animation
 //=========================================================
 void CBasePlayer::PostThink()
 {
-	entvars_t* pev = this->pev;
-	void* self = (void*)this;
+	entvars_t *pev = this->pev;
 
-	// The binary: return if pev->view_ofs (pev+328) equals the
-	// engine spawn-sentinel vector, or if pev+324 (dead/frags slot)
-	// has any non-sign bit set.
-	if (ViewOfsIsSentinel(pev)
-		|| (PevInt(pev, PEV_DEADFLAG) & 0x7FFFFFFF) != 0)
+	// intermission or finale, or dead
+	if (pev->view_ofs == g_vecZero || pev->deadflag != DEAD_NO)
+		return;
+
+	ItemPostFrame();
+
+	// landed
+	float flFallVelocity = m_flFallVelocity;
+	if (flFallVelocity < PLAYER_FALL_LAND_SPEED)
 	{
+		if (((int)pev->flags & FL_ONGROUND) && pev->health > 0.0f)
+			ApplyFallDamage(flFallVelocity);
+	}
+
+	if (!((int)pev->flags & FL_ONGROUND))
+		m_flFallVelocity = pev->velocity.z;
+
+	if ((int)pev->deadflag == DEAD_NO)
+	{
+		if ((int)pev->velocity.x != 0 || (int)pev->velocity.y != 0)
+		{
+			if ((int)pev->flags & FL_ONGROUND)
+				SetAnimation(PLAYER_WALK);
+		}
+		else
+		{
+			SetAnimation(PLAYER_IDLE);
+		}
+	}
+
+	PlayerAdvanceAnimation(this, PLAYER_ANIM_INTERVAL);
+
+	if (pev->health > 0.0f)
+		pev->modelindex = (float)g_PlayerModelIndex;
+}
+
+//=========================================================
+// ApplyFallDamage - landing sound, damage and view punch
+//=========================================================
+void CBasePlayer::ApplyFallDamage(float flFallVelocity)
+{
+	entvars_t *pev = this->pev;
+
+	const char *pszSound;
+	int iChannel;
+
+	if (pev->watertype == CONTENTS_WATER)
+	{
+		pszSound = "player/inh2o.wav";
+		iChannel = CHAN_BODY;
+	}
+	else if (flFallVelocity < PLAYER_FALL_DAMAGE_SPEED)
+	{
+		entvars_t *pevWorld = VARS(ENT(0));
+		TakeDamage(pevWorld, pevWorld, PLAYER_FALL_DAMAGE);
+
+		float flRand = RANDOM_FLOAT(0.0f, 1.0f);
+		if (flRand <= 0.33f)
+			pszSound = "player/pl_fallpain3.wav";
+		else if (flRand <= 0.66f)
+			pszSound = "player/pl_fallpain2.wav";
+		else
+			pszSound = "player/pl_fallpain1.wav";
+		iChannel = CHAN_VOICE;
+	}
+	else
+	{
+		pszSound = "player/pl_jumpland2.wav";
+		iChannel = CHAN_VOICE;
+	}
+
+	EMIT_SOUND(ENT(pev), iChannel, pszSound, VOL_NORM, ATTN_NORM);
+
+	pev->punchangle.x = flFallVelocity * PLAYER_FALL_PUNCH_PITCH;
+	if (RANDOM_FLOAT(0.0f, 1.0f) < 0.5f)
+		pev->punchangle.z = flFallVelocity * PLAYER_FALL_PUNCH_ROLL;
+
+	m_flFallVelocity = 0.0f;
+	SetAnimation(PLAYER_WALK);
+}
+
+//=========================================================
+// DeadThink - plays the death animation, then respawns on
+// a button press
+//=========================================================
+void CBasePlayer::DeadThink(CBaseEntity *pOther)
+{
+	entvars_t *pev = this->pev;
+
+	// the corpse slides to a halt
+	if ((int)pev->flags & FL_ONGROUND)
+	{
+		float flForward = pev->velocity.Length() - PLAYER_CORPSE_FRICTION;
+		if (flForward <= 0.0f)
+			pev->velocity = g_vecZero;
+		else
+			pev->velocity = pev->velocity.Normalize() * flForward;
+	}
+
+	// the death animation is still playing
+	if (!m_fPlayerSequenceFinished && pev->deadflag == DEAD_DYING)
+	{
+		PlayerAdvanceAnimation(this, PLAYER_ANIM_INTERVAL);
 		return;
 	}
 
-	PlayerImpulseCommands();
+	if (pev->deadflag == DEAD_DYING)
+		pev->deadflag = DEAD_DEAD;
 
-	// fall damage: landed (FL_ONGROUND) this frame with health left.
-	// The binary keys on the raw float bits (0xC3960000), i.e.
-	// strictly more negative than -300.0f.
-	float fallVel = SelfFloat(self, PLR_FALL_VELOCITY);
-	if (fallVel < -300.0f)
+	int iButtons = pev->button;
+	if (pev->deadflag == DEAD_DEAD)
 	{
-		if (((int)PevFloat(pev, PEV_FLAGS) & FL_ONGROUND) != 0
-			&& PevInt(pev, PEV_HEALTH) > 0)
-		{
-			ApplyFallDamage(fallVel);
-		}
+		// wait for all buttons released
+		if (!iButtons)
+			pev->deadflag = DEAD_RESPAWNABLE;
 	}
-
-	// track fall velocity while airborne (not on ground)
-	if (((int)PevFloat(pev, PEV_FLAGS) & FL_ONGROUND) == 0)
-		SelfFloat(self, PLR_FALL_VELOCITY) = PevFloat(pev, PEV_VELOCITY + 8);
-
-	// idle vs run animation while alive
-	if (((int)PevFloat(pev, PEV_DEADFLAG) & 0x7FFFFFFF) == 0)
+	else if (iButtons)
 	{
-		if (((int)PevFloat(pev, PEV_VELOCITY) & 0x7FFFFFFF) != 0
-			|| ((int)PevFloat(pev, PEV_VELOCITY + 4) & 0x7FFFFFFF) != 0)
-		{
-			if (((int)PevFloat(pev, PEV_FLAGS) & FL_ONGROUND) != 0)
-				SetAnimation(4);
-		}
-		else
-		{
-			SetAnimation(1);
-		}
+		// any button respawns
+		pev->button = 0;
+		respawn(pev);
+		pev->nextthink = -1.0f;
 	}
-
-	PlayerStudioFrame(this, 0.1f);
-	// The binary: while alive, force pev->modelindex back to the
-	// doctor model index (the engine may have changed it for gibs).
-	if (PevInt(pev, PEV_HEALTH) > 0)
-		PevFloat(pev, PEV_MODELINDEX) = (float)g_PlayerModelIndex;
 }
 
 //=========================================================
-// ApplyFallDamage (the landing branch of)
+// SelectWeapon - selects iWeapon, or the next weapon owned
+// after it
 //=========================================================
-void CBasePlayer::ApplyFallDamage(float fallVel)
+void CBasePlayer::SelectWeapon(int iWeapon)
 {
-	entvars_t* pev = this->pev;
-	void* self = (void*)this;
+	entvars_t *pev = this->pev;
 
-	// landing in water just splashes; otherwise pick a land sound by
-	// impact speed. A hard landing (fallVel < -650) deals 5.0 fall
-	// damage from the worldspawn and plays a random pl_fallpain sound.
-	int waterType = PevInt(pev, PEV_WATERTYPE);
-	const char* sound;
-	int channel;
-	if (waterType == -1069547520)	// CONTENTS_WATER
-	{
-		sound = kInH2O;
-		channel = 4;
-	}
-	else if (fallVel < -650.0f)
-	{
-		// hard landing: 5.0 fall damage from the world (vtable slot 17 ==
-		// shared CBaseMonster::TakeDamage / the binary, inflictor and
-		// attacker = worldspawn entvars).
-		entvars_t* world = EngineGetVarsOfEnt(EnginePEntityOfEntIndex(0));
-		TakeDamage(world, world, 5.0f);
+	unsigned int iCurrent = (unsigned int)pev->weapon;
+	unsigned int iOwned = (unsigned int)pev->weapons;
+	unsigned int iPending;
 
-		float r = RandomFloat(0.0f, 1.0f);
-		if (r <= 0.33f)
-			sound = kFallPain3;
-		else if (r <= 0.66f)
-			sound = kFallPain2;
-		else
-			sound = kFallPain1;
-		channel = 2;
+	if (!(iCurrent & WEAPON_PENDING_MASK))
+	{
+		iPending = iCurrent << WEAPON_PREVIOUS_SHIFT;
 	}
 	else
 	{
-		sound = kJumpLand;
-		channel = 2;
+		// already selecting: move on to the next weapon
+		iPending = iCurrent & WEAPON_PENDING_MASK;
+		iWeapon = (signed char)((iCurrent & WEAPON_ID_MASK) + 1);
 	}
 
-	EngineEmitSound(EdictFromEntvars(pev), channel, sound, PLR_VOL, PLR_ATTN);
-
-	// view punch proportional to fall velocity. The pitch punch is
-	// always set; the roll punch is gated on a fresh random roll < 0.5.
-	PevFloat(pev, PEV_PUNCHANGLE_X) = fallVel * -0.018f;
-	if (RandomFloat(0.0f, 1.0f) < 0.5f)
-		PevFloat(pev, PEV_PUNCHANGLE_Z) = fallVel * -0.009f;
-	SelfFloat(self, PLR_FALL_VELOCITY) = 0.0f;
-	SetAnimation(4);
-}
-
-//=========================================================
-// DeadThink (the dead branch of PreThink)
-//=========================================================
-void CBasePlayer::DeadThink(CBaseEntity* pOther)
-{
-	entvars_t* pev = this->pev;
-	void* self = (void*)this;
-
-	// slide the corpse along ground if it has momentum
-	if (((int)PevFloat(pev, PEV_FLAGS) & FL_ONGROUND) != 0)
+	if (!(iOwned & (1u << (iWeapon & (MAX_WEAPONS - 1)))))
 	{
-		Vector& v = PevVector(pev, PEV_VELOCITY);
-		float speed = sqrtf(v.x*v.x + v.y*v.y + v.z*v.z) - 20.0f;
-		if (speed <= 0.0f)
-		{
-			v.x = 0.0f;
-			v.y = 0.0f;
-			v.z = 0.0f;
-		}
-		else
-		{
-			float len = sqrtf(v.x*v.x + v.y*v.y + v.z*v.z);
-			if (len <= 0.0f)
-			{
-				v.x = 0.0f;
-				v.y = 0.0f;
-				v.z = 0.0f;
-			}
-			else
-			{
-				float inv = 1.0f / len;
-				v.x = v.x * inv * speed;
-				v.y = v.y * inv * speed;
-				v.z = v.z * inv * speed;
-			}
-		}
-	}
-
-	// respawn handshake on death animation completion
-	if (SelfInt(self, PLR_300) == 0 && PevInt(pev, PEV_DEADFLAG) == 1065353216)
-	{
-		PlayerStudioFrame(this, 0.1f);
-		return;
-	}
-
-	if (PevInt(pev, PEV_DEADFLAG) == 1065353216)
-		PevInt(pev, PEV_DEADFLAG) = 0x40000000;
-
-	int button = PevInt(pev, PEV_BUTTON);
-	if (PevInt(pev, PEV_DEADFLAG) == 0x40000000)
-	{
-		if (button == 0)
-			PevFloat(pev, PEV_DEADFLAG) = 3.0f;	// 1077936128
-	}
-	else if (button != 0)
-	{
-		// The binary fires the full engine respawn handshake
-		// (ClientRespawn in h_export.cpp), not a local
-		// deadflag reset.
-		PevInt(pev, PEV_BUTTON) = 0;
-		ClientRespawn(pev);
-		PevFloat(pev, PEV_EXTRA1) = -1.0f;	// 232 -> -1082130432 (0xBF800000)
-	}
-}
-
-//=========================================================
-// thin helpers delegated to engine / respawn
-//=========================================================
-void CBasePlayer::StudioFrameAdvance()
-{
-	// integrate the studio frame (wrapper)
-	PlayerStudioFrame(this, 0.1f);
-}
-
-void CBasePlayer::FlashlightToggle()
-{
-	entvars_t* pev = this->pev;
-	int f = (int)PevFloat(pev, PEV_STUCK);
-	if ((f & 8) != 0)
-		PevFloat(pev, PEV_STUCK) = (float)(f & 0xFFFFFFF7);
-	else
-		PevFloat(pev, PEV_STUCK) = (float)(f | 8);
-}
-
-//=========================================================
-// SelectWeapon
-//   Selects the requested weapon slot, scanning FORWARD for the
-//   next owned slot when the requested one is not owned, and
-//   re-encodes pev->weapon_id (pev+0x110, RAW INT) into the
-//   "pending" form the commit-on-attack path expects:
-//
-//     weapon_id = (preservedHighWord << 16) | (0x07 << 8) | id
-//
-//   where the non-zero high word is the freshly-selected flag that
-//   PlayerImpulseCommands tests at '(viewmodel & 0xFFFF0000)' and
-//   commits on the next +ATTACK (writing weapon_id = id & 0xFF and
-//   running SwitchWeaponModel). The binary does NOT call
-//   SwitchWeaponModel here; the committed clean id (1/2/4) is what
-//   SwitchWeaponModel later keys on. The owned mask is pev+0x114
-//   (== PLR_WEAPONMODEL, 0x17 at spawn => crowbar/glock/mp5).
-//=========================================================
-void CBasePlayer::SelectWeapon(int id)
-{
-	entvars_t* pev = this->pev;
-
-	unsigned int weaponId = (unsigned int)PevInt(pev, PLR_VIEWMODEL);
-	unsigned int ownedMask = (unsigned int)PevInt(pev, PLR_WEAPONMODEL);
-
-	// preserved high word: if a selection is already pending keep its
-	// high word and re-derive the request from (currentLow + 1);
-	// otherwise the high word becomes the current low word (the
-	// freshly-selected flag) and the request stays 'id'.
-	unsigned int highWord;
-	if ((weaponId & 0xFFFF0000) == 0)
-	{
-		highWord = (weaponId & 0xFFFF) << 16;
-	}
-	else
-	{
-		highWord = weaponId & 0xFFFF0000;
-		id = (int)(signed char)((unsigned char)(weaponId & 0xFF) + 1);
-	}
-
-	// requested slot not owned: scan forward (wrapping through 0x1f)
-	// for the next owned bit (forward-scan loop).
-	if ((ownedMask & (1u << ((unsigned)id & 0x1f))) == 0)
-	{
-		int step = 1;
+		int i = 1;
 		do
 		{
-			if (step + id > 0x1f)
-				id = -step;	// wrap: restart search from the low end
-		} while ((ownedMask & (1u << (((unsigned)(step + id)) & 0x1f))) == 0
-			&& (++step < 0x20));
-		if (step == 0x20)
-			step = 0;
-		id += step;
+			// wrap around to weapon 0
+			if (iWeapon + i > MAX_WEAPONS - 1)
+				iWeapon = -i;
+		} while (!(iOwned & (1u << ((iWeapon + i) & (MAX_WEAPONS - 1)))) && ++i < MAX_WEAPONS);
+
+		if (i == MAX_WEAPONS)
+			i = 0;
+
+		iWeapon += i;
 	}
 
-	// re-encode: byte0 = selected id, byte1 = 0x07, high word preserved
-	PevInt(pev, PLR_VIEWMODEL) =
-		(int)(highWord | 0x0700u | ((unsigned)id & 0xFF));
+	pev->weapon = (int)(iPending | WEAPON_SELECTING | ((unsigned int)iWeapon & WEAPON_ID_MASK));
 }
 
 //=========================================================
-// SelectWeaponReverse
-//   Same pending re-encoding as SelectWeapon but scans BACKWARD for
-//   the next owned slot (used by impulse 11 / previous weapon).
+// SelectWeaponReverse - selects iWeapon, or the previous
+// weapon owned before it
 //=========================================================
-void CBasePlayer::SelectWeaponReverse(int id)
+void CBasePlayer::SelectWeaponReverse(int iWeapon)
 {
-	entvars_t* pev = this->pev;
+	entvars_t *pev = this->pev;
 
-	unsigned int weaponId = (unsigned int)PevInt(pev, PLR_VIEWMODEL);
-	unsigned int ownedMask = (unsigned int)PevInt(pev, PLR_WEAPONMODEL);
+	unsigned int iCurrent = (unsigned int)pev->weapon;
+	unsigned int iOwned = (unsigned int)pev->weapons;
+	unsigned int iPending;
 
-	unsigned int highWord;
-	if ((weaponId & 0xFFFF0000) == 0)
+	if (!(iCurrent & WEAPON_PENDING_MASK))
 	{
-		highWord = (weaponId & 0xFFFF) << 16;
+		iPending = iCurrent << WEAPON_PREVIOUS_SHIFT;
 	}
 	else
 	{
-		highWord = weaponId & 0xFFFF0000;
-		id = (int)(signed char)((unsigned char)(weaponId & 0xFF) - 1);
+		// already selecting: move on to the previous weapon
+		iPending = iCurrent & WEAPON_PENDING_MASK;
+		iWeapon = (signed char)((iCurrent & WEAPON_ID_MASK) - 1);
 	}
 
-	// scan downward from id while >= 0; if none owned there, restart
-	// from 0x1f and scan down (two backward loops).
-	int found = 0;
-	if (id >= 0)
+	BOOL fFound = FALSE;
+	if (iWeapon >= 0)
 	{
-		int i = id;
-		while (i >= 0)
+		for (int i = iWeapon; i >= 0; i--)
 		{
-			if ((ownedMask & (1u << ((unsigned)i & 0x1f))) != 0)
+			if (iOwned & (1u << (i & (MAX_WEAPONS - 1))))
 			{
-				id = i;
-				found = 1;
+				iWeapon = i;
+				fFound = TRUE;
 				break;
 			}
-			--i;
 		}
 	}
-	if (!found)
+
+	// wrap around to the last weapon
+	if (!fFound)
 	{
-		int i = 0x1f;
-		while (i >= 0 && (ownedMask & (1u << ((unsigned)i & 0x1f))) == 0)
-			--i;
-		id = i;	// i == -1 (stored as 0xFF) when nothing is owned, as in
+		int i = MAX_WEAPONS - 1;
+		while (i >= 0 && !(iOwned & (1u << (i & (MAX_WEAPONS - 1)))))
+			i--;
+		iWeapon = i;
 	}
 
-	PevInt(pev, PLR_VIEWMODEL) =
-		(int)(highWord | 0x0700u | ((unsigned)id & 0xFF));
-}
-
-void CBasePlayer::PlayerRespawn()
-{
-	// respawn is driven by the engine-side ClientRespawn in h_export.cpp
-	entvars_t* pev = this->pev;
-	PevInt(pev, PEV_DEADFLAG) = 0;
-}
-
-//=========================================================
-// globalvars_t frametime accessor (offset 128)
-//=========================================================
-float GlobalsFrameTime(void* globals)
-{
-	if (!globals)
-		return 0.0f;
-	return *(float*)((unsigned char*)globals + 128);
+	pev->weapon = (int)(iPending | WEAPON_SELECTING | ((unsigned int)iWeapon & WEAPON_ID_MASK));
 }

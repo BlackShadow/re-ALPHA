@@ -9,16 +9,13 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\dlls\h_export.cpp">
-      <Filter>dlls</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\dlls\cbase.cpp">
-      <Filter>dlls</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\dlls\combat.cpp">
-      <Filter>dlls</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\dlls\alien_grunt.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\alien_slave.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\animating.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
     <ClCompile Include="..\..\dlls\barney.cpp">
@@ -33,16 +30,19 @@
     <ClCompile Include="..\..\dlls\boidflock.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\dlls\buttons.cpp">
-      <Filter>dlls</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\dlls\bullchicken.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\dlls\doors.cpp">
+    <ClCompile Include="..\..\dlls\buttons.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\dlls\enginefuncs.cpp">
+    <ClCompile Include="..\..\dlls\cbase.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\combat.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\doors.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
     <ClCompile Include="..\..\dlls\explode.cpp">
@@ -60,31 +60,34 @@
     <ClCompile Include="..\..\dlls\h_cycler.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\dlls\h_export.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\dlls\headcrab.cpp">
-      <Filter>dlls</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\dlls\weapons.cpp">
-      <Filter>dlls</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\dlls\human_grunt.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
     <ClCompile Include="..\..\dlls\houndeye.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\dlls\human_grunt.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\dlls\human_sarge.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\dlls\alien_slave.cpp">
+    <ClCompile Include="..\..\dlls\items.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\dlls\items.cpp">
+    <ClCompile Include="..\..\dlls\john_train.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
     <ClCompile Include="..\..\dlls\lights.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
     <ClCompile Include="..\..\dlls\m44.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\monsters.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
     <ClCompile Include="..\..\dlls\panther.cpp">
@@ -94,6 +97,9 @@
       <Filter>dlls</Filter>
     </ClCompile>
     <ClCompile Include="..\..\dlls\plats.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dlls\player.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
     <ClCompile Include="..\..\dlls\polyrobo.cpp">
@@ -117,33 +123,15 @@
     <ClCompile Include="..\..\dlls\turret.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\dlls\weapons.cpp">
+      <Filter>dlls</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\dlls\world.cpp">
-      <Filter>dlls</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\dlls\animating.cpp">
-      <Filter>dlls</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\dlls\basemonster.cpp">
-      <Filter>dlls</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\dlls\monsters.cpp">
-      <Filter>dlls</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\dlls\cbase_toggle.cpp">
-      <Filter>dlls</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\dlls\player.cpp">
-      <Filter>dlls</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\dlls\john_train.cpp">
       <Filter>dlls</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\dlls\hl_exports.h">
-      <Filter>dlls</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\dlls\hl_types.h">
+    <ClInclude Include="..\..\dlls\basemonster.h">
       <Filter>dlls</Filter>
     </ClInclude>
     <ClInclude Include="..\..\dlls\cbase.h">
@@ -152,25 +140,31 @@
     <ClInclude Include="..\..\dlls\client.h">
       <Filter>dlls</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\dlls\enginefuncs.h">
+    <ClInclude Include="..\..\dlls\decals.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dlls\enginecallback.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dlls\extdll.h">
       <Filter>dlls</Filter>
     </ClInclude>
     <ClInclude Include="..\..\dlls\ggrenade.h">
       <Filter>dlls</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\dlls\utils.h">
-      <Filter>dlls</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\dlls\animating.h">
-      <Filter>dlls</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\dlls\basemonster.h">
-      <Filter>dlls</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\dlls\cbase_toggle.h">
+    <ClInclude Include="..\..\dlls\monsters.h">
       <Filter>dlls</Filter>
     </ClInclude>
     <ClInclude Include="..\..\dlls\player.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dlls\studio.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dlls\util.h">
+      <Filter>dlls</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dlls\weapons.h">
       <Filter>dlls</Filter>
     </ClInclude>
   </ItemGroup>
@@ -180,6 +174,9 @@
     </None>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\public\const.h">
+      <Filter>public</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\public\edict.h">
       <Filter>public</Filter>
     </ClInclude>

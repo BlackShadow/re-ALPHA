@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,399 +12,677 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// Combat - Bullet firing and multi-damage helpers
+// Combat - damage, death, gibs and bullets
 //=========================================================
 
-#include <string.h>
+#include "extdll.h"
+#include "util.h"
 #include "cbase.h"
-#include "enginefuncs.h"
-#include "utils.h"
+#include "basemonster.h"
+#include "weapons.h"
+#include "decals.h"
 
-// Tracer cadence counter. In the original this lives outside the 28-byte
-// CBaseEntity; a shared counter preserves the 1-in-N tracer visual.
-static int g_iTracerCount = 0;
+// pev->items armor bits
+#define IT_ARMOR1			(1<<13)
+#define IT_ARMOR2			(1<<14)
+#define IT_ARMOR3			(1<<15)
 
-enum
+#define BULLET_DAMAGE		2.0f
+#define CORPSE_MIN_HEALTH	-99.0f
+
+Vector g_vecAttackDir;
+
+// damage of all the bullets that hit the same entity, applied at once
+typedef struct
 {
-	SVC_TEMPENTITY = 23,
-	TE_GUNSHOT = 2,
-	TE_TRACER = 6,
-	TE_BLOODSTREAM = 101,
-	TE_BLOOD = 103,
-	TE_DECAL = 104,
-};
+	EOFFSET	eoffsetEntity;
+	float	amount;
+} MULTIDAMAGE;
 
-static int g_multiDamageTarget = 0;
-static float g_multiDamageAmount = 0.0f;
+static MULTIDAMAGE gMultiDamage;
 
-float g_vecAttackDir[3] = {0.0f, 0.0f, 0.0f};
+// every fourth monster bullet draws a tracer
+static int g_iTracerCount;
 
 //=========================================================
-// multi-damage
+// BloodDecalTrace - blood splat where the trace ended
 //=========================================================
-
-static void ClearMultiDamage()
+static void BloodDecalTrace(TraceResult *ptr, int bloodColor)
 {
-	g_multiDamageTarget = 0;
-	g_multiDamageAmount = 0.0f;
+	WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+	WRITE_BYTE(MSG_BROADCAST, TE_DECAL);
+	WRITE_COORD(MSG_BROADCAST, ptr->vecEndPos.x);
+	WRITE_COORD(MSG_BROADCAST, ptr->vecEndPos.y);
+	WRITE_COORD(MSG_BROADCAST, ptr->vecEndPos.z);
+	WRITE_SHORT(MSG_BROADCAST, ENTINDEX(ptr->pHit));
+
+	if (bloodColor == BLOOD_COLOR_RED)
+		WRITE_BYTE(MSG_BROADCAST, RANDOM_LONG(DECAL_BLOOD1, DECAL_BLOOD6));
+	else
+		WRITE_BYTE(MSG_BROADCAST, RANDOM_LONG(DECAL_YBLOOD1, DECAL_YBLOOD6));
 }
 
-static void ApplyMultiDamage(entvars_t *pevInflictor)
+//=========================================================
+// Gibs - body parts of a monster that was blown apart
+//=========================================================
+class CGib : public CBaseEntity
 {
-	void *globals;
-	edict_t *pHitEdict;
-	entvars_t *pevHit;
-	CBaseEntity *pHit;
-	const char *pszClassname;
+public:
+	void Spawn(entvars_t *pevVictim, const char *szGibModel, float flHealth, int bloodColor);
+	void Touch(CBaseEntity *pOther);
+	void StartFadeOut(CBaseEntity *pOther);
+	void FadeOut(CBaseEntity *pOther);
 
-	if (!pevInflictor || !g_multiDamageTarget)
-		return;
+	static void SpawnRandomGibs(entvars_t *pevVictim, float flHealth, int bloodColor, BOOL fHuman);
 
-	globals = GlobalsFromEntvars(pevInflictor);
+	int		m_bloodColor;
+};
 
-	pHitEdict = EnginePEntityOfEntIndex(g_multiDamageTarget);
-	if (!pHitEdict)
-		return;
+void CGib::Spawn(entvars_t *pevVictim, const char *szGibModel, float flHealth, int bloodColor)
+{
+	pev->movetype = MOVETYPE_BOUNCE;
+	pev->renderamt = 255;
+	pev->rendermode = kRenderNormal;
+	pev->renderfx = 0;
+	pev->solid = SOLID_SLIDEBOX;
 
-	pevHit = EngineGetVarsOfEnt(pHitEdict);
-	pHit = (CBaseEntity *)EngineGetPrivateData(pHitEdict);
-	if (pHit)
-		pHit->TakeDamage(pevInflictor, pevInflictor, g_multiDamageAmount);
+	SET_MODEL(ENT(pev), szGibModel);
+	UTIL_SetSize(pev, g_vecZero, g_vecZero);
 
-	if (!pevHit)
-		return;
+	// somewhere inside the victim
+	pev->origin.x = RANDOM_FLOAT(0.0f, 1.0f) * pevVictim->size.x + pevVictim->absmin.x;
+	pev->origin.y = RANDOM_FLOAT(0.0f, 1.0f) * pevVictim->size.y + pevVictim->absmin.y;
+	pev->origin.z = RANDOM_FLOAT(0.0f, 1.0f) * pevVictim->size.z + pevVictim->absmin.z;
 
-	pszClassname = EngineStringFromIndex(PevInt(pevHit, PEV_CLASSNAME));
-	if (pszClassname && strcmp(pszClassname, "cycler") == 0)
-		return;
+	Vector vecVelocity;
+	vecVelocity.z = RANDOM_FLOAT(200.0f, 300.0f);
+	vecVelocity.y = RANDOM_FLOAT(-100.0f, 100.0f);
+	vecVelocity.x = RANDOM_FLOAT(-100.0f, 100.0f);
 
-	if (RandomFloat(0.0f, 1.0f) >= 0.3f)
-		return;
+	// the more damage, the faster the gibs fly
+	float flScale;
+	if (flHealth > -50.0f)
+		flScale = 0.7f;
+	else if (flHealth > -200.0f)
+		flScale = 2.0f;
+	else
+		flScale = 10.0f;
 
+	pev->velocity = vecVelocity * flScale;
+	pev->avelocity.y = RANDOM_FLOAT(100.0f, 300.0f);
+
+	m_bloodColor = bloodColor;
+
+	pev->nextthink = gpGlobals->time + 10.0f;
+	SetThink(&CGib::StartFadeOut);
+}
+
+//=========================================================
+// Touch - bleeds where it lands and stops spinning once
+// it lies still
+//=========================================================
+void CGib::Touch(CBaseEntity *pOther)
+{
+	TraceResult tr;
+
+	Vector vecStart = pev->origin;
+	vecStart.z += 8.0f;
+	Vector vecEnd = vecStart;
+	vecEnd.z -= 24.0f;
+
+	UTIL_TraceLine(vecStart, vecEnd, ignore_monsters, ENT(pev), &tr);
+	BloodDecalTrace(&tr, m_bloodColor);
+
+	if (pev->velocity == g_vecZero)
 	{
-		float delta[3];
-		float vecSrc[3];
-		float vecDir[3];
-		float vecEnd[3];
+		pev->avelocity = g_vecZero;
+		pev->solid = SOLID_NOT;
+	}
+}
+
+void CGib::StartFadeOut(CBaseEntity *pOther)
+{
+	pev->rendermode = kRenderTransTexture;
+	pev->solid = SOLID_NOT;
+	pev->avelocity = g_vecZero;
+
+	pev->nextthink = gpGlobals->time + 0.1f;
+	SetThink(&CGib::FadeOut);
+}
+
+void CGib::FadeOut(CBaseEntity *pOther)
+{
+	if (pev->renderamt != 0)
+	{
+		pev->renderamt -= 5.0f;
+		pev->nextthink = gpGlobals->time + 0.1f;
+	}
+	else
+	{
+		pev->nextthink = gpGlobals->time + 5.0f;
+		SetThink(&CBaseEntity::SUB_Remove);
+	}
+}
+
+//=========================================================
+// SpawnRandomGibs - a skull for humans, plus one random gib
+//=========================================================
+void CGib::SpawnRandomGibs(entvars_t *pevVictim, float flHealth, int bloodColor, BOOL fHuman)
+{
+	if (fHuman)
+	{
+		CGib *pSkull = GetClassPtr((CGib *)NULL);
+		pSkull->Spawn(pevVictim, "models/gib_skull.mdl", flHealth, bloodColor);
+	}
+	else
+	{
+		// no skull, but the random number is used up all the same
+		rand();
+	}
+
+	CGib *pGib = GetClassPtr((CGib *)NULL);
+	const char *szGibModel;
+
+	if (rand() % 15 == 0)
+	{
+		szGibModel = "models/gib_legbone.mdl";
+	}
+	else
+	{
+		int iGib = rand() % 3;
+
+		if (iGib == 0)
+			szGibModel = "models/gib_lung.mdl";
+		else if (iGib == 1)
+			szGibModel = "models/gib_b_gib.mdl";
+		else
+			szGibModel = "models/gib_b_bone.mdl";
+	}
+
+	pGib->Spawn(pevVictim, szGibModel, flHealth, bloodColor);
+}
+
+//=========================================================
+// SpawnBloodSpray - blood splashes on the walls behind a
+// monster that was blown apart
+//=========================================================
+static void SpawnBloodSpray(entvars_t *pev, int bloodColor)
+{
+	UTIL_MakeVectors(g_vecAttackDir);
+
+	for (int i = 0; i < 6; i++)
+	{
+		float flRight = RANDOM_FLOAT(-1.0f, 1.0f) * 0.35f;
+		float flUp = RANDOM_FLOAT(-1.0f, 1.0f) * 0.35f;
+		Vector vecDir = -g_vecAttackDir + gpGlobals->v_right * flRight + gpGlobals->v_up * flUp;
+
 		TraceResult tr;
-
-		delta[0] = PevVector(pevInflictor, PEV_ORIGIN).x - PevVector(pevHit, PEV_ORIGIN).x;
-		delta[1] = PevVector(pevInflictor, PEV_ORIGIN).y - PevVector(pevHit, PEV_ORIGIN).y;
-		delta[2] = PevVector(pevInflictor, PEV_ORIGIN).z - PevVector(pevHit, PEV_ORIGIN).z;
-
-		EngineMakeVectors(delta);
-
-		vecSrc[0] = PevVector(pevHit, PEV_ORIGIN).x;
-		vecSrc[1] = PevVector(pevHit, PEV_ORIGIN).y;
-		vecSrc[2] = PevVector(pevHit, PEV_ORIGIN).z + PevVector(pevHit, PEV_SIZE).z * 0.5f;
-
-		{
-			// Original draws the RIGHT-scaling random first, then the UP-scaling one.
-			const float *right = GlobalsRight(globals);
-			const float *up = GlobalsUp(globals);
-			float randRight = RandomFloat(-1.0f, 1.0f) * 0.45f;
-			float randUp = RandomFloat(-1.0f, 1.0f) * 0.45f;
-
-			vecDir[0] = -g_vecAttackDir[0] + (right ? right[0] : 0.0f) * randRight + (up ? up[0] : 0.0f) * randUp;
-			vecDir[1] = -g_vecAttackDir[1] + (right ? right[1] : 0.0f) * randRight + (up ? up[1] : 0.0f) * randUp;
-			vecDir[2] = -g_vecAttackDir[2] + (right ? right[2] : 0.0f) * randRight + (up ? up[2] : 0.0f) * randUp;
-		}
-
-		vecEnd[0] = vecSrc[0] + vecDir[0] * 128.0f;
-		vecEnd[1] = vecSrc[1] + vecDir[1] * 128.0f;
-		vecEnd[2] = vecSrc[2] + vecDir[2] * 128.0f;
-
-		memset(&tr, 0, sizeof(tr));
-		// The binary passes fNoMonsters arg7 = 0 to the trace wrapper
-		// (EngineTraceLine): the blood-decal trace IGNORES monsters so the
-		// decal lands on the wall behind the victim.
-		EngineTraceLine(vecSrc, vecEnd, 0, pHitEdict, &tr);
+		UTIL_TraceLine(pev->origin, pev->origin + vecDir * 256.0f, ignore_monsters, ENT(pev), &tr);
 
 		if (tr.flFraction != 1.0f)
 		{
-			int bloodColor = pHit ? pHit->BloodColor() : 0;
+			BloodDecalTrace(&tr, bloodColor);
 
-			EngineWriteByte(0, SVC_TEMPENTITY);
-			EngineWriteByte(0, TE_DECAL);
-			EngineWriteCoord(0, tr.vecEndPos[0]);
-			EngineWriteCoord(0, tr.vecEndPos[1]);
-			EngineWriteCoord(0, tr.vecEndPos[2]);
-			EngineWriteShort(0, (short)EngineModelIndex(TraceHitIndex(&tr)));
-
-			if (bloodColor == 70)
-				EngineWriteByte(0, RandomLong(14, 19));
-			else
-				EngineWriteByte(0, RandomLong(20, 25));
+			WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+			WRITE_BYTE(MSG_BROADCAST, TE_BLOOD);
+			WRITE_COORD(MSG_BROADCAST, tr.vecEndPos.x);
+			WRITE_COORD(MSG_BROADCAST, tr.vecEndPos.y);
+			WRITE_COORD(MSG_BROADCAST, tr.vecEndPos.z);
+			WRITE_COORD(MSG_BROADCAST, RANDOM_FLOAT(-1.0f, 1.0f));
+			WRITE_COORD(MSG_BROADCAST, RANDOM_FLOAT(-1.0f, 1.0f));
+			WRITE_COORD(MSG_BROADCAST, RANDOM_FLOAT(0.0f, 1.0f));
+			WRITE_BYTE(MSG_BROADCAST, (unsigned char)bloodColor);
+			WRITE_BYTE(MSG_BROADCAST, 15);		// speed
 		}
 	}
 }
 
-static void AddMultiDamage(entvars_t *pevInflictor, int hitEntIndex, float flDamage)
+static void CountMonsterKill()
 {
-	if (!hitEntIndex)
+	gpGlobals->killed_monsters += 1;
+	WRITE_BYTE(MSG_ALL, SVC_KILLEDMONSTER);
+}
+
+//=========================================================
+// TakeDamage - armor absorbs part of the damage, the rest
+// is taken from health. Monsters turn on their attacker.
+//=========================================================
+int CBaseMonster::TakeDamage(entvars_t *pevInflictor, entvars_t *pevAttacker, float flDamage)
+{
+	if (pev->takedamage == DAMAGE_NO)
+		return 0;
+
+	Vector vecCenter = pev->size * 0.5f + pev->absmin;
+	g_vecAttackDir = (pevInflictor->origin - vecCenter).Normalize();
+
+	float flSave = (float)ceil(pev->armortype * flDamage);
+	if (pev->armorvalue <= flSave)
+	{
+		// armor is used up
+		flSave = pev->armorvalue;
+		pev->armortype = 0;
+		pev->items &= ~(IT_ARMOR1 | IT_ARMOR2 | IT_ARMOR3);
+	}
+
+	pev->armorvalue -= flSave;
+	float flTake = (float)ceil(flDamage - flSave);
+
+	int flags = (int)pev->flags;
+
+	// the client shows the damage it took
+	if (flags & FL_CLIENT)
+	{
+		pev->dmg_take += flTake;
+		pev->dmg_save += flSave;
+		pev->dmg_inflictor = OFFSET(pevInflictor);
+	}
+
+	// push players away from the inflictor
+	if (!FNullEnt(pevInflictor) && pev->movetype == MOVETYPE_WALK && pevAttacker && pevAttacker->solid != SOLID_TRIGGER)
+	{
+		Vector vecDir = (pev->origin - (pevInflictor->absmin + pevInflictor->absmax) * 0.5f).Normalize();
+		pev->velocity += vecDir * flDamage * 8.0f;
+	}
+
+	if (FClassnameIs(pev, "player"))
+	{
+		if (flags & FL_GODMODE)
+			return 1;
+
+		// no damage from teammates
+		if (gpGlobals->teamplay == 1 && pev->team > 0 && pevAttacker && pevAttacker->team == pev->team)
+			return 1;
+	}
+
+	pev->health -= flTake;
+
+	if (pev->health <= 0)
+	{
+		Killed(pevAttacker ? OFFSET(pevAttacker) : 0);
+		return 1;
+	}
+
+	// go after a player or a monster of another class that hurt us
+	if ((flags & FL_MONSTER) && !FNullEnt(pevAttacker) && ((int)pevAttacker->flags & (FL_CLIENT | FL_MONSTER)))
+	{
+		CBaseEntity *pAttacker = Instance(pevAttacker);
+
+		if (!pAttacker || Classify() != pAttacker->Classify())
+		{
+			pev->goalentity = OFFSET(pevAttacker);
+			pev->enemy = pev->goalentity;
+			m_pevAttacker = pevAttacker;
+
+			// guess where the attacker is
+			m_vecAttackerLKP = g_vecAttackDir * 64.0f + pev->origin;
+			pev->ideal_yaw = UTIL_VecToYaw(m_vecAttackerLKP - pev->origin);
+		}
+	}
+
+	if (gpGlobals->time > pev->pain_finished)
+		Pain(flDamage);
+
+	return 1;
+}
+
+//=========================================================
+// SetDeathActivity - plays one of the death animations
+//=========================================================
+void CBaseMonster::SetDeathActivity(int iDeathType)
+{
+	if (iDeathType >= 0 && iDeathType < NUM_DEATH_TYPES)
+		m_MonsterState = MONSTERSTATE_DIE1 + iDeathType;
+	else
+		ALERT(at_console, "Unknown death type!\n");
+
+	pev->ideal_yaw = pev->angles.y;
+	SetActivity(m_MonsterState);
+	SetThink(&CBaseMonster::MonsterThink);
+	pev->nextthink = gpGlobals->time + 0.1f;
+}
+
+//=========================================================
+// Killed
+//=========================================================
+void CBaseMonster::Killed(EOFFSET eoffsetAttacker)
+{
+	// leave the squad
+	if (m_iSquadSize > 1)
+	{
+		entvars_t *pevNewLeader = m_pSquadLeader;
+		unsigned int i;
+
+		if (m_fSquadLeader)
+		{
+			CBaseMonster *pNext = (CBaseMonster *)Instance(m_pSquadNext);
+			if (pNext)
+				pNext->m_fSquadLeader = TRUE;
+
+			pevNewLeader = m_pSquadNext;
+			ALERT(at_console, "*\n");
+		}
+
+		// unlink from the ring
+		entvars_t *pevMember = pev;
+		for (i = 0; i < m_iSquadSize && pevMember; i++)
+		{
+			CBaseMonster *pMember = (CBaseMonster *)Instance(pevMember);
+			if (!pMember)
+				break;
+
+			if (pMember->m_pSquadNext == pev)
+				pMember->m_pSquadNext = m_pSquadNext;
+
+			pevMember = pMember->m_pSquadNext;
+		}
+
+		for (i = 0; i < m_iSquadSize && pevMember; i++)
+		{
+			CBaseMonster *pMember = (CBaseMonster *)Instance(pevMember);
+			if (!pMember)
+				break;
+
+			ALERT(at_console, "-");
+			pMember->m_pSquadLeader = pevNewLeader;
+			pevMember = pMember->m_pSquadNext;
+		}
+	}
+
+	// stop the weapon sound
+	EMIT_SOUND(ENT(pev), CHAN_WEAPON, "common/null.wav", VOL_NORM, ATTN_NORM);
+	pev->solid = SOLID_NOT;
+
+	int flags = (int)pev->flags;
+
+	if (pev->health < GIB_HEALTH && (flags & FL_MONSTER))
+	{
+		SpawnBloodSpray(pev, BloodColor());
+
+		if (rand() & 1)
+		{
+			// thrown back in one piece
+			CountMonsterKill();
+
+			pev->takedamage = DAMAGE_NO;
+			SetTouch(NULL);
+			pev->origin.z += 1.0f;
+
+			if ((int)pev->flags & FL_ONGROUND)
+			{
+				pev->movetype = MOVETYPE_TOSS;
+				pev->flags -= FL_ONGROUND;
+				pev->velocity = g_vecAttackDir * -400.0f;
+			}
+
+			Death(DEATH_NORMAL);
+			return;
+		}
+
+		EMIT_SOUND(ENT(pev), CHAN_WEAPON, "common/bodysplat.wav", VOL_NORM, ATTN_NORM);
+		pev->solid = SOLID_NOT;
+		pev->model = 0;
+
+		int iClass = Classify();
+		BOOL fHuman = (iClass == CLASS_HUMAN_MILITARY || iClass == CLASS_PLAYER_ALLY || iClass == CLASS_PLAYER);
+		CGib::SpawnRandomGibs(pev, pev->health, BloodColor(), fHuman);
+	}
+
+	if (pev->health < CORPSE_MIN_HEALTH)
+		pev->health = CORPSE_MIN_HEALTH;
+
+	// doors, triggers, etc
+	if (pev->movetype == MOVETYPE_PUSH || pev->movetype == MOVETYPE_NONE)
+	{
+		Death(DEATH_NORMAL);
+		return;
+	}
+
+	pev->enemy = eoffsetAttacker;
+
+	if (flags & FL_MONSTER)
+	{
+		CountMonsterKill();
+
+		// nothing left to animate
+		if (pev->health <= GIB_HEALTH)
+		{
+			SetThink(&CBaseEntity::SUB_DoNothing);
+			pev->nextthink = gpGlobals->time + 0.1f;
+			return;
+		}
+	}
+
+	pev->takedamage = DAMAGE_NO;
+	SetTouch(NULL);
+	Death(DEATH_NORMAL);
+}
+
+void CBaseMonster::Pain(float flDamage)
+{
+}
+
+void CBaseMonster::Death(int iDeathType)
+{
+	SetDeathActivity(DEATH_NORMAL);
+}
+
+//=========================================================
+// Multi-damage
+//=========================================================
+static void ClearMultiDamage()
+{
+	gMultiDamage.eoffsetEntity = 0;
+	gMultiDamage.amount = 0;
+}
+
+//=========================================================
+// ApplyMultiDamage - inflicts the collected damage, the
+// victim sometimes bleeds on the wall behind it
+//=========================================================
+static void ApplyMultiDamage(entvars_t *pevInflictor)
+{
+	if (FNullEnt(gMultiDamage.eoffsetEntity))
 		return;
 
-	if (hitEntIndex == g_multiDamageTarget)
+	edict_t *pentHit = ENT(gMultiDamage.eoffsetEntity);
+	entvars_t *pevHit = VARS(pentHit);
+	CBaseEntity *pHit = CBaseEntity::Instance(pentHit);
+
+	if (pHit)
+		pHit->TakeDamage(pevInflictor, pevInflictor, gMultiDamage.amount);
+
+	if (FClassnameIs(pevHit, "cycler"))
+		return;
+
+	if (RANDOM_FLOAT(0.0f, 1.0f) >= 0.3f)
+		return;
+
+	UTIL_MakeVectors(pevInflictor->origin - pevHit->origin);
+
+	Vector vecSrc = pevHit->origin;
+	vecSrc.z += pevHit->size.z * 0.5f;
+
+	float flRight = RANDOM_FLOAT(-1.0f, 1.0f) * 0.45f;
+	float flUp = RANDOM_FLOAT(-1.0f, 1.0f) * 0.45f;
+	Vector vecDir = -g_vecAttackDir + gpGlobals->v_right * flRight + gpGlobals->v_up * flUp;
+
+	TraceResult tr;
+	UTIL_TraceLine(vecSrc, vecSrc + vecDir * 128.0f, ignore_monsters, pentHit, &tr);
+
+	if (tr.flFraction != 1.0f)
+		BloodDecalTrace(&tr, pHit ? pHit->BloodColor() : 0);
+}
+
+static void AddMultiDamage(entvars_t *pevInflictor, EOFFSET eoffsetEntity, float flDamage)
+{
+	if (FNullEnt(eoffsetEntity))
+		return;
+
+	if (eoffsetEntity == gMultiDamage.eoffsetEntity)
 	{
-		g_multiDamageAmount += flDamage;
+		gMultiDamage.amount += flDamage;
 		return;
 	}
 
 	ApplyMultiDamage(pevInflictor);
-	g_multiDamageTarget = hitEntIndex;
-	g_multiDamageAmount = flDamage;
+	gMultiDamage.eoffsetEntity = eoffsetEntity;
+	gMultiDamage.amount = flDamage;
 }
 
 //=========================================================
-// FireBullets
+// SpawnBlood - blood flying out towards the attacker
 //=========================================================
-
-static void BloodEffect(const float *vecOrigin, int bloodColor, float bloodAmount)
+static void SpawnBlood(const Vector &vecSpot, int bloodColor, float flDamage)
 {
-	if (bloodAmount > 255.0f)
-		bloodAmount = 255.0f;
+	if (flDamage > 255.0f)
+		flDamage = 255.0f;
 
-	EngineWriteByte(0, SVC_TEMPENTITY);
-	EngineWriteByte(0, TE_BLOOD);
-	EngineWriteCoord(0, vecOrigin[0]);
-	EngineWriteCoord(0, vecOrigin[1]);
-	EngineWriteCoord(0, vecOrigin[2]);
-	EngineWriteCoord(0, g_vecAttackDir[0]);
-	EngineWriteCoord(0, g_vecAttackDir[1]);
-	EngineWriteCoord(0, g_vecAttackDir[2]);
-	EngineWriteByte(0, (unsigned char)bloodColor);
-	EngineWriteByte(0, (unsigned char)(int)bloodAmount);
+	WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+	WRITE_BYTE(MSG_BROADCAST, TE_BLOOD);
+	WRITE_COORD(MSG_BROADCAST, vecSpot.x);
+	WRITE_COORD(MSG_BROADCAST, vecSpot.y);
+	WRITE_COORD(MSG_BROADCAST, vecSpot.z);
+	WRITE_COORD(MSG_BROADCAST, g_vecAttackDir.x);
+	WRITE_COORD(MSG_BROADCAST, g_vecAttackDir.y);
+	WRITE_COORD(MSG_BROADCAST, g_vecAttackDir.z);
+	WRITE_BYTE(MSG_BROADCAST, (unsigned char)bloodColor);
+	WRITE_BYTE(MSG_BROADCAST, (int)flDamage);
 }
 
-static void ImpactEffects(entvars_t *pevInflictor, float flDamage, int fSkipEffects, const float *vecDir, TraceResult *ptr)
+//=========================================================
+// BulletImpact - damage, blood and impact effects of a
+// bullet that hit something
+//=========================================================
+static void BulletImpact(entvars_t *pevInflictor, float flDamage, BOOL fNoEffects, const Vector &vecDir, TraceResult *ptr)
 {
-	int hitEntIndex;
-	edict_t *pHitEdict;
-	entvars_t *pevHit;
+	edict_t *pentHit = ENT(ptr->pHit);
+	entvars_t *pevHit = VARS(pentHit);
+	Vector vecSpot = ptr->vecEndPos - vecDir * 4.0f;
 
-	if (!pevInflictor || !vecDir || !ptr)
-		return;
-
-	hitEntIndex = TraceHitIndex(ptr);
-	// A world hit gives tr.pHit == 0 (prog offset of the world edict). The binary
-	// resolves it straight through PROG_TO_EDICT (no null-guard), so resolve it here
-	// too -- otherwise pevHit is NULL on every wall hit and the gunshot/decal block
-	// below is skipped (no bullet marks on walls).
-	pHitEdict = EnginePEntityOfEntIndex(hitEntIndex);
-	pevHit = pHitEdict ? EngineGetVarsOfEnt(pHitEdict) : NULL;
-
+	if (pevHit->takedamage != DAMAGE_NO)
 	{
-		float hitPos[3];
-		hitPos[0] = ptr->vecEndPos[0] - vecDir[0] * 4.0f;
-		hitPos[1] = ptr->vecEndPos[1] - vecDir[1] * 4.0f;
-		hitPos[2] = ptr->vecEndPos[2] - vecDir[2] * 4.0f;
+		CBaseEntity *pHit = CBaseEntity::Instance(pentHit);
+		int bloodColor = pHit ? pHit->BloodColor() : 0;
 
-		if (pevHit && (PevInt(pevHit, PEV_TAKEDAMAGE) & 0x7FFFFFFF) != 0)
+		AddMultiDamage(pevInflictor, ptr->pHit, flDamage);
+
+		if (FClassnameIs(pevHit, "func_glass") || FClassnameIs(pevHit, "func_breakable"))
+			return;
+
+		// too tough to bleed
+		if (pevHit->health > 1000.0f)
+			return;
+
+		SpawnBlood(vecSpot, bloodColor, flDamage);
+
+		// dying, blood gushes out
+		if (pevHit->health <= gMultiDamage.amount)
 		{
-			const char *pszClassname;
-			CBaseEntity *pEntity = (CBaseEntity *)EngineGetPrivateData(pHitEdict);
-			int bloodColor = pEntity ? pEntity->BloodColor() : 0;
+			Vector vecOrigin = ptr->vecEndPos + vecDir * 8.0f;
 
-			AddMultiDamage(pevInflictor, hitEntIndex, flDamage);
-
-			pszClassname = EngineStringFromIndex(PevInt(pevHit, PEV_CLASSNAME));
-			if (pszClassname)
-			{
-				if (strcmp(pszClassname, "func_glass") == 0)
-					return;
-				if (strcmp(pszClassname, "func_breakable") == 0)
-					return;
-			}
-
-			if (PevFloat(pevHit, PEV_HEALTH) > 1000.0f)
-				return;
-
-			BloodEffect(hitPos, bloodColor, flDamage);
-
-			if (PevFloat(pevHit, PEV_HEALTH) <= g_multiDamageAmount)
-			{
-				float org[3];
-				org[0] = ptr->vecEndPos[0] + vecDir[0] * 8.0f;
-				org[1] = ptr->vecEndPos[1] + vecDir[1] * 8.0f;
-				org[2] = ptr->vecEndPos[2] + vecDir[2] * 8.0f;
-
-				EngineWriteByte(0, SVC_TEMPENTITY);
-				EngineWriteByte(0, TE_BLOODSTREAM);
-				EngineWriteCoord(0, org[0]);
-				EngineWriteCoord(0, org[1]);
-				EngineWriteCoord(0, org[2]);
-				EngineWriteCoord(0, RandomFloat(-1.0f, 1.0f));
-				EngineWriteCoord(0, RandomFloat(-1.0f, 1.0f));
-				EngineWriteCoord(0, RandomFloat(0.0f, 1.0f));
-				EngineWriteByte(0, (unsigned char)bloodColor);
-				EngineWriteByte(0, (unsigned char)RandomLong(80, 150));
-			}
+			WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+			WRITE_BYTE(MSG_BROADCAST, TE_BLOODSTREAM);
+			WRITE_COORD(MSG_BROADCAST, vecOrigin.x);
+			WRITE_COORD(MSG_BROADCAST, vecOrigin.y);
+			WRITE_COORD(MSG_BROADCAST, vecOrigin.z);
+			WRITE_COORD(MSG_BROADCAST, RANDOM_FLOAT(-1.0f, 1.0f));
+			WRITE_COORD(MSG_BROADCAST, RANDOM_FLOAT(-1.0f, 1.0f));
+			WRITE_COORD(MSG_BROADCAST, RANDOM_FLOAT(0.0f, 1.0f));
+			WRITE_BYTE(MSG_BROADCAST, (unsigned char)bloodColor);
+			WRITE_BYTE(MSG_BROADCAST, RANDOM_LONG(80, 150));	// speed
 		}
+	}
 
-		if (!fSkipEffects && pevHit && PevFloat(pevHit, PEV_SOLID) == 4.0f)
-		{
-			EngineWriteByte(0, SVC_TEMPENTITY);
-			EngineWriteByte(0, TE_GUNSHOT);
-			EngineWriteCoord(0, hitPos[0]);
-			EngineWriteCoord(0, hitPos[1]);
-			EngineWriteCoord(0, hitPos[2]);
+	if (!fNoEffects && pevHit->solid == SOLID_BSP)
+	{
+		WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+		WRITE_BYTE(MSG_BROADCAST, TE_GUNSHOT);
+		WRITE_COORD(MSG_BROADCAST, vecSpot.x);
+		WRITE_COORD(MSG_BROADCAST, vecSpot.y);
+		WRITE_COORD(MSG_BROADCAST, vecSpot.z);
 
-			EngineWriteByte(0, SVC_TEMPENTITY);
-			EngineWriteByte(0, TE_DECAL);
-			EngineWriteCoord(0, ptr->vecEndPos[0]);
-			EngineWriteCoord(0, ptr->vecEndPos[1]);
-			EngineWriteCoord(0, ptr->vecEndPos[2]);
-			EngineWriteShort(0, (short)EngineModelIndex(hitEntIndex));
+		WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+		WRITE_BYTE(MSG_BROADCAST, TE_DECAL);
+		WRITE_COORD(MSG_BROADCAST, ptr->vecEndPos.x);
+		WRITE_COORD(MSG_BROADCAST, ptr->vecEndPos.y);
+		WRITE_COORD(MSG_BROADCAST, ptr->vecEndPos.z);
+		WRITE_SHORT(MSG_BROADCAST, ENTINDEX(ptr->pHit));
 
-			if (hitEntIndex && (PevInt(pevHit, PEV_RENDERMODE) & 0x7FFFFFFF) != 0)
-				EngineWriteByte(0, RandomLong(26, 28));
-			else
-				EngineWriteByte(0, RandomLong(0, 4));
-		}
+		// see-through brush entities crack
+		if (!FNullEnt(ptr->pHit) && pevHit->rendermode != kRenderNormal)
+			WRITE_BYTE(MSG_BROADCAST, RANDOM_LONG(DECAL_BREAK1, DECAL_BREAK3));
+		else
+			WRITE_BYTE(MSG_BROADCAST, RANDOM_LONG(DECAL_SHOT1, DECAL_SHOT5));
 	}
 }
 
-void CBaseEntity::FireBullets(int cShots, const float *vecDirShooting, float flSpreadUp, float flSpreadRight, int iBulletType, float flDistance)
+//=========================================================
+// FireBullets - shoots cShots bullets from the eyes along
+// vecDirShooting, randomly spread by flSpreadRight and
+// flSpreadUp
+//=========================================================
+void CBaseEntity::FireBullets(int cShots, const Vector &vecDirShooting, float flSpreadRight, float flSpreadUp, int iBulletType, float flDistance)
 {
-	void *globals;
-	edict_t *pEdict;
-	const char *classname;
-	const float *forward;
-	const float *right;
-	const float *up;
-	float vecSrc[3];
-	float tracerZ;
-	int tracerMod;
-	int iShot;
-	int i;
+	TraceResult tr;
 
-	HL_UNUSED(iBulletType);
+	UTIL_MakeVectors(pev->v_angle);
 
-	if (!pev || !vecDirShooting)
-		return;
+	Vector vecSrc;
+	vecSrc.x = pev->origin.x + gpGlobals->v_forward.x * 10.0f;
+	vecSrc.y = pev->origin.y + gpGlobals->v_forward.y * 10.0f;
+	vecSrc.z = pev->origin.z + pev->view_ofs.z - 4.0f;
 
-	pEdict = EdictFromEntvars(pev);
-	globals = m_pGlobals ? m_pGlobals : GlobalsFromEntvars(pev);
-
-	EngineMakeVectors((const float *)((uint8_t *)pev + 352));
-
-	forward = GlobalsForward(globals);
-	right = GlobalsRight(globals);
-	up = GlobalsUp(globals);
-
-	vecSrc[0] = PevVector(pev, PEV_ORIGIN).x + (forward ? forward[0] : 0.0f) * 10.0f;
-	vecSrc[1] = PevVector(pev, PEV_ORIGIN).y + (forward ? forward[1] : 0.0f) * 10.0f;
-
-	tracerZ = PevVector(pev, PEV_ORIGIN).z + PevVector(pev, PEV_VIEWOFS).z - 4.0f;
-
-	// The binary builds the trace-source x/y from origin+forward*10, then OVERWRITES
-	// the z with the eye-height value (origin.z + viewofs.z - 4) at the binary BEFORE the
-	// per-shot trace, so the bullet ray originates from eye height (not origin.z+forward.z*10).
-	vecSrc[2] = tracerZ;
-
-	tracerMod = 4;
-	classname = EngineStringFromIndex(PevInt(pev, PEV_CLASSNAME));
-	if (classname && strcmp(classname, "player") == 0)
-		tracerMod = 1;
+	// players see all their tracers
+	BOOL fPlayer = FClassnameIs(pev, "player");
+	int iTracerFreq = fPlayer ? 1 : 4;
 
 	ClearMultiDamage();
 
-	iShot = 0;	// sticky latch: set ONCE before the loop (binary local_e0/v46), never reset per-shot
+	BOOL fNoEffects = FALSE;
 
-	for (i = 0; i < cShots; i++)
+	for (int iShot = 0; iShot < cShots; iShot++)
 	{
-		// The original scales RIGHT by the first spread arg (flSpreadUp) and UP by the
-		// second (flSpreadRight), drawing the RIGHT random first, then the UP random.
-		float spreadRight = RandomFloat(-1.0f, 1.0f) * flSpreadUp;
-		float spreadUp = RandomFloat(-1.0f, 1.0f) * flSpreadRight;
+		float flRight = RANDOM_FLOAT(-1.0f, 1.0f) * flSpreadRight;
+		float flUp = RANDOM_FLOAT(-1.0f, 1.0f) * flSpreadUp;
+		Vector vecDir = vecDirShooting + gpGlobals->v_right * flRight + gpGlobals->v_up * flUp;
 
-		float dir[3];
-		dir[0] = vecDirShooting[0]
-			+ (right ? right[0] : 0.0f) * spreadRight
-			+ (up ? up[0] : 0.0f) * spreadUp;
-		dir[1] = vecDirShooting[1]
-			+ (right ? right[1] : 0.0f) * spreadRight
-			+ (up ? up[1] : 0.0f) * spreadUp;
-		dir[2] = vecDirShooting[2]
-			+ (right ? right[2] : 0.0f) * spreadRight
-			+ (up ? up[2] : 0.0f) * spreadUp;
+		UTIL_TraceLine(vecSrc, vecSrc + vecDir * flDistance, dont_ignore_monsters, ENT(pev), &tr);
 
-		float vecEnd[3];
-		vecEnd[0] = vecSrc[0] + dir[0] * flDistance;
-		vecEnd[1] = vecSrc[1] + dir[1] * flDistance;
-		vecEnd[2] = vecSrc[2] + dir[2] * flDistance;
+		g_iTracerCount = (g_iTracerCount + 1) % iTracerFreq;
 
-		TraceResult tr;
-		memset(&tr, 0, sizeof(tr));
-		// Binary FireBullets passes helper arg 1; EngineTraceLine applies the
-		// alpha thunk inversion before calling the engine trace slot.
-		EngineTraceLine(vecSrc, vecEnd, 1, pEdict, &tr);
-
-		g_iTracerCount = (g_iTracerCount + 1) % tracerMod;
-		if (g_iTracerCount == (tracerMod - 1))
+		if (g_iTracerCount == iTracerFreq - 1 && pev->weapon == WEAPON_MP5)
 		{
-			if (PevInt(pev, PEV_WEAPON) == 4)
+			Vector vecTracerSrc = vecSrc;
+
+			if (fPlayer)
 			{
-				float trSrc[3];
-				trSrc[0] = vecSrc[0];
-				trSrc[1] = vecSrc[1];
-				trSrc[2] = tracerZ;
+				// from the gun
+				vecTracerSrc = pev->origin + gpGlobals->v_forward * 16.0f + gpGlobals->v_right * 2.0f;
 
-				if (classname && strcmp(classname, "player") == 0)
-				{
-					// The binary derives this offset from
-					// (globals+240)+0x18 = globals+264 = the RIGHT vector, not up.
-					const float *globalForward = GlobalsForward(globals);
-					const float *globalRight = GlobalsRight(globals);
-
-					if ((((int)PevFloat(pev, PEV_FLAGS)) & 0x4000) != 0)
-					{
-						trSrc[0] = PevVector(pev, PEV_ORIGIN).x
-							+ (globalForward ? globalForward[0] : 0.0f) * 16.0f
-							+ (globalRight ? globalRight[0] : 0.0f) * 2.0f;
-						trSrc[1] = PevVector(pev, PEV_ORIGIN).y
-							+ (globalForward ? globalForward[1] : 0.0f) * 16.0f
-							+ (globalRight ? globalRight[1] : 0.0f) * 2.0f;
-						trSrc[2] = PevVector(pev, PEV_ORIGIN).z
-							+ (globalForward ? globalForward[2] : 0.0f) * 16.0f
-							+ (globalRight ? globalRight[2] : 0.0f) * 2.0f
-							+ 6.0f;
-					}
-					else
-					{
-						trSrc[0] = PevVector(pev, PEV_ORIGIN).x
-							+ (globalForward ? globalForward[0] : 0.0f) * 16.0f
-							+ (globalRight ? globalRight[0] : 0.0f) * 2.0f;
-						trSrc[1] = PevVector(pev, PEV_ORIGIN).y
-							+ (globalForward ? globalForward[1] : 0.0f) * 16.0f
-							+ (globalRight ? globalRight[1] : 0.0f) * 2.0f;
-						trSrc[2] = PevVector(pev, PEV_ORIGIN).z
-							+ (globalForward ? globalForward[2] : 0.0f) * 16.0f
-							+ (globalRight ? globalRight[2] : 0.0f) * 2.0f
-							+ 24.0f;
-					}
-				}
-
-				if (tracerMod != 1)
-					iShot = 1;
-
-				EngineWriteByte(0, SVC_TEMPENTITY);
-				EngineWriteByte(0, TE_TRACER);
-				EngineWriteCoord(0, trSrc[0]);
-				EngineWriteCoord(0, trSrc[1]);
-				EngineWriteCoord(0, trSrc[2]);
-				EngineWriteCoord(0, tr.vecEndPos[0]);
-				EngineWriteCoord(0, tr.vecEndPos[1]);
-				EngineWriteCoord(0, tr.vecEndPos[2]);
+				if ((int)pev->flags & FL_DUCKING)
+					vecTracerSrc.z += 6.0f;
+				else
+					vecTracerSrc.z += 24.0f;
 			}
+			else
+			{
+				// no more impact effects for the rest of the burst
+				fNoEffects = TRUE;
+			}
+
+			WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+			WRITE_BYTE(MSG_BROADCAST, TE_TRACER);
+			WRITE_COORD(MSG_BROADCAST, vecTracerSrc.x);
+			WRITE_COORD(MSG_BROADCAST, vecTracerSrc.y);
+			WRITE_COORD(MSG_BROADCAST, vecTracerSrc.z);
+			WRITE_COORD(MSG_BROADCAST, tr.vecEndPos.x);
+			WRITE_COORD(MSG_BROADCAST, tr.vecEndPos.y);
+			WRITE_COORD(MSG_BROADCAST, tr.vecEndPos.z);
 		}
 
 		if (tr.flFraction != 1.0f)
-		{
-			ImpactEffects(pev, 2.0f, iShot, dir, &tr);
-		}
+			BulletImpact(pev, BULLET_DAMAGE, fNoEffects, vecDir, &tr);
 	}
 
 	ApplyMultiDamage(pev);
