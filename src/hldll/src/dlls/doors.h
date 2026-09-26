@@ -12,19 +12,17 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-#ifndef MONSTERS_H
-#define MONSTERS_H
+#ifndef DOORS_H
+#define DOORS_H
 
-#include "basemonster.h"
+// func_door spawnflags
+#define SF_DOOR_START_OPEN			1
+#define SF_DOOR_ROTATE_BACKWARDS	2
+#define SF_DOOR_PASSABLE			8
+#define SF_DOOR_ONEWAY				16
+#define SF_DOOR_NO_AUTO_RETURN		32
+#define SF_DOOR_ROTATE_Z			64
+#define SF_DOOR_ROTATE_X			128
+#define SF_DOOR_USE_ONLY			256		// touching does nothing, the door must be used
 
-#define CYCLER_HEALTH		80000.0f	// turrets ignore entities with this health
-
-BOOL FVisible(entvars_t *pevLooker, entvars_t *pevTarget);
-BOOL FInViewCone(entvars_t *pevLooker, entvars_t *pevTarget, float flDot);
-BOOL CheckFriendlyFire(entvars_t *pevShooter, const Vector &vecDir, float flDistance);
-
-// AI debugging lines, toggled by impulse 200
-extern int g_fDrawLines;
-void DrawDebugLine(const Vector &vecStart, const Vector &vecEnd);
-
-#endif // MONSTERS_H
+#endif // DOORS_H

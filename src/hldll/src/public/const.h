@@ -108,6 +108,7 @@
 #define ATTN_NONE				0.0f
 #define ATTN_NORM				0.8f
 #define ATTN_IDLE				2.0f
+#define ATTN_STATIC				2.25f
 
 // message destinations for the WRITE_* functions
 #define MSG_BROADCAST			0	// unreliable to all
@@ -124,11 +125,14 @@
 // SVC_TEMPENTITY types
 #define TE_GUNSHOT				2	// coord[3] pos
 #define TE_EXPLOSION			3	// coord[3] pos
+#define TE_WATERCOLOR			5	// byte r, byte g, byte b, byte (unused)
 #define TE_TRACER				6	// coord[3] start, coord[3] end
+#define TE_SPARKS				9	// coord[3] pos
 #define TE_BLOODSTREAM			101	// coord[3] pos, coord[3] dir, byte color, byte speed
 #define TE_SHOWLINE				102	// coord[3] start, coord[3] end
 #define TE_BLOOD				103	// coord[3] pos, coord[3] dir, byte color, byte speed
 #define TE_DECAL				104	// coord[3] pos, short entity index, byte decal index
-#define TE_BREAKMODEL			108
+#define TE_SPRITE_SPRAY			107	// coord[3] pos, coord speed, short model, short count, byte life in 0.1's
+#define TE_BREAKMODEL			108	// coord[3] pos, coord[3] size, coord[3] velocity, short model, byte count, byte life in 0.1's, byte flags
 
 #endif // CONST_H

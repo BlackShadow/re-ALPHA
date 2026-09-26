@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,122 +12,47 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// BModels - Brush model entities
-//
-//   func_wall (Spawn, Use)
-//   func_illusionary (Spawn, KeyValue)
-//   func_rotating (Spawn, KeyValue, Touch, Use, Blocked,
-//                  spin-up / spin-down think helpers)
-//   func_pendulum (Spawn, KeyValue, Use, Touch,
-//                  swing think helpers, rope touch)
-//
-// func_wall / func_illusionary derive straight from CBaseEntity.
-// func_rotating / func_pendulum are compact movers that also derive
-// from CBaseEntity (their alpha private-data sizes - 32 and 76 - are
-// far below the 132-byte CBaseToggle layout) and carry their own
-// fields; they reuse the SetMovedir / move framework conventions of
-// the CBaseToggle foundation only where it overlaps.
+// BModels - brush model entities: func_wall,
+// func_illusionary, func_rotating and func_pendulum
 //=========================================================
 
-#include <new>
-#include <string.h>
-#include <stdlib.h>
-#include <math.h>
+#include "extdll.h"
+#include "util.h"
 #include "cbase.h"
-#include "enginefuncs.h"
-#include "hl_exports.h"
-#include "utils.h"
 
-//=========================================================
-// pev field byte offsets used by the brush models that are
-// not yet named PEV_* constants in utils.h.
-//
-//   4   - pev->absmin (3 floats; brush world-space bounds min)
-//   204 - pev->size   (3 floats; absmax - absmin)
-//   496 - pev->speed  (rotation / swing speed; shares the byte
-//         offset that utils.h also calls PEV_DMGTIME)
-//=========================================================
-enum
-{
-	PEV_ABSMIN	= 4,
-	PEV_BRUSH_SIZE	= 204,
-	PEV_SPEED	= 496,
-};
+// func_rotating spawnflags
+#define SF_BRUSH_ROTATE_START_ON	1		// starts spinning when the level starts
+#define SF_BRUSH_ROTATE_BACKWARDS	2
+#define SF_BRUSH_ROTATE_Z_AXIS		4
+#define SF_BRUSH_ROTATE_X_AXIS		8
+#define SF_BRUSH_ACCDCC				16		// speeds up and slows down instead of starting and stopping at once
+#define SF_BRUSH_HURT				32		// hurts whatever touches it
+#define SF_BRUSH_ROTATE_NOT_SOLID	64
 
-//=========================================================
-// movetype / solid values written by the brush spawns.
-//=========================================================
-enum
-{
+// func_pendulum spawnflags
+#define SF_PENDULUM_START_ON		1		// starts swinging when the level starts
+#define SF_PENDULUM_SWING			2		// a player that touches it grabs on
+#define SF_PENDULUM_AUTO_RETURN		16		// using a swinging pendulum sends it back to its start
+#define SF_PENDULUM_Z_AXIS			64
+#define SF_PENDULUM_X_AXIS			128
 
+#define FAN_SOUND_SETS				5		// pev->sounds 1..5 picks one of the fan sound sets
+#define FAN_DEFAULT_DMG				2.0f
+#define FAN_DMG_SCALE				0.1f	// touch damage per unit of angular speed
+#define FAN_START_DELAY				0.1f
+#define FAN_SPIN_INTERVAL			0.1		// think interval while speeding up or slowing down
+#define FAN_NO_THINK				99999.0f	// puts the next think out of reach
 
+#define PENDULUM_DEFAULT_SPEED		100.0f
+#define PENDULUM_DAMP_SCALE			0.001f	// "damp" is given in thousandths
+#define PENDULUM_MIN_SPEED			30.0f	// a damped swing slower than this stops
+#define PENDULUM_DMG_SCALE			0.01f	// touch damage per unit of speed and pev->dmg
+#define PENDULUM_START_DELAY		0.1f
+#define PENDULUM_SWING_INTERVAL		0.1
 
-
-};
-
-//=========================================================
-// func_rotating / func_pendulum spawnflags.
-//=========================================================
-enum
-{
-	SF_BRUSH_ROTATE_START_ON	= 1,	// begins spinning at level start
-	SF_BRUSH_ROTATE_BACKWARDS	= 2,	// reverse the rotation direction
-	SF_BRUSH_ROTATE_Z_AXIS		= 4,	// spin about the Z axis
-	SF_BRUSH_ROTATE_X_AXIS		= 8,	// spin about the X axis
-	SF_BRUSH_ACCDCC			= 0x10,	// accelerate / decelerate smoothly
-	SF_BRUSH_HURT			= 0x20,	// hurt entities that touch the brush
-	SF_BRUSH_ROTATE_NOT_SOLID	= 0x40,	// non-solid (decorative) spin
-
-	SF_PENDULUM_START_ON		= 1,	// swinging at level start
-	SF_PENDULUM_SWING		= 2,	// touchable "rope" mode
-	SF_PENDULUM_AUTO_RETURN		= 0x10,	// Use re-launches the swing
-
-	// func_pendulum is a door-family rotator: it selects its swing axis
-	// with the door rotation flags (Z=0x40, X=0x80), NOT the func_rotating
-	// brush flags (Z=4, X=8).  The alpha proves this - func_rotating tests
-	// bits 4/8 inline in its Spawn, while func_pendulum
-	// routes through the shared axis helpers, both of which test
-	// bits 0x40/0x80.
-	SF_PENDULUM_Z_AXIS		= 0x40,	// swing about the Z axis
-	SF_PENDULUM_X_AXIS		= 0x80,	// swing about the X axis
-};
-
-//=========================================================
-// CHAN_STATIC and the looping-sound mix used by the fan
-// emit calls (volume 1.0, attenuation 0.8).
-//=========================================================
-enum
-{
-	BRUSH_SND_CHANNEL	= 1,	// CHAN_STATIC
-};
-#define BRUSH_SND_VOLUME	1.0f
-#define BRUSH_SND_ATTEN		0.8f
-
-static entvars_t* CurrentOtherEntvars(entvars_t* pevSelf, edict_t** ppOtherEdict)
-{
-	if (ppOtherEdict)
-		*ppOtherEdict = NULL;
-
-	void* globals = GlobalsFromEntvars(pevSelf);
-	if (!globals)
-		return NULL;
-
-	int otherIndex = *GlobalsInt(globals, GLOBALS_OTHER_ENTINDEX);
-	edict_t* pOtherEdict = otherIndex ? EnginePEntityOfEntIndex(otherIndex) : NULL;
-	if (ppOtherEdict)
-		*ppOtherEdict = pOtherEdict;
-
-	return pOtherEdict ? EngineGetVarsOfEnt(pOtherEdict) : NULL;
-}
-
-//=========================================================
-// Fan sound sets selected by pev->message / "spawnobject"
-// (stored as pev->skin during precache).  Index 1..5 map to
-// the fans/fanN family; anything else falls back to silence.
-//=========================================================
-static const char* const kFanSoundOn[] =
+// fan sounds: spin up, spin down and running, one per pev->sounds value
+static const char *const pFanStartSounds[FAN_SOUND_SETS] =
 {
 	"fans/fan1on.wav",
 	"fans/fan2on.wav",
@@ -136,7 +61,7 @@ static const char* const kFanSoundOn[] =
 	"fans/fan5on.wav",
 };
 
-static const char* const kFanSoundOff[] =
+static const char *const pFanStopSounds[FAN_SOUND_SETS] =
 {
 	"fans/fan1off.wav",
 	"fans/fan2off.wav",
@@ -145,7 +70,7 @@ static const char* const kFanSoundOff[] =
 	"fans/fan5off.wav",
 };
 
-static const char* const kFanSoundLoop[] =
+static const char *const pFanRunSounds[FAN_SOUND_SETS] =
 {
 	"fans/fan1.wav",
 	"fans/fan2.wav",
@@ -154,911 +79,558 @@ static const char* const kFanSoundLoop[] =
 	"fans/fan5.wav",
 };
 
-static const char kNullSound[] = "common/null.wav";
-
 //=========================================================
-// BrushCenter
-//
-// World-space centre of a brush: absmin + size * 0.5, which is
-// the midpoint of (absmin, absmax).
+// AxisDir - sets pev->movedir to the rotation axis picked
+// by the spawnflags: z, x or the default y
 //=========================================================
-static void BrushCenter(float* out, entvars_t* pevBrush)
+static void AxisDir(entvars_t *pev, int iZAxisFlag, int iXAxisFlag)
 {
-	const float* absmin = VecPtr(PevVector(pevBrush, PEV_ABSMIN));
-	const float* size = VecPtr(PevVector(pevBrush, PEV_BRUSH_SIZE));
+	int iSpawnFlags = (int)pev->spawnflags;
 
-	out[0] = size[0] * 0.5f + absmin[0];
-	out[1] = size[1] * 0.5f + absmin[1];
-	out[2] = size[2] * 0.5f + absmin[2];
-}
-
-//=========================================================
-// AxisDir
-//
-// Derive pev->movedir from the rotation-axis spawnflags
-// (Z / X / default Y).  The caller passes the Z and X bit masks
-// because func_rotating and func_pendulum use different flag bits
-// (4/8 vs 0x40/0x80) for the same axis selection.
-//=========================================================
-static void AxisDir(entvars_t* pev, int zAxisBit, int xAxisBit)
-{
-	Vector& movedir = PevVector(pev, PEV_MOVEDIR);
-	int spawnflags = (int)PevFloat(pev, PEV_SPAWNFLAGS);
-
-	if ((spawnflags & zAxisBit) != 0)
-		VecSet(VecPtr(movedir), 0.0f, 0.0f, 1.0f);
-	else if ((spawnflags & xAxisBit) != 0)
-		VecSet(VecPtr(movedir), 1.0f, 0.0f, 0.0f);
+	if (iSpawnFlags & iZAxisFlag)
+		pev->movedir = Vector(0.0f, 0.0f, 1.0f);
+	else if (iSpawnFlags & iXAxisFlag)
+		pev->movedir = Vector(1.0f, 0.0f, 0.0f);
 	else
-		VecSet(VecPtr(movedir), 0.0f, 1.0f, 0.0f);	// default: Y axis
+		pev->movedir = Vector(0.0f, 1.0f, 0.0f);
 }
 
 //=========================================================
-// AxisDelta
-//
-// Component of (a - b) along the active rotation axis selected
-// by the spawnflags.  Used to measure remaining swing distance.
-// Only func_pendulum calls this, so it tests the door rotation
-// flags (Z=0x40, X=0x80) as the binary helper does.
+// AxisDelta - the component of (a - b) along a pendulum's
+// rotation axis
 //=========================================================
-static float AxisDelta(int spawnflags, const float* a, const float* b)
+static float AxisDelta(int iSpawnFlags, const Vector &a, const Vector &b)
 {
-	if ((spawnflags & SF_PENDULUM_Z_AXIS) != 0)
-		return a[2] - b[2];
-	if ((spawnflags & SF_PENDULUM_X_AXIS) != 0)
-		return a[0] - b[0];
-	return a[1] - b[1];
+	if (iSpawnFlags & SF_PENDULUM_Z_AXIS)
+		return a.z - b.z;
+	if (iSpawnFlags & SF_PENDULUM_X_AXIS)
+		return a.x - b.x;
+	return a.y - b.y;
 }
 
 //=========================================================
-// CFuncWall
-//
-// A solid brush whose only behaviour is to flip its texture
-// frame each time it is used.
+// VecBModelOrigin - the center of a brush model's bounds
+//=========================================================
+static Vector VecBModelOrigin(entvars_t *pevBModel)
+{
+	return pevBModel->size * 0.5f + pevBModel->absmin;
+}
+
+//=========================================================
+// func_wall - a solid brush that toggles its texture frame
+// when used
 //=========================================================
 class CFuncWall : public CBaseEntity
 {
 public:
 	void Spawn();
-	void Use(CBaseEntity* pOther);
+	void Use(CBaseEntity *pOther);
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CFuncWall) <= 28, CFuncWall_size);
+LINK_ENTITY_TO_CLASS(func_wall, CFuncWall);
 
-//=========================================================
-// CFuncWall::Spawn
-//=========================================================
 void CFuncWall::Spawn()
 {
-	VecSet(VecPtr(PevVector(pev, PEV_ANGLES)), 0.0f, 0.0f, 0.0f);
-	PevFloat(pev, PEV_MOVETYPE) = (float)MOVETYPE_PUSH;	// not pushed by anything
-	PevFloat(pev, PEV_SOLID) = (float)SOLID_BSP;
-
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineSetModel(edict, EngineStringFromIndex(PevInt(pev, PEV_MODEL)));
+	pev->angles = g_vecZero;
+	pev->movetype = MOVETYPE_PUSH;	// so it doesn't get pushed by anything
+	pev->solid = SOLID_BSP;
+	SET_MODEL(ENT(pev), STRING(pev->model));
 }
 
-//=========================================================
-// CFuncWall::Use
-//
-// Toggle pev->frame between 0 and 1 to swap the brush texture.
-//=========================================================
-void CFuncWall::Use(CBaseEntity* pOther)
+void CFuncWall::Use(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
-
-	PevFloat(pev, PEV_FRAME) = 1.0f - PevFloat(pev, PEV_FRAME);
+	pev->frame = 1.0f - pev->frame;
 }
 
 //=========================================================
-// CFuncIllusionary
-//
-// A non-solid decorative brush.  It is rendered but never
-// blocks movement, and the engine bakes it into a static.
+// func_illusionary - a brush that is drawn but not solid
 //=========================================================
 class CFuncIllusionary : public CBaseEntity
 {
 public:
 	void Spawn();
-	void KeyValue(KeyValueData* pkvd);
+	void KeyValue(KeyValueData *pkvd);
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CFuncIllusionary) <= 132, CFuncIllusionary_size);
+LINK_ENTITY_TO_CLASS(func_illusionary, CFuncIllusionary);
 
-//=========================================================
-// CFuncIllusionary::KeyValue
-//
-// Accepts "skin" (the contents value, stored in pev->skin).
-//=========================================================
-void CFuncIllusionary::KeyValue(KeyValueData* pkvd)
+void CFuncIllusionary::KeyValue(KeyValueData *pkvd)
 {
-	if (strcmp(pkvd->szKeyName, "skin") == 0)
+	if (FStrEq(pkvd->szKeyName, "skin"))	// skin is used for content type
 	{
-		PevFloat(pev, PEV_SKIN) = (float)atof(pkvd->szValue);
-		pkvd->fHandled = 1;
+		pev->skin = (float)atof(pkvd->szValue);
+		pkvd->fHandled = TRUE;
 	}
 }
 
-//=========================================================
-// CFuncIllusionary::Spawn
-//=========================================================
 void CFuncIllusionary::Spawn()
 {
-	VecSet(VecPtr(PevVector(pev, PEV_ANGLES)), 0.0f, 0.0f, 0.0f);
-	PevFloat(pev, PEV_MOVETYPE) = (float)MOVETYPE_NONE;
-	PevFloat(pev, PEV_SOLID) = (float)SOLID_NOT;
-
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-	{
-		EngineSetModel(edict, EngineStringFromIndex(PevInt(pev, PEV_MODEL)));
-		EngineMakeStatic(edict);
-	}
+	pev->angles = g_vecZero;
+	pev->movetype = MOVETYPE_NONE;
+	pev->solid = SOLID_NOT;
+	SET_MODEL(ENT(pev), STRING(pev->model));
+	MAKE_STATIC(ENT(pev));
 }
 
 //=========================================================
-// CFuncRotating
-//
-// A brush that spins continuously about one axis.  It can hurt
-// touchers, accelerate / decelerate when toggled, and play a
-// fan sound set.
-//
-//   [28] m_pitch - acceleration divisor / step count (byte)
+// func_rotating - a brush that spins around one axis
 //=========================================================
 class CFuncRotating : public CBaseEntity
 {
 public:
 	void Spawn();
-	void KeyValue(KeyValueData* pkvd);
-	void Use(CBaseEntity* pOther);
-	void Touch(CBaseEntity* pOther);
-	void Blocked(CBaseEntity* pOther);
+	void KeyValue(KeyValueData *pkvd);
+	void Use(CBaseEntity *pOther);
+	void Touch(CBaseEntity *pOther);
+	void Blocked(CBaseEntity *pOther);
 
-	void SpinUp(CBaseEntity* pOther);
-	void SpinDown(CBaseEntity* pOther);
-	void SpinUpFromUse(CBaseEntity* pOther);		// start-on think -> own Use
-	void HurtTouch(CBaseEntity* pOther);	// touch -> own Touch
+	void SpinUp(CBaseEntity *pOther);
+	void SpinDown(CBaseEntity *pOther);
+	void SpinUpFromUse(CBaseEntity *pOther);
+	void HurtTouch(CBaseEntity *pOther);
 
-private:
-	unsigned char m_pitch;	// [28]
+	unsigned char	m_bFriction;	// number of thinks it takes to speed up or slow down
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CFuncRotating) <= 32, CFuncRotating_size);
+LINK_ENTITY_TO_CLASS(func_rotating, CFuncRotating);
 
-//=========================================================
-// CFuncRotating::KeyValue
-//
-// "friction" (0..100) drives the acceleration step count.
-//=========================================================
-void CFuncRotating::KeyValue(KeyValueData* pkvd)
+void CFuncRotating::KeyValue(KeyValueData *pkvd)
 {
-	if (strcmp(pkvd->szKeyName, "friction") == 0)
+	if (FStrEq(pkvd->szKeyName, "friction"))
 	{
-		m_pitch = (unsigned char)(int)atof(pkvd->szValue);
-		pkvd->fHandled = 1;
+		m_bFriction = (unsigned char)(int)atof(pkvd->szValue);
+		pkvd->fHandled = TRUE;
 	}
 }
 
-//=========================================================
-// CFuncRotating::Spawn
-//=========================================================
 void CFuncRotating::Spawn()
 {
-	//
-	// Pick the fan sound set from the numeric sound id the editor
-	// stored at pev offset 476 (the "sounds" selector, 1..5).  The
-	// switch precaches the matching trio and records the resulting
-	// string indices back into the noise fields.
-	//
-	int soundId = (int)PevFloat(pev, 476);	// pev sound-set selector
-	if (soundId >= 1 && soundId <= 5)
+	// pick the fan sounds
+	int iSounds = (int)pev->sounds;
+	if (iSounds >= 1 && iSounds <= FAN_SOUND_SETS)
 	{
-		int idx = soundId - 1;
-		EnginePrecacheSound(kFanSoundOn[idx]);
-		EnginePrecacheSound(kFanSoundOff[idx]);
-		EnginePrecacheSound(kFanSoundLoop[idx]);
-		PevInt(pev, PEV_NOISE_MOVING) = EngineAllocString(kFanSoundOn[idx]);
-		PevInt(pev, PEV_NOISE_ARRIVED) = EngineAllocString(kFanSoundOff[idx]);
-		PevInt(pev, 492) = EngineAllocString(kFanSoundLoop[idx]);	// running loop sound
+		int i = iSounds - 1;
+		PRECACHE_SOUND(pFanStartSounds[i]);
+		PRECACHE_SOUND(pFanStopSounds[i]);
+		PRECACHE_SOUND(pFanRunSounds[i]);
+		pev->noise1 = ALLOC_STRING(pFanStartSounds[i]);
+		pev->noise2 = ALLOC_STRING(pFanStopSounds[i]);
+		pev->noise3 = ALLOC_STRING(pFanRunSounds[i]);
 	}
 	else
 	{
-		PevInt(pev, PEV_NOISE_MOVING) = EngineAllocString(kNullSound);
-		PevInt(pev, PEV_NOISE_ARRIVED) = EngineAllocString(kNullSound);
-		PevInt(pev, 492) = EngineAllocString(kNullSound);	// running loop sound
+		pev->noise1 = ALLOC_STRING("common/null.wav");
+		pev->noise2 = ALLOC_STRING("common/null.wav");
+		pev->noise3 = ALLOC_STRING("common/null.wav");
 	}
 
-	if (m_pitch == 0)
-		m_pitch = 1;
+	if (m_bFriction == 0)
+		m_bFriction = 1;
 
-	// Set the spin axis, then optionally reverse it.  func_rotating
-	// selects its axis with the brush flags (Z=4, X=8).
 	AxisDir(pev, SF_BRUSH_ROTATE_Z_AXIS, SF_BRUSH_ROTATE_X_AXIS);
 
-	int spawnflags = (int)PevFloat(pev, PEV_SPAWNFLAGS);
-	if ((spawnflags & SF_BRUSH_ROTATE_BACKWARDS) != 0)
-	{
-		Vector& movedir = PevVector(pev, PEV_MOVEDIR);
-		VecSet(VecPtr(movedir), -movedir.x, -movedir.y, -movedir.z);
-	}
+	int iSpawnFlags = (int)pev->spawnflags;
+	if (iSpawnFlags & SF_BRUSH_ROTATE_BACKWARDS)
+		pev->movedir = -pev->movedir;
 
-	if ((spawnflags & SF_BRUSH_ROTATE_NOT_SOLID) != 0)
+	if (iSpawnFlags & SF_BRUSH_ROTATE_NOT_SOLID)
 	{
-		PevFloat(pev, PEV_SOLID) = (float)SOLID_NOT;
-		PevFloat(pev, PEV_SKIN) = -1.0f;
+		pev->solid = SOLID_NOT;
+		pev->skin = CONTENTS_EMPTY;
 	}
 	else
 	{
-		PevFloat(pev, PEV_SOLID) = (float)SOLID_BSP;
+		pev->solid = SOLID_BSP;
 	}
 
-	PevFloat(pev, PEV_MOVETYPE) = (float)MOVETYPE_PUSH;
+	pev->movetype = MOVETYPE_PUSH;
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
+	UTIL_SetOrigin(pev, pev->origin);
+	SET_MODEL(ENT(pev), STRING(pev->model));
+
+	if (pev->speed <= 0.0f)
+		pev->speed = 0.0f;
+
+	if (pev->dmg == 0.0f)
+		pev->dmg = FAN_DEFAULT_DMG;
+
+	if (iSpawnFlags & SF_BRUSH_ROTATE_START_ON)
 	{
-		EngineSetOrigin(edict, VecPtr(PevVector(pev, PEV_ORIGIN)));
-		EngineSetModel(edict, EngineStringFromIndex(PevInt(pev, PEV_MODEL)));
-	}
-
-	if (PevFloat(pev, PEV_SPEED) <= 0.0f)
-		PevFloat(pev, PEV_SPEED) = 0.0f;
-
-	if ((PevInt(pev, PEV_DMG) & 0x7FFFFFFF) == 0)
-		PevFloat(pev, PEV_DMG) = 2.0f;
-
-	if ((spawnflags & SF_BRUSH_ROTATE_START_ON) != 0)
-	{
-		// Fire our own Use one tick from now to start spinning.
 		SetThink(&CFuncRotating::SpinUpFromUse);
-		PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 0.1f;
+		pev->nextthink = gpGlobals->time + FAN_START_DELAY;
 	}
 
-	if ((spawnflags & SF_BRUSH_HURT) != 0)
+	if (iSpawnFlags & SF_BRUSH_HURT)
 		SetTouch(&CFuncRotating::HurtTouch);
 }
 
 //=========================================================
-// CFuncRotating::SpinUpFromUse (thunk target)
-//
-// The "start on" think simply dispatches the entity's own Use.
+// SpinUpFromUse - first think of a func_rotating that
+// starts on
 //=========================================================
-void CFuncRotating::SpinUpFromUse(CBaseEntity* pOther)
+void CFuncRotating::SpinUpFromUse(CBaseEntity *pOther)
 {
 	Use(this);
 }
 
-//=========================================================
-// CFuncRotating::HurtTouch (thunk target)
-//
-// The "hurt" touch routes straight to the Touch override.
-//=========================================================
-void CFuncRotating::HurtTouch(CBaseEntity* pOther)
+void CFuncRotating::HurtTouch(CBaseEntity *pOther)
 {
 	Touch(pOther);
 }
 
 //=========================================================
-// CFuncRotating::Use
-//
-// Toggle the spin.  In accelerate mode the speed ramps via the
-// SpinUp / SpinDown thinks; otherwise it snaps on / off.
+// Use - toggles the spinning, at once or through SpinUp
+// and SpinDown when it accelerates
 //=========================================================
-void CFuncRotating::Use(CBaseEntity* pOther)
+void CFuncRotating::Use(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
+	int iSpawnFlags = (int)pev->spawnflags;
+	BOOL fSpinning = (pev->avelocity != g_vecZero);
 
-	Vector& avelocity = PevVector(pev, PEV_AVELOCITY);
-	int spawnflags = (int)PevFloat(pev, PEV_SPAWNFLAGS);
-	int spinning = (avelocity.x != 0.0f || avelocity.y != 0.0f || avelocity.z != 0.0f);
-
-	if ((spawnflags & SF_BRUSH_ACCDCC) != 0)
+	if (iSpawnFlags & SF_BRUSH_ACCDCC)
 	{
-		edict_t* edict = EdictFromEntvars(pev);
-
-		if (spinning)
+		if (fSpinning)
 		{
 			SetThink(&CFuncRotating::SpinDown);
-			if (edict)
-				EngineEmitSound(edict, BRUSH_SND_CHANNEL,
-					EngineStringFromIndex(PevInt(pev, PEV_NOISE_ARRIVED)),
-					BRUSH_SND_VOLUME, BRUSH_SND_ATTEN);
+			EMIT_SOUND(ENT(pev), CHAN_WEAPON, STRING(pev->noise2), VOL_NORM, ATTN_NORM);
 		}
 		else
 		{
 			SetThink(&CFuncRotating::SpinUp);
-			if (edict)
-				EngineEmitSound(edict, BRUSH_SND_CHANNEL,
-					EngineStringFromIndex(PevInt(pev, PEV_NOISE_MOVING)),
-					BRUSH_SND_VOLUME, BRUSH_SND_ATTEN);
+			EMIT_SOUND(ENT(pev), CHAN_WEAPON, STRING(pev->noise1), VOL_NORM, ATTN_NORM);
 		}
 
-		PevFloat(pev, PEV_NEXTTHINK) = (float)(PevFloat(pev, PEV_LTIME) + 0.1);
+		pev->nextthink = pev->ltime + FAN_SPIN_INTERVAL;
 		return;
 	}
 
-	if (spinning)
+	if (fSpinning)
 	{
-		// stop instantly
-		VecSet(VecPtr(avelocity), 0.0f, 0.0f, 0.0f);
+		pev->avelocity = g_vecZero;
 		return;
 	}
 
-	// start instantly at full speed and play the looping fan sound
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, BRUSH_SND_CHANNEL,
-			EngineStringFromIndex(PevInt(pev, 492)),	// running loop sound
-			BRUSH_SND_VOLUME, BRUSH_SND_ATTEN);
+	EMIT_SOUND(ENT(pev), CHAN_WEAPON, STRING(pev->noise3), VOL_NORM, ATTN_NORM);
 
-	Vector& movedir = PevVector(pev, PEV_MOVEDIR);
-	float speed = PevFloat(pev, PEV_SPEED);
-	VecSet(VecPtr(avelocity), movedir.x * speed, movedir.y * speed, movedir.z * speed);
-
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 99999.0f;
+	pev->avelocity = pev->movedir * pev->speed;
+	pev->nextthink = gpGlobals->time + FAN_NO_THINK;
 }
 
 //=========================================================
-// CFuncRotating::SpinUp
-//
-// Accelerate toward the target speed one m_pitch-sized step at
-// a time; once at speed, switch to the steady loop sound.
+// SpinUp - speeds up by one step until full speed
 //=========================================================
-void CFuncRotating::SpinUp(CBaseEntity* pOther)
+void CFuncRotating::SpinUp(CBaseEntity *pOther)
 {
-	PevFloat(pev, PEV_NEXTTHINK) = (float)(PevFloat(pev, PEV_LTIME) + 0.1);
+	pev->nextthink = pev->ltime + FAN_SPIN_INTERVAL;
 
-	Vector& avelocity = PevVector(pev, PEV_AVELOCITY);
-	Vector& movedir = PevVector(pev, PEV_MOVEDIR);
-	float step = PevFloat(pev, PEV_SPEED) / (float)m_pitch;
+	Vector &vecAVelocity = pev->avelocity;
+	Vector &vecMoveDir = pev->movedir;
+	float flStep = pev->speed / (float)m_bFriction;
 
-	avelocity.x += movedir.x * step;
-	avelocity.y += movedir.y * step;
-	avelocity.z += movedir.z * step;
+	vecAVelocity += vecMoveDir * flStep;
 
-	// reached (or passed) the requested speed on every axis?
-	float speed = PevFloat(pev, PEV_SPEED);
-	if (movedir.x * speed <= avelocity.x
-		&& movedir.y * speed <= avelocity.y
-		&& movedir.z * speed <= avelocity.z)
+	// reached full speed?
+	float flSpeed = pev->speed;
+	if (vecMoveDir.x * flSpeed <= vecAVelocity.x
+		&& vecMoveDir.y * flSpeed <= vecAVelocity.y
+		&& vecMoveDir.z * flSpeed <= vecAVelocity.z)
 	{
-		VecSet(VecPtr(avelocity), movedir.x * speed, movedir.y * speed, movedir.z * speed);
+		vecAVelocity = vecMoveDir * flSpeed;
+		EMIT_SOUND(ENT(pev), CHAN_WEAPON, STRING(pev->noise3), VOL_NORM, ATTN_NORM);
 
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineEmitSound(edict, BRUSH_SND_CHANNEL,
-				EngineStringFromIndex(PevInt(pev, 492)),	// running loop sound
-				BRUSH_SND_VOLUME, BRUSH_SND_ATTEN);
-
-		PevFloat(pev, PEV_NEXTTHINK) = PevFloat(pev, PEV_LTIME) + 99999.0f;
+		pev->nextthink = pev->ltime + FAN_NO_THINK;
 	}
 }
 
 //=========================================================
-// CFuncRotating::SpinDown
-//
-// Decelerate one step at a time; once stopped, snap angular
-// velocity to zero and park the think.
+// SpinDown - slows down by one step until stopped
 //=========================================================
-void CFuncRotating::SpinDown(CBaseEntity* pOther)
+void CFuncRotating::SpinDown(CBaseEntity *pOther)
 {
-	PevFloat(pev, PEV_NEXTTHINK) = (float)(PevFloat(pev, PEV_LTIME) + 0.1);
+	pev->nextthink = pev->ltime + FAN_SPIN_INTERVAL;
 
-	Vector& avelocity = PevVector(pev, PEV_AVELOCITY);
-	Vector& movedir = PevVector(pev, PEV_MOVEDIR);
-	float step = PevFloat(pev, PEV_SPEED) / (float)m_pitch;
+	Vector &vecAVelocity = pev->avelocity;
+	Vector &vecMoveDir = pev->movedir;
+	float flStep = pev->speed / (float)m_bFriction;
 
-	avelocity.x -= movedir.x * step;
-	avelocity.y -= movedir.y * step;
-	avelocity.z -= movedir.z * step;
+	vecAVelocity -= vecMoveDir * flStep;
 
-	// the binary tests the raw sign bits of each component as ints
-	if (*(int*)&avelocity.x <= 0 && *(int*)&avelocity.y <= 0 && *(int*)&avelocity.z <= 0)
+	// stopped?
+	if (vecAVelocity.x <= 0.0f && vecAVelocity.y <= 0.0f && vecAVelocity.z <= 0.0f)
 	{
-		VecSet(VecPtr(avelocity), 0.0f, 0.0f, 0.0f);
-		PevFloat(pev, PEV_NEXTTHINK) = PevFloat(pev, PEV_LTIME) + 99999.0f;
+		vecAVelocity = g_vecZero;
+		pev->nextthink = pev->ltime + FAN_NO_THINK;
 	}
 }
 
 //=========================================================
-// CFuncRotating::Touch
-//
-// HurtTouch: damage anything that can take damage and shove it
-// away from the brush centre.
+// Touch - hurts whatever can take damage, by how fast we
+// spin, and throws it away from the center
 //=========================================================
-void CFuncRotating::Touch(CBaseEntity* pOther)
+void CFuncRotating::Touch(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
-
-	edict_t* pOtherEdict;
-	entvars_t* pevOther = CurrentOtherEntvars(pev, &pOtherEdict);
-	if (!pevOther)
+	EOFFSET eoffsetOther = gpGlobals->other;
+	if (FNullEnt(eoffsetOther))
 		return;
 
-	if ((PevInt(pevOther, PEV_TAKEDAMAGE) & 0x7FFFFFFF) == 0)
+	edict_t *pentOther = ENT(eoffsetOther);
+	entvars_t *pevOther = VARS(pentOther);
+
+	if (pevOther->takedamage == DAMAGE_NO)
 		return;
 
-	// damage scales with how fast we are spinning
-	Vector& avelocity = PevVector(pev, PEV_AVELOCITY);
-	PevFloat(pev, PEV_DMG) =
-		sqrtf(avelocity.x * avelocity.x + avelocity.y * avelocity.y + avelocity.z * avelocity.z) * 0.1f;
+	pev->dmg = pev->avelocity.Length() * FAN_DMG_SCALE;
 
-	CBaseEntity* pHit = (CBaseEntity*)EngineGetPrivateData(pOtherEdict);
+	CBaseEntity *pHit = CBaseEntity::Instance(pentOther);
 	if (pHit)
-		pHit->TakeDamage(pev, pev, PevFloat(pev, PEV_DMG));
+		pHit->TakeDamage(pev, pev, pev->dmg);
 
-	// push the toucher straight out from our centre at dmg units/sec
-	float center[3];
-	BrushCenter(center, pev);
-
-	Vector& otherOrigin = PevVector(pevOther, PEV_ORIGIN);
-	float dir[3];
-	dir[0] = otherOrigin.x - center[0];
-	dir[1] = otherOrigin.y - center[1];
-	dir[2] = otherOrigin.z - center[2];
-
-	if (VecNormalize(dir) == 0)
-		VecSet(dir, 0.0f, 0.0f, 0.0f);
-
-	float dmg = PevFloat(pev, PEV_DMG);
-	Vector& otherVel = PevVector(pevOther, PEV_VELOCITY);
-	VecSet(VecPtr(otherVel), dir[0] * dmg, dir[1] * dmg, dir[2] * dmg);
+	pevOther->velocity = (pevOther->origin - VecBModelOrigin(pev)).Normalize() * pev->dmg;
 }
 
 //=========================================================
-// CFuncRotating::Blocked
-//
-// Whatever we run into takes pev->dmg.
+// Blocked - hurts the blocker
 //=========================================================
-void CFuncRotating::Blocked(CBaseEntity* pOther)
+void CFuncRotating::Blocked(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
-
-	edict_t* pOtherEdict;
-	entvars_t* pevOther = CurrentOtherEntvars(pev, &pOtherEdict);
-	if (!pevOther)
+	EOFFSET eoffsetOther = gpGlobals->other;
+	if (FNullEnt(eoffsetOther))
 		return;
 
-	CBaseEntity* pHit = (CBaseEntity*)EngineGetPrivateData(pOtherEdict);
+	CBaseEntity *pHit = CBaseEntity::Instance(eoffsetOther);
 	if (pHit)
-		pHit->TakeDamage(pev, pev, PevFloat(pev, PEV_DMG));
+		pHit->TakeDamage(pev, pev, pev->dmg);
 }
 
 //=========================================================
-// CFuncPendulum
-//
-// A brush that swings about one axis like a pendulum.  Field
-// byte offsets in the 76-byte alpha private data:
-//   [28] m_accel       [32] m_distance   [36] m_time
-//   [40] m_damp        [44] m_maxSpeed   [48] m_dampSpeed
-//   [52] m_center      [64] m_start
+// func_pendulum - a brush that swings back and forth
+// around one axis
 //=========================================================
 class CFuncPendulum : public CBaseEntity
 {
 public:
 	void Spawn();
-	void KeyValue(KeyValueData* pkvd);
-	void Use(CBaseEntity* pOther);
-	void Touch(CBaseEntity* pOther);
+	void KeyValue(KeyValueData *pkvd);
+	void Use(CBaseEntity *pOther);
+	void Touch(CBaseEntity *pOther);
 
-	void Swing(CBaseEntity* pOther);
-	void Stop(CBaseEntity* pOther);
-	void StartFromUse(CBaseEntity* pOther);		// start-on think -> own Use
-	void RopeTouch(CBaseEntity* pOther);
+	void Swing(CBaseEntity *pOther);
+	void Stop(CBaseEntity *pOther);
+	void StartFromUse(CBaseEntity *pOther);
+	void RopeTouch(CBaseEntity *pOther);
 
-private:
-	float m_accel;		// [28]
-	float m_distance;	// [32]
-	float m_time;		// [36]
-	float m_damp;		// [40]
-	float m_maxSpeed;	// [44]
-	float m_dampSpeed;	// [48]
-	Vector m_center;	// [52]
-	Vector m_start;		// [64]
+	float	m_accel;		// acceleration towards the center
+	float	m_distance;		// size of the swing, in degrees
+	float	m_time;			// pev->ltime of the last swing think
+	float	m_damp;			// how fast the swing dies out
+	float	m_maxSpeed;		// pev->speed at spawn
+	float	m_dampSpeed;	// the damped speed limit
+	Vector	m_center;		// angles at the middle of the swing
+	Vector	m_start;		// angles at spawn
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CFuncPendulum) <= 76, CFuncPendulum_size);
+LINK_ENTITY_TO_CLASS(func_pendulum, CFuncPendulum);
 
-//=========================================================
-// CFuncPendulum::KeyValue
-//
-// "distance" (swing arc, degrees) and "damp" (damping, scaled
-// by 0.001).
-//=========================================================
-void CFuncPendulum::KeyValue(KeyValueData* pkvd)
+void CFuncPendulum::KeyValue(KeyValueData *pkvd)
 {
-	if (strcmp(pkvd->szKeyName, "distance") == 0)
+	if (FStrEq(pkvd->szKeyName, "distance"))
 	{
 		m_distance = (float)atof(pkvd->szValue);
-		pkvd->fHandled = 1;
+		pkvd->fHandled = TRUE;
 	}
-	else if (strcmp(pkvd->szKeyName, "damp") == 0)
+	else if (FStrEq(pkvd->szKeyName, "damp"))
 	{
-		m_damp = (float)atof(pkvd->szValue) * 0.001f;
-		pkvd->fHandled = 1;
+		m_damp = (float)atof(pkvd->szValue) * PENDULUM_DAMP_SCALE;
+		pkvd->fHandled = TRUE;
 	}
 }
 
-//=========================================================
-// CFuncPendulum::Spawn
-//=========================================================
 void CFuncPendulum::Spawn()
 {
-	// func_pendulum is a door-family rotator: its axis comes from the
-	// door rotation flags (Z=0x40, X=0x80), matching the binary.
 	AxisDir(pev, SF_PENDULUM_Z_AXIS, SF_PENDULUM_X_AXIS);
 
-	PevFloat(pev, PEV_SOLID) = (float)SOLID_BSP;
-	PevFloat(pev, PEV_MOVETYPE) = (float)MOVETYPE_PUSH;
+	pev->solid = SOLID_BSP;
+	pev->movetype = MOVETYPE_PUSH;
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-	{
-		EngineSetOrigin(edict, VecPtr(PevVector(pev, PEV_ORIGIN)));
-		EngineSetModel(edict, EngineStringFromIndex(PevInt(pev, PEV_MODEL)));
-	}
+	UTIL_SetOrigin(pev, pev->origin);
+	SET_MODEL(ENT(pev), STRING(pev->model));
 
-	if ((*(int*)&m_distance & 0x7FFFFFFF) == 0)
+	if (m_distance == 0.0f)
 		return;
 
-	if ((PevInt(pev, PEV_SPEED) & 0x7FFFFFFF) == 0)
-		PevFloat(pev, PEV_SPEED) = 100.0f;
+	if (pev->speed == 0.0f)
+		pev->speed = PENDULUM_DEFAULT_SPEED;
 
-	float speed = PevFloat(pev, PEV_SPEED);
-	m_accel = (speed * speed) / (m_distance * 2.0f);
-	m_maxSpeed = speed;
+	float flSpeed = pev->speed;
+	m_accel = (flSpeed * flSpeed) / (m_distance * 2.0f);
+	m_maxSpeed = flSpeed;
 
-	// remember the rest angles and the far end of the swing arc
-	float halfArc = m_distance * 0.5f;
-	VecCopy(VecPtr(m_start), VecPtr(PevVector(pev, PEV_ANGLES)));
+	// swing around the middle of the arc
+	float flHalfArc = m_distance * 0.5f;
+	m_start = pev->angles;
+	m_center = pev->movedir * flHalfArc + pev->angles;
 
-	Vector& movedir = PevVector(pev, PEV_MOVEDIR);
-	Vector& angles = PevVector(pev, PEV_ANGLES);
-	VecSet(VecPtr(m_center),
-		movedir.x * halfArc + angles.x,
-		movedir.y * halfArc + angles.y,
-		movedir.z * halfArc + angles.z);
-
-	int spawnflags = (int)PevFloat(pev, PEV_SPAWNFLAGS);
-	if ((spawnflags & SF_PENDULUM_START_ON) != 0)
+	int iSpawnFlags = (int)pev->spawnflags;
+	if (iSpawnFlags & SF_PENDULUM_START_ON)
 	{
-		// kick the swing one tick from now via our own Use
 		SetThink(&CFuncPendulum::StartFromUse);
-		PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 0.1f;
+		pev->nextthink = gpGlobals->time + PENDULUM_START_DELAY;
 	}
 
-	PevFloat(pev, PEV_SPEED) = 0.0f;
+	pev->speed = 0.0f;
 
-	if ((spawnflags & SF_PENDULUM_SWING) != 0)
+	if (iSpawnFlags & SF_PENDULUM_SWING)
 		SetTouch(&CFuncPendulum::RopeTouch);
 }
 
 //=========================================================
-// CFuncPendulum::StartFromUse (thunk target)
+// StartFromUse - first think of a func_pendulum that
+// starts on
 //=========================================================
-void CFuncPendulum::StartFromUse(CBaseEntity* pOther)
+void CFuncPendulum::StartFromUse(CBaseEntity *pOther)
 {
 	Use(this);
 }
 
 //=========================================================
-// CFuncPendulum::Use
-//
-// Toggle the swing.  Auto-return launches a fresh swing; the
-// manual modes either snap to a stop or begin a damped swing.
+// Use - stops a swinging pendulum, or sends it back to its
+// start, or starts a new swing
 //=========================================================
-void CFuncPendulum::Use(CBaseEntity* pOther)
+void CFuncPendulum::Use(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
+	int iSpawnFlags = (int)pev->spawnflags;
 
-	int spawnflags = (int)PevFloat(pev, PEV_SPAWNFLAGS);
-
-	if ((PevInt(pev, PEV_SPEED) & 0x7FFFFFFF) != 0)
+	if (pev->speed != 0.0f)
 	{
-		// currently swinging
-		if ((spawnflags & SF_PENDULUM_AUTO_RETURN) != 0)
+		if (iSpawnFlags & SF_PENDULUM_AUTO_RETURN)
 		{
-			// launch toward the far end at max speed
-			float dest = AxisDelta(spawnflags, VecPtr(PevVector(pev, PEV_ANGLES)), VecPtr(m_start));
+			float flDelta = AxisDelta(iSpawnFlags, pev->angles, m_start);
 
-			Vector& movedir = PevVector(pev, PEV_MOVEDIR);
-			Vector& avelocity = PevVector(pev, PEV_AVELOCITY);
-			VecSet(VecPtr(avelocity),
-				movedir.x * m_maxSpeed,
-				movedir.y * m_maxSpeed,
-				movedir.z * m_maxSpeed);
-
-			PevFloat(pev, PEV_NEXTTHINK) = dest / m_maxSpeed + PevFloat(pev, PEV_LTIME);
+			pev->avelocity = pev->movedir * m_maxSpeed;
+			pev->nextthink = flDelta / m_maxSpeed + pev->ltime;
 			SetThink(&CFuncPendulum::Stop);
 		}
 		else
 		{
-			// stop dead
-			PevFloat(pev, PEV_SPEED) = 0.0f;
-			m_pfnThink = NULL;
-			VecSet(VecPtr(PevVector(pev, PEV_AVELOCITY)), 0.0f, 0.0f, 0.0f);
+			// dead stop
+			pev->speed = 0.0f;
+			SetThink(NULL);
+			pev->avelocity = g_vecZero;
 		}
 		return;
 	}
 
-	// start a fresh damped swing
-	PevFloat(pev, PEV_NEXTTHINK) = (float)(PevFloat(pev, PEV_LTIME) + 0.1);
-	m_time = PevFloat(pev, PEV_LTIME);
+	pev->nextthink = pev->ltime + PENDULUM_SWING_INTERVAL;
+	m_time = pev->ltime;
 	m_dampSpeed = m_maxSpeed;
 	SetThink(&CFuncPendulum::Swing);
 }
 
 //=========================================================
-// CFuncPendulum::Stop
-//
-// Snap to the swing's end angle, clear the swing state and the
-// angular velocity.
+// Stop - back at the start angles
 //=========================================================
-void CFuncPendulum::Stop(CBaseEntity* pOther)
+void CFuncPendulum::Stop(CBaseEntity *pOther)
 {
-	VecCopy(VecPtr(PevVector(pev, PEV_ANGLES)), VecPtr(m_start));
+	pev->angles = m_start;
 
-	PevFloat(pev, PEV_SPEED) = 0.0f;
-	m_pfnThink = NULL;
+	pev->speed = 0.0f;
+	SetThink(NULL);
 
-	VecSet(VecPtr(PevVector(pev, PEV_AVELOCITY)), 0.0f, 0.0f, 0.0f);
+	pev->avelocity = g_vecZero;
 }
 
 //=========================================================
-// CFuncPendulum::Swing
-//
-// Integrate the pendulum each tick: gravity-like acceleration
-// toward centre, optional damping, and the stop condition once
-// the swing decays below the minimum speed.
+// Swing - accelerates towards the center of the swing,
+// damped when "damp" is set
 //=========================================================
-void CFuncPendulum::Swing(CBaseEntity* pOther)
+void CFuncPendulum::Swing(CBaseEntity *pOther)
 {
-	int spawnflags = (int)PevFloat(pev, PEV_SPAWNFLAGS);
-	float delta = AxisDelta(spawnflags, VecPtr(PevVector(pev, PEV_ANGLES)), VecPtr(m_center));
+	int iSpawnFlags = (int)pev->spawnflags;
+	float flDelta = AxisDelta(iSpawnFlags, pev->angles, m_center);
 
-	float dt = PevFloat(pev, PEV_LTIME) - m_time;
-	m_time = PevFloat(pev, PEV_LTIME);
+	float flInterval = pev->ltime - m_time;
+	m_time = pev->ltime;
 
-	// accelerate toward the centre (the sign of delta steers it)
-	if (delta > 0.0f && m_accel > 0.0f)
-		PevFloat(pev, PEV_SPEED) -= m_accel * dt;
+	if (flDelta > 0.0f && m_accel > 0.0f)
+		pev->speed -= m_accel * flInterval;
 	else
-		PevFloat(pev, PEV_SPEED) += m_accel * dt;
+		pev->speed += m_accel * flInterval;
 
-	// drive the angular velocity along the active axis
-	Vector& movedir = PevVector(pev, PEV_MOVEDIR);
-	float speed = PevFloat(pev, PEV_SPEED);
-	Vector& avelocity = PevVector(pev, PEV_AVELOCITY);
-	VecSet(VecPtr(avelocity), movedir.x * speed, movedir.y * speed, movedir.z * speed);
+	pev->avelocity = pev->movedir * pev->speed;
 
-	PevFloat(pev, PEV_NEXTTHINK) = (float)(PevFloat(pev, PEV_LTIME) + 0.1);
+	pev->nextthink = pev->ltime + PENDULUM_SWING_INTERVAL;
 
-	if ((*(int*)&m_damp & 0x7FFFFFFF) == 0)
+	if (m_damp == 0.0f)
 		return;
 
-	// apply damping to the running peak speed
-	m_dampSpeed = (1.0f - m_damp * dt) * m_dampSpeed;
+	m_dampSpeed = (1.0f - m_damp * flInterval) * m_dampSpeed;
 
-	if (m_dampSpeed >= 30.0f)
+	if (m_dampSpeed >= PENDULUM_MIN_SPEED)
 	{
-		// clamp the live speed to the damped envelope
-		if (m_dampSpeed < PevFloat(pev, PEV_SPEED))
-			PevFloat(pev, PEV_SPEED) = m_dampSpeed;
-		else if (-m_dampSpeed > PevFloat(pev, PEV_SPEED))
-			PevFloat(pev, PEV_SPEED) = -m_dampSpeed;
+		if (m_dampSpeed < pev->speed)
+			pev->speed = m_dampSpeed;
+		else if (-m_dampSpeed > pev->speed)
+			pev->speed = -m_dampSpeed;
 	}
 	else
 	{
-		// decayed away - settle at the rest angles and stop
-		VecCopy(VecPtr(PevVector(pev, PEV_ANGLES)), VecPtr(m_center));
-		PevFloat(pev, PEV_SPEED) = 0.0f;
-		m_pfnThink = NULL;
-		VecSet(VecPtr(PevVector(pev, PEV_AVELOCITY)), 0.0f, 0.0f, 0.0f);
+		// the swing died out, stop in the middle
+		pev->angles = m_center;
+		pev->speed = 0.0f;
+		SetThink(NULL);
+		pev->avelocity = g_vecZero;
 	}
 }
 
 //=========================================================
-// CFuncPendulum::Touch
-//
-// Hurt whatever swings into us and shove it away from centre.
+// Touch - hurts whatever can take damage, by how fast we
+// swing, and throws it away from the center
 //=========================================================
-void CFuncPendulum::Touch(CBaseEntity* pOther)
+void CFuncPendulum::Touch(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
-
-	edict_t* pOtherEdict;
-	entvars_t* pevOther = CurrentOtherEntvars(pev, &pOtherEdict);
-	if (!pevOther)
+	EOFFSET eoffsetOther = gpGlobals->other;
+	if (FNullEnt(eoffsetOther))
 		return;
 
-	if (PevFloat(pev, PEV_DMG) <= 0.0f)
-		return;
-	if ((PevInt(pevOther, PEV_TAKEDAMAGE) & 0x7FFFFFFF) == 0)
+	edict_t *pentOther = ENT(eoffsetOther);
+	entvars_t *pevOther = VARS(pentOther);
+
+	if (pev->dmg <= 0.0f)
 		return;
 
-	float damage = PevFloat(pev, PEV_SPEED) * PevFloat(pev, PEV_DMG) * 0.01f;
-	if (damage < 0.0f)
-		damage = -damage;
+	if (pevOther->takedamage == DAMAGE_NO)
+		return;
 
-	CBaseEntity* pHit = (CBaseEntity*)EngineGetPrivateData(pOtherEdict);
+	float flDamage = pev->speed * pev->dmg * PENDULUM_DMG_SCALE;
+	if (flDamage < 0.0f)
+		flDamage = -flDamage;
+
+	CBaseEntity *pHit = CBaseEntity::Instance(pentOther);
 	if (pHit)
-		pHit->TakeDamage(pev, pev, damage);
+		pHit->TakeDamage(pev, pev, flDamage);
 
-	// fling the toucher out from our centre at the impact speed
-	float center[3];
-	BrushCenter(center, pev);
-
-	Vector& otherOrigin = PevVector(pevOther, PEV_ORIGIN);
-	float dir[3];
-	dir[0] = otherOrigin.x - center[0];
-	dir[1] = otherOrigin.y - center[1];
-	dir[2] = otherOrigin.z - center[2];
-
-	if (VecNormalize(dir) == 0)
-		VecSet(dir, 0.0f, 0.0f, 0.0f);
-
-	Vector& otherVel = PevVector(pevOther, PEV_VELOCITY);
-	VecSet(VecPtr(otherVel), dir[0] * damage, dir[1] * damage, dir[2] * damage);
+	pevOther->velocity = (pevOther->origin - VecBModelOrigin(pev)).Normalize() * flDamage;
 }
 
 //=========================================================
-// CFuncPendulum::RopeTouch
-//
-// "Rope" mode: only a player may grab the pendulum, becoming
-// its enemy/rider and having its velocity zeroed.
+// RopeTouch - a player that touches the pendulum grabs on
 //=========================================================
-void CFuncPendulum::RopeTouch(CBaseEntity* pOther)
+void CFuncPendulum::RopeTouch(CBaseEntity *pOther)
 {
-	void* globals = GlobalsFromEntvars(pev);
-	if (!globals)
-		return;
+	EOFFSET eoffsetOther = gpGlobals->other;
+	entvars_t *pevOther = VARS(eoffsetOther);
 
-	int otherIndex = *GlobalsInt(globals, GLOBALS_OTHER_ENTINDEX);
-	edict_t* pToucher = EnginePEntityOfEntIndex(otherIndex);
-	entvars_t* pevToucher = pToucher ? EngineGetVarsOfEnt(pToucher) : NULL;
-	if (!pevToucher)
-		return;
-
-	// 8 == FL_CLIENT.  pev->flags is stored as a float, so the binary
-	// loads it via FLD/__ftol before masking - convert, don't read raw bits.
-	if (((int)PevFloat(pevToucher, PEV_FLAGS) & 8) == 0)
+	if (!((int)pevOther->flags & FL_CLIENT))
 	{
-		EngineAlertMessage(1, "Not a client\n");
+		ALERT(at_console, "Not a client\n");
 		return;
 	}
 
-	// latch on the first touch only
-	if (PevInt(pev, PEV_ENEMY) != otherIndex)
+	// grab the player once
+	if (pev->enemy != eoffsetOther)
 	{
-		PevInt(pev, PEV_ENEMY) = otherIndex;
-		VecSet(VecPtr(PevVector(pevToucher, PEV_VELOCITY)), 0.0f, 0.0f, 0.0f);
-		PevInt(pevToucher, PEV_MOVETYPE) = 0;	// MOVETYPE_NONE
-	}
-
-	HL_UNUSED(pOther);
-}
-
-//=========================================================
-// func_wall
-//=========================================================
-DLLEXPORT void func_wall(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 28);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 28);
-
-		CFuncWall* self = new (privateData) CFuncWall();
-		self->pev = entvars;
-		gpGlobals = entvars->pSystemGlobals;
-	}
-}
-
-//=========================================================
-// func_illusionary
-//=========================================================
-DLLEXPORT void func_illusionary(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 132);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 132);
-
-		CFuncIllusionary* self = new (privateData) CFuncIllusionary();
-		self->pev = entvars;
-		gpGlobals = entvars->pSystemGlobals;
-	}
-}
-
-//=========================================================
-// func_rotating
-//=========================================================
-DLLEXPORT void func_rotating(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 32);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 32);
-
-		CFuncRotating* self = new (privateData) CFuncRotating();
-		self->pev = entvars;
-		gpGlobals = entvars->pSystemGlobals;
-	}
-}
-
-//=========================================================
-// func_pendulum
-//=========================================================
-DLLEXPORT void func_pendulum(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 76);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 76);
-
-		CFuncPendulum* self = new (privateData) CFuncPendulum();
-		self->pev = entvars;
-		gpGlobals = entvars->pSystemGlobals;
+		pev->enemy = eoffsetOther;
+		pevOther->velocity = g_vecZero;
+		pevOther->movetype = MOVETYPE_NONE;
 	}
 }

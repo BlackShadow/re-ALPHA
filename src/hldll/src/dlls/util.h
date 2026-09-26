@@ -40,9 +40,20 @@ inline const char *STRING(string_t iString)		{ return (*g_engfuncs.pfnSzFromInde
 // Testing for the world entity (or no entity at all)
 inline BOOL FNullEnt(EOFFSET eoffset)			{ return eoffset == 0; }
 inline BOOL FNullEnt(const edict_t *pent)		{ return pent == NULL || FNullEnt(OFFSET(pent)); }
+inline BOOL FNullEnt(const entvars_t *pev)		{ return pev == NULL || FNullEnt(OFFSET(pev)); }
 
 // Testing strings for nullity
 inline BOOL FStringNull(string_t iString)		{ return iString == 0; }
+
+#define ARRAYSIZE(p)	(sizeof(p) / sizeof((p)[0]))
+
+// player hulls and eye positions
+#define VEC_HULL_MIN		Vector(-16.0f, -16.0f, -36.0f)
+#define VEC_HULL_MAX		Vector(16.0f, 16.0f, 36.0f)
+#define VEC_DUCK_HULL_MIN	Vector(-16.0f, -16.0f, -18.0f)
+#define VEC_DUCK_HULL_MAX	Vector(16.0f, 16.0f, 18.0f)
+#define VEC_VIEW			Vector(0.0f, 0.0f, 28.0f)
+#define VEC_DUCK_VIEW		Vector(0.0f, 0.0f, 12.0f)
 
 // Misc useful
 inline BOOL FStrEq(const char *sz1, const char *sz2)
@@ -76,6 +87,10 @@ typedef enum
 	dont_ignore_monsters = 0,
 	ignore_monsters = 1,
 } IGNORE_MONSTERS;
+
+// MOVE_TO_ORIGIN movement types
+#define MOVE_STRAIGHT	0		// step straight towards the goal
+#define MOVE_CHASE		1		// steer around obstacles on the way to the goal
 
 inline void UTIL_TraceLine(const Vector &vecStart, const Vector &vecEnd, IGNORE_MONSTERS igmon, edict_t *pentIgnore, TraceResult *ptr)
 {

@@ -87,35 +87,34 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\..\dlls\alien_grunt.cpp" />
+    <ClCompile Include="..\..\dlls\alien_slave.cpp" />
+    <ClCompile Include="..\..\dlls\animating.cpp" />
     <ClCompile Include="..\..\dlls\barney.cpp" />
     <ClCompile Include="..\..\dlls\bmodels.cpp" />
     <ClCompile Include="..\..\dlls\boid.cpp" />
     <ClCompile Include="..\..\dlls\boidflock.cpp" />
+    <ClCompile Include="..\..\dlls\bullchicken.cpp" />
     <ClCompile Include="..\..\dlls\buttons.cpp" />
     <ClCompile Include="..\..\dlls\cbase.cpp" />
-    <ClCompile Include="..\..\dlls\cbase_toggle.cpp" />
     <ClCompile Include="..\..\dlls\combat.cpp" />
     <ClCompile Include="..\..\dlls\doors.cpp" />
-    <ClCompile Include="..\..\dlls\animating.cpp" />
-    <ClCompile Include="..\..\dlls\basemonster.cpp" />
-    <ClCompile Include="..\..\dlls\monsters.cpp" />
-    <ClCompile Include="..\..\dlls\enginefuncs.cpp" />
     <ClCompile Include="..\..\dlls\explode.cpp" />
     <ClCompile Include="..\..\dlls\func_break.cpp" />
     <ClCompile Include="..\..\dlls\ggrenade.cpp" />
     <ClCompile Include="..\..\dlls\h_cine.cpp" />
     <ClCompile Include="..\..\dlls\h_cycler.cpp" />
-    <ClCompile Include="..\..\dlls\human_grunt.cpp" />
     <ClCompile Include="..\..\dlls\h_export.cpp" />
+    <ClCompile Include="..\..\dlls\headcrab.cpp" />
     <ClCompile Include="..\..\dlls\houndeye.cpp" />
+    <ClCompile Include="..\..\dlls\human_grunt.cpp" />
     <ClCompile Include="..\..\dlls\human_sarge.cpp" />
-    <ClCompile Include="..\..\dlls\alien_slave.cpp" />
     <ClCompile Include="..\..\dlls\items.cpp" />
+    <ClCompile Include="..\..\dlls\john_train.cpp" />
     <ClCompile Include="..\..\dlls\lights.cpp" />
     <ClCompile Include="..\..\dlls\m44.cpp" />
+    <ClCompile Include="..\..\dlls\monsters.cpp" />
     <ClCompile Include="..\..\dlls\panther.cpp" />
     <ClCompile Include="..\..\dlls\pathcorner.cpp" />
-    <ClCompile Include="..\..\dlls\john_train.cpp" />
     <ClCompile Include="..\..\dlls\plats.cpp" />
     <ClCompile Include="..\..\dlls\player.cpp" />
     <ClCompile Include="..\..\dlls\polyrobo.cpp" />
@@ -125,28 +124,28 @@
     <ClCompile Include="..\..\dlls\tentacle.cpp" />
     <ClCompile Include="..\..\dlls\triggers.cpp" />
     <ClCompile Include="..\..\dlls\turret.cpp" />
-    <ClCompile Include="..\..\dlls\world.cpp" />
-    <ClCompile Include="..\..\dlls\bullchicken.cpp" />
-    <ClCompile Include="..\..\dlls\headcrab.cpp" />
     <ClCompile Include="..\..\dlls\weapons.cpp" />
+    <ClCompile Include="..\..\dlls\world.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\dlls\client.h" />
-    <ClInclude Include="..\..\dlls\cbase.h" />
-    <ClInclude Include="..\..\dlls\cbase_toggle.h" />
-    <ClInclude Include="..\..\dlls\player.h" />
-    <ClInclude Include="..\..\dlls\ggrenade.h" />
-    <ClInclude Include="..\..\dlls\utils.h" />
-    <ClInclude Include="..\..\dlls\animating.h" />
     <ClInclude Include="..\..\dlls\basemonster.h" />
-    <ClInclude Include="..\..\dlls\enginefuncs.h" />
-    <ClInclude Include="..\..\dlls\hl_exports.h" />
-    <ClInclude Include="..\..\dlls\hl_types.h" />
+    <ClInclude Include="..\..\dlls\cbase.h" />
+    <ClInclude Include="..\..\dlls\client.h" />
+    <ClInclude Include="..\..\dlls\decals.h" />
+    <ClInclude Include="..\..\dlls\enginecallback.h" />
+    <ClInclude Include="..\..\dlls\extdll.h" />
+    <ClInclude Include="..\..\dlls\ggrenade.h" />
+    <ClInclude Include="..\..\dlls\monsters.h" />
+    <ClInclude Include="..\..\dlls\player.h" />
+    <ClInclude Include="..\..\dlls\studio.h" />
+    <ClInclude Include="..\..\dlls\util.h" />
+    <ClInclude Include="..\..\dlls\weapons.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\dlls\hl.def" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\public\const.h" />
     <ClInclude Include="..\..\public\edict.h" />
     <ClInclude Include="..\..\public\eiface.h" />
     <ClInclude Include="..\..\public\progdefs.h" />

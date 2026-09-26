@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,211 +12,150 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// Monsters - Shared monster AI helpers
+// Monsters - the shared monster AI
 //=========================================================
 
-#include <math.h>
-#include <string.h>
-#include "basemonster.h"
+#include "extdll.h"
+#include "util.h"
+#include "cbase.h"
 #include "monsters.h"
-#include "enginefuncs.h"
-#include "utils.h"
+
+#define COVER_MAX_SCORE			2048.0f		// worst possible CoverScore
+
+#define FRIENDLY_FIRE_TRACES	4			// shots tried by CheckFriendlyFire
+#define FRIENDLY_FIRE_SPREAD	0.025f
 
 //=========================================================
-// Helpers
+// DrawDebugLine
 //=========================================================
-
-#define MONSTER_THINK_INTERVAL 0.1f
-
-
-
-
-void DrawDebugLine(const Vector &start, const Vector &end)
+void DrawDebugLine(const Vector &vecStart, const Vector &vecEnd)
 {
 	if (!g_fDrawLines)
 		return;
 
-	EngineWriteByte(MSG_BROADCAST, SVC_TEMPENTITY);
-	EngineWriteByte(MSG_BROADCAST, TE_SHOWLINE);
-	EngineWriteCoord(MSG_BROADCAST, start.x);
-	EngineWriteCoord(MSG_BROADCAST, start.y);
-	EngineWriteCoord(MSG_BROADCAST, start.z);
-	EngineWriteCoord(MSG_BROADCAST, end.x);
-	EngineWriteCoord(MSG_BROADCAST, end.y);
-	EngineWriteCoord(MSG_BROADCAST, end.z);
+	WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+	WRITE_BYTE(MSG_BROADCAST, TE_SHOWLINE);
+	WRITE_COORD(MSG_BROADCAST, vecStart.x);
+	WRITE_COORD(MSG_BROADCAST, vecStart.y);
+	WRITE_COORD(MSG_BROADCAST, vecStart.z);
+	WRITE_COORD(MSG_BROADCAST, vecEnd.x);
+	WRITE_COORD(MSG_BROADCAST, vecEnd.y);
+	WRITE_COORD(MSG_BROADCAST, vecEnd.z);
 }
-
-static void VectorAdd(const Vector &a, const Vector &b, Vector &out)
-{
-	out.x = a.x + b.x;
-	out.y = a.y + b.y;
-	out.z = a.z + b.z;
-}
-
-static void VectorSubtract(const Vector &a, const Vector &b, Vector &out)
-{
-	out.x = a.x - b.x;
-	out.y = a.y - b.y;
-	out.z = a.z - b.z;
-}
-
-static float VectorLength(const Vector &v)
-{
-	return (float)sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-}
-
-static float VectorNormalize(Vector &v)
-{
-	float length = VectorLength(v);
-	if (length <= 0.0f)
-	{
-		v.x = 0.0f;
-		v.y = 0.0f;
-		v.z = 0.0f;
-		return 0.0f;
-	}
-
-	float inv = 1.0f / length;
-	v.x = v.x * inv;
-	v.y = v.y * inv;
-	v.z = v.z * inv;
-	return length;
-}
-
 
 //=========================================================
-// FVisible
+// FVisible - TRUE if the looker's eyes can see the
+// target's eyes
 //=========================================================
 BOOL FVisible(entvars_t *pevLooker, entvars_t *pevTarget)
 {
 	if (!pevLooker || !pevTarget)
-		return 0;
-
-	Vector start;
-	Vector end;
-	VectorAdd(PevVector(pevLooker, PEV_ORIGIN), PevVector(pevLooker, PEV_VIEWOFS), start);
-	VectorAdd(PevVector(pevTarget, PEV_ORIGIN), PevVector(pevTarget, PEV_VIEWOFS), end);
+		return FALSE;
 
 	TraceResult tr;
-	memset(&tr, 0, sizeof(tr));
-	EngineTraceLine((const float *)&start, (const float *)&end, 0, EdictFromEntvars(pevLooker), &tr);
+	Vector vecLookerOrigin = pevLooker->origin + pevLooker->view_ofs;
+	Vector vecTargetOrigin = pevTarget->origin + pevTarget->view_ofs;
+
+	UTIL_TraceLine(vecLookerOrigin, vecTargetOrigin, ignore_monsters, ENT(pevLooker), &tr);
+
 	return tr.flFraction == 1.0f;
 }
 
 //=========================================================
-// FInViewCone
+// FInViewCone - TRUE if the target is within flDot of the
+// looker's facing
 //=========================================================
 BOOL FInViewCone(entvars_t *pevLooker, entvars_t *pevTarget, float flDot)
 {
 	if (!pevLooker || !pevTarget)
-		return 0;
+		return FALSE;
 
-	Vector angles = PevVector(pevLooker, PEV_ANGLES);
-	EngineMakeVectors((const float *)&angles);
+	UTIL_MakeVectors(pevLooker->angles);
 
-	void *globals = GlobalsFromEntvars(pevLooker);
-	const float *forward = GlobalsForward(globals);
-	if (!forward)
-		return 0;
+	Vector vecLOS = pevTarget->origin - pevLooker->origin;
+	float flDist = vecLOS.Length();
+	if (flDist <= 0.0f)
+		return FALSE;
 
-	Vector dir;
-	VectorSubtract(PevVector(pevTarget, PEV_ORIGIN), PevVector(pevLooker, PEV_ORIGIN), dir);
-	if (VectorNormalize(dir) <= 0.0f)
-		return 0;
+	vecLOS = vecLOS * (1.0f / flDist);
 
-	Vector fwd;
-	fwd.x = forward[0];
-	fwd.y = forward[1];
-	fwd.z = forward[2];
-	return DotProduct(fwd, dir) > flDot;
+	return DotProduct(gpGlobals->v_forward, vecLOS) > flDot;
 }
 
 //=========================================================
-// CheckFriendlyFire
+// CheckFriendlyFire - TRUE if a shot along the direction
+// might hit a monster of the shooter's own class
 //=========================================================
-BOOL CheckFriendlyFire(entvars_t *pevShooter, float dirX, float dirY, float dirZ, float flDistance)
+BOOL CheckFriendlyFire(entvars_t *pevShooter, const Vector &vecDir, float flDistance)
 {
-	if (!pevShooter)
-		return 0;
+	int iClass = CBaseEntity::Instance(pevShooter)->Classify();
 
-	edict_t *pShooterEdict = EdictFromEntvars(pevShooter);
-	if (!pShooterEdict)
-		return 0;
+	Vector vecSrc = pevShooter->origin + pevShooter->view_ofs;
 
-	CBaseEntity *pShooter = (CBaseEntity *)EngineGetPrivateData(pShooterEdict);
-	if (!pShooter)
-		return 0;
+	UTIL_MakeVectors(pevShooter->angles);
 
-	int shooterClass = pShooter->Classify();
-
-	void *globals = GlobalsFromEntvars(pevShooter);
-	if (!globals)
-		return 0;
-
-	float start[3];
-	start[0] = PevVector(pevShooter, PEV_ORIGIN).x + PevVector(pevShooter, PEV_VIEWOFS).x;
-	start[1] = PevVector(pevShooter, PEV_ORIGIN).y + PevVector(pevShooter, PEV_VIEWOFS).y;
-	start[2] = PevVector(pevShooter, PEV_ORIGIN).z + PevVector(pevShooter, PEV_VIEWOFS).z;
-
-	EngineMakeVectors((const float *)&PevVector(pevShooter, PEV_ANGLES));
-
-	const float *right = GlobalsRight(globals);
-	const float *up = GlobalsUp(globals);
-
-	int i;
-	for (i = 0; i < 4; ++i)
+	for (int i = 0; i < FRIENDLY_FIRE_TRACES; i++)
 	{
-		float jitter[3] = {0.0f, 0.0f, 0.0f};
-
-		if (right)
-		{
-			float s = RandomFloat(-1.0f, 1.0f) * 0.025f;	// binary scales only by 0.025 (flDistance applied once at the endpoint)
-			jitter[0] += right[0] * s;
-			jitter[1] += right[1] * s;
-			jitter[2] += right[2] * s;
-		}
-
-		if (up)
-		{
-			float s = RandomFloat(-1.0f, 1.0f) * 0.025f;	// binary scales only by 0.025 (flDistance applied once at the endpoint)
-			jitter[0] += up[0] * s;
-			jitter[1] += up[1] * s;
-			jitter[2] += up[2] * s;
-		}
-
-		float end[3];
-		end[0] = start[0] + (dirX + jitter[0]) * flDistance;
-		end[1] = start[1] + (dirY + jitter[1]) * flDistance;
-		end[2] = start[2] + (dirZ + jitter[2]) * flDistance;
+		float flRight = RANDOM_FLOAT(-1.0f, 1.0f) * FRIENDLY_FIRE_SPREAD;
+		float flUp = RANDOM_FLOAT(-1.0f, 1.0f) * FRIENDLY_FIRE_SPREAD;
+		Vector vecSpread = gpGlobals->v_right * flRight + gpGlobals->v_up * flUp;
 
 		TraceResult tr;
-		memset(&tr, 0, sizeof(tr));
-		EngineTraceLine(start, end, 1, pShooterEdict, &tr);
+		UTIL_TraceLine(vecSrc, vecSrc + (vecDir + vecSpread) * flDistance, dont_ignore_monsters, ENT(pevShooter), &tr);
 
-		if (tr.flFraction != 1.0f && TraceHitIndex(&tr))
+		if (tr.flFraction != 1.0f && !FNullEnt(tr.pHit))
 		{
-			edict_t *pHitEdict = TraceHitEdict(&tr);
-			entvars_t *pevHit = pHitEdict ? EngineGetVarsOfEnt(pHitEdict) : NULL;
-			if (pevHit && ((((int)PevFloat(pevHit, PEV_FLAGS)) & 0x20) != 0))
+			edict_t *pentHit = ENT(tr.pHit);
+
+			if ((int)VARS(pentHit)->flags & FL_MONSTER)
 			{
-				CBaseEntity *pHit = (CBaseEntity *)EngineGetPrivateData(pHitEdict);
-				if (pHit && pHit->Classify() == shooterClass)
-					return 1;
+				CBaseEntity *pHit = CBaseEntity::Instance(pentHit);
+				if (pHit && pHit->Classify() == iClass)
+					return TRUE;
 			}
 		}
 	}
 
-	return 0;
+	return FALSE;
 }
 
 //=========================================================
-// CBaseMonster default virtuals
+// CBaseMonster
 //=========================================================
+CBaseMonster::CBaseMonster()
+{
+	m_MonsterState = MONSTERSTATE_NONE;
+	m_IdealMonsterState = MONSTERSTATE_NONE;
+	m_flNextAttack = 0;
+	m_bloodColor = 0;
+
+	m_vecMoveGoal = g_vecZero;
+	m_vecEnemyLKP = g_vecZero;
+	for (int i = 0; i < MONSTER_ROUTE_SIZE; i++)
+		m_vecRoute[i] = g_vecZero;
+
+	m_pMoveTarget = NULL;
+	m_pSquadLeader = NULL;
+	m_pSquadNext = NULL;
+	m_iSquadSize = 1;
+
+	m_flGoalRadius = 0;
+	m_flDistTooFar = 0;
+	m_flNextSoundTime = 0;
+	m_flLastEnemySightTime = 0;
+
+	m_iAmmo = 0;
+	m_afEnemyFlags = 0;
+	m_iRouteIndex = 0;
+	m_iRouteGoal = 0;
+
+	m_pevAttacker = NULL;
+	m_vecAttackerLKP = g_vecZero;
+}
+
 void CBaseMonster::SetActivity(int activity)
 {
-	HL_UNUSED(activity);
 }
 
 void CBaseMonster::IdleSound()
@@ -229,9 +168,7 @@ void CBaseMonster::AlertSound()
 
 int CBaseMonster::CheckAttacks(entvars_t *pevEnemy, float flDist)
 {
-	HL_UNUSED(pevEnemy);
-	HL_UNUSED(flDist);
-	return 0;
+	return FALSE;
 }
 
 int CBaseMonster::BloodColor()
@@ -240,23 +177,42 @@ int CBaseMonster::BloodColor()
 }
 
 //=========================================================
+// TogglePlayerUse - the player's use key makes a monster
+// follow the player, or stop following
+//=========================================================
+void CBaseMonster::TogglePlayerUse(entvars_t *pevPlayer)
+{
+	if (m_pMoveTarget == pevPlayer)
+	{
+		m_pMoveTarget = pev;
+		m_MonsterState = MONSTERSTATE_IDLE;
+	}
+	else
+	{
+		m_pMoveTarget = pevPlayer;
+		m_MonsterState = MONSTERSTATE_FOLLOW;
+	}
+}
+
+//=========================================================
 // CheckMeleeAttack
 //=========================================================
 BOOL CBaseMonster::CheckMeleeAttack(entvars_t *pevEnemy)
 {
-	if (!pev || !pevEnemy)
-		return 0;
+	if (!pevEnemy)
+		return FALSE;
 
-	if (GlobalTime() < m_flNextAttack)
-		return 0;
+	if (gpGlobals->time < m_flNextAttack)
+		return FALSE;
 
 	if (!FInViewCone(pev, pevEnemy, 0.1f))
-		return 0;
+		return FALSE;
 
 	if (!FVisible(pev, pevEnemy))
-		return 0;
+		return FALSE;
 
-	return (float)fabs(PevVector(pevEnemy, PEV_ORIGIN).z - PevVector(pev, PEV_ORIGIN).z) <= 48.0f;
+	// about the same height
+	return fabs(pevEnemy->origin.z - pev->origin.z) <= 48.0f;
 }
 
 //=========================================================
@@ -264,722 +220,492 @@ BOOL CBaseMonster::CheckMeleeAttack(entvars_t *pevEnemy)
 //=========================================================
 BOOL CBaseMonster::CheckRangeAttack(entvars_t *pevEnemy)
 {
-	if (!pev || !pevEnemy)
-		return 0;
+	if (!pevEnemy)
+		return FALSE;
 
-	if (GlobalTime() < m_flNextAttack)
-		return 0;
+	if (gpGlobals->time < m_flNextAttack)
+		return FALSE;
 
 	if (!FInViewCone(pev, pevEnemy, 0.9f))
-		return 0;
+		return FALSE;
 
 	return FVisible(pev, pevEnemy);
 }
 
 //=========================================================
-// SquadRecruit
+// SquadRecruit - builds a squad ring of all the living
+// monsters of our class nearby, led by us. Returns the
+// number of recruits.
 //=========================================================
 int CBaseMonster::SquadRecruit(int searchRadius)
 {
-	if (!pev)
-		return 0;
-
-	int count = 0;
-	int myClass = Classify();
+	int iRecruits = 0;
+	int iMyClass = Classify();
+	CBaseMonster *pLast = this;
 
 	m_pSquadLeader = pev;
 
-	Vector origin = PevVector(pev, PEV_ORIGIN);
-	edict_t *pEdict = EngineFindEntityInSphere((const float *)&origin, (float)searchRadius);
-
-	entvars_t *pevLast = pev;
-
-	while (pEdict)
+	edict_t *pentEnt = FIND_ENTITY_IN_SPHERE(pev->origin, (float)searchRadius);
+	while (!FNullEnt(pentEnt))
 	{
-		if (!EngineIndexOfEdict(pEdict))
-			break;
+		entvars_t *pevEnt = VARS(pentEnt);
 
-		entvars_t *pevEnt = EngineGetVarsOfEnt(pEdict);
-		if (!pevEnt)
-			break;
-
-		if ((((int)PevFloat(pevEnt, PEV_FLAGS)) & 0x20) != 0)
+		if ((int)pevEnt->flags & FL_MONSTER)
 		{
-			CBaseEntity *pEntity = (CBaseEntity *)EngineGetPrivateData(pEdict);
-			if (pEntity && pEntity->Classify() == myClass && pevEnt != pev && PevFloat(pevEnt, PEV_HEALTH) > 0.0f)
+			CBaseMonster *pRecruit = (CBaseMonster *)CBaseEntity::Instance(pentEnt);
+
+			if (pRecruit && pRecruit->Classify() == iMyClass && pevEnt != pev && pevEnt->health > 0)
 			{
-				++count;
-				PevInt(pevEnt, PEV_ENEMY) = PevInt(pev, PEV_ENEMY);
+				iRecruits++;
+				pevEnt->enemy = pev->enemy;
+				pRecruit->m_pSquadLeader = pev;
 
-				CBaseMonster *pMonster = (CBaseMonster *)pEntity;
-				if (pMonster)
-					pMonster->m_pSquadLeader = pev;
-
-				edict_t *pLastEdict = EdictFromEntvars(pevLast);
-				CBaseMonster *pLast = pLastEdict ? (CBaseMonster *)EngineGetPrivateData(pLastEdict) : NULL;
-				if (pLast)
-					pLast->m_pSquadNext = pevEnt;
-
-				pevLast = pevEnt;
+				pLast->m_pSquadNext = pevEnt;
+				pLast = pRecruit;
 			}
 		}
 
-		int chainIndex = PevInt(pevEnt, PEV_CHAIN);
-		pEdict = chainIndex ? EnginePEntityOfEntIndex(chainIndex) : NULL;
+		pentEnt = ENT(pevEnt->chain);
 	}
 
-	{
-		edict_t *pLastEdict = EdictFromEntvars(pevLast);
-		CBaseMonster *pLast = pLastEdict ? (CBaseMonster *)EngineGetPrivateData(pLastEdict) : NULL;
-		if (pLast)
-			pLast->m_pSquadNext = pev;
-	}
+	// close the ring
+	pLast->m_pSquadNext = pev;
 
-	return count;
+	return iRecruits;
 }
 
 //=========================================================
-// Cover helpers
+// TraceToFloor - where vecStart ends up when moved down
+// by flDist
 //=========================================================
-
-static Vector TraceEndPosToVector(const TraceResult &tr)
+static Vector TraceToFloor(entvars_t *pev, const Vector &vecStart, float flDist)
 {
-	Vector out;
-	out.x = tr.vecEndPos[0];
-	out.y = tr.vecEndPos[1];
-	out.z = tr.vecEndPos[2];
-	return out;
-}
-
-static Vector TraceToFloor(entvars_t *pevOwner, const Vector &start, float distance)
-{
-	Vector end = start;
-	end.z = end.z - distance;
-
 	TraceResult tr;
-	memset(&tr, 0, sizeof(tr));
-	EngineTraceLine((const float *)&start, (const float *)&end, 0, EdictFromEntvars(pevOwner), &tr);
-	return TraceEndPosToVector(tr);
+	Vector vecEnd = vecStart;
+	vecEnd.z -= flDist;
+
+	UTIL_TraceLine(vecStart, vecEnd, ignore_monsters, ENT(pev), &tr);
+
+	return tr.vecEndPos;
 }
 
-static float CoverScore(entvars_t *pevOwner, const Vector &vecCover, const Vector &vecThreat)
+//=========================================================
+// CoverScore - how open vecCover is towards vecThreat: the
+// free distance on both sides of the monster. Smaller is
+// better cover.
+//=========================================================
+static float CoverScore(entvars_t *pev, const Vector &vecCover, const Vector &vecThreat)
 {
-	if (!pevOwner)
-		return 0.0f;
+	UTIL_MakeVectors(UTIL_VecToAngles(vecThreat - vecCover));
 
-	Vector dir;
-	VectorSubtract(vecThreat, vecCover, dir);
+	float flWidth = pev->maxs.x;
+	Vector vecRight = vecCover + gpGlobals->v_right * flWidth;
+	Vector vecLeft = vecCover - gpGlobals->v_right * flWidth;
 
-	float angles[3];
-	EngineVecToAngles((const float *)&dir, angles);
-	EngineMakeVectors(angles);
+	TraceResult trRight;
+	TraceResult trLeft;
+	UTIL_TraceLine(vecRight, vecRight + gpGlobals->v_forward * 1024.0f, ignore_monsters, ENT(pev), &trRight);
+	UTIL_TraceLine(vecLeft, vecLeft + gpGlobals->v_forward * 1024.0f, ignore_monsters, ENT(pev), &trLeft);
 
-	void *globals = GlobalsFromEntvars(pevOwner);
-	const float *forward = GlobalsForward(globals);
-	const float *right = GlobalsRight(globals);
-	if (!forward || !right)
-		return 0.0f;
-
-	Vector vForward;
-	vForward.x = forward[0];
-	vForward.y = forward[1];
-	vForward.z = forward[2];
-
-	Vector vRight;
-	vRight.x = right[0];
-	vRight.y = right[1];
-	vRight.z = right[2];
-
-	float hullWidth = PevVector(pevOwner, PEV_MAXS).x;
-
-	Vector startA;
-	startA.x = vecCover.x + vRight.x * hullWidth;
-	startA.y = vecCover.y + vRight.y * hullWidth;
-	startA.z = vecCover.z + vRight.z * hullWidth;
-
-	Vector startB;
-	startB.x = vecCover.x - vRight.x * hullWidth;
-	startB.y = vecCover.y - vRight.y * hullWidth;
-	startB.z = vecCover.z - vRight.z * hullWidth;
-
-	Vector endA;
-	endA.x = startA.x + vForward.x * 1024.0f;
-	endA.y = startA.y + vForward.y * 1024.0f;
-	endA.z = startA.z + vForward.z * 1024.0f;
-
-	Vector endB;
-	endB.x = startB.x + vForward.x * 1024.0f;
-	endB.y = startB.y + vForward.y * 1024.0f;
-	endB.z = startB.z + vForward.z * 1024.0f;
-
-	TraceResult trA;
-	memset(&trA, 0, sizeof(trA));
-	EngineTraceLine((const float *)&startA, (const float *)&endA, 0, EdictFromEntvars(pevOwner), &trA);
-
-	TraceResult trB;
-	memset(&trB, 0, sizeof(trB));
-	EngineTraceLine((const float *)&startB, (const float *)&endB, 0, EdictFromEntvars(pevOwner), &trB);
-
-	Vector endPosA = TraceEndPosToVector(trA);
-	Vector endPosB = TraceEndPosToVector(trB);
-
-	Vector deltaA;
-	VectorSubtract(endPosA, vecCover, deltaA);
-
-	Vector deltaB;
-	VectorSubtract(endPosB, vecCover, deltaB);
-
-	return VectorLength(deltaA) + VectorLength(deltaB);
+	return (trRight.vecEndPos - vecCover).Length() + (trLeft.vecEndPos - vecCover).Length();
 }
 
+//=========================================================
+// FValidCover - the enemy can't see vecSpot, the monster
+// can get there from vecStart, and there is room to stand
+//=========================================================
+static BOOL FValidCover(entvars_t *pev, const Vector &vecStart, const Vector &vecSpot, const Vector &vecRoom, const Vector &vecEnemyEye)
+{
+	TraceResult tr;
+
+	UTIL_TraceLine(vecEnemyEye, vecSpot, ignore_monsters, ENT(pev), &tr);
+	if (tr.flFraction == 1.0f)
+		return FALSE;
+
+	UTIL_TraceLine(vecStart, vecSpot, dont_ignore_monsters, ENT(pev), &tr);
+	if (tr.flFraction != 1.0f)
+		return FALSE;
+
+	UTIL_TraceLine(vecSpot, vecSpot + vecRoom, dont_ignore_monsters, ENT(pev), &tr);
+
+	return tr.flFraction == 1.0f;
+}
+
+//=========================================================
+// FindCover - looks for cover from the enemy to the right
+// and to the left, and sets the move state to go there.
+// Returns pev->origin when there is none.
+//=========================================================
 Vector CBaseMonster::FindCover(entvars_t *pevEnemy)
 {
-	Vector bestRight = PevVector(pev, PEV_ORIGIN);
-	Vector bestLeft = bestRight;
-	float bestRightScore = 2048.0f;
-	float bestLeftScore = 2048.0f;
+	Vector vecBestRight = pev->origin;
+	Vector vecBestLeft = vecBestRight;
+	float flBestRightScore = COVER_MAX_SCORE;
+	float flBestLeftScore = COVER_MAX_SCORE;
 
-	if (!pev || !pevEnemy)
-		return bestRight;
+	if (!pevEnemy)
+		return vecBestRight;
 
-	Vector enemyEye;
-	VectorAdd(PevVector(pevEnemy, PEV_ORIGIN), PevVector(pevEnemy, PEV_VIEWOFS), enemyEye);
+	Vector vecEnemyEye = pevEnemy->origin + pevEnemy->view_ofs;
 
-	Vector angles = PevVector(pev, PEV_ANGLES);
-	EngineMakeVectors((const float *)&angles);
+	UTIL_MakeVectors(pev->angles);
+	Vector vecRight = gpGlobals->v_right;
 
-	void *globals = gpGlobals;
-	const float *right = GlobalsRight(globals);
-	if (!right)
-		return bestRight;
+	Vector vecStart = pev->origin;
+	vecStart.z += 16.0f;
 
-	Vector rightDir;
-	rightDir.x = right[0];
-	rightDir.y = right[1];
-	rightDir.z = right[2];
+	float flWidth = pev->size.y;
 
-	Vector start = PevVector(pev, PEV_ORIGIN);
-	start.z = start.z + 16.0f;
-
-	const float sizeY = PevVector(pev, PEV_SIZE).y;
-
-	int dist = 32;
-	for (int i = 0; i < 13; i++)
+	for (int i = 1; i <= 13; i++)
 	{
-		Vector candidate;
-		candidate.x = start.x + rightDir.x * (float)dist;
-		candidate.y = start.y + rightDir.y * (float)dist;
-		candidate.z = start.z + rightDir.z * (float)dist;
+		Vector vecOffset = vecRight * (float)(i * 32);
+		Vector vecSpot;
+		float flScore;
 
-		TraceResult tr;
-		memset(&tr, 0, sizeof(tr));
-		EngineTraceLine((const float *)&enemyEye, (const float *)&candidate, 0, EdictFromEntvars(pev), &tr);
-		if (tr.flFraction != 1.0f)
+		vecSpot = vecStart + vecOffset;
+		if (FValidCover(pev, vecStart, vecSpot, vecRight * flWidth, vecEnemyEye))
 		{
-			TraceResult tr2;
-			memset(&tr2, 0, sizeof(tr2));
-			EngineTraceLine((const float *)&start, (const float *)&candidate, 1, EdictFromEntvars(pev), &tr2);
-			if (tr2.flFraction == 1.0f)
+			flScore = CoverScore(pev, vecSpot, vecEnemyEye);
+			if (flScore < flBestRightScore)
 			{
-				Vector offset;
-				offset.x = rightDir.x * sizeY;
-				offset.y = rightDir.y * sizeY;
-				offset.z = rightDir.z * sizeY;
-
-				Vector candidate2;
-				VectorAdd(candidate, offset, candidate2);
-
-				TraceResult tr3;
-				memset(&tr3, 0, sizeof(tr3));
-				EngineTraceLine((const float *)&candidate, (const float *)&candidate2, 1, EdictFromEntvars(pev), &tr3);
-				if (tr3.flFraction == 1.0f)
-				{
-					float score = CoverScore(pev, candidate, enemyEye);
-					if (score < bestRightScore)
-					{
-						bestRight = candidate;
-						bestRightScore = score;
-					}
-				}
+				vecBestRight = vecSpot;
+				flBestRightScore = flScore;
 			}
 		}
 
-		candidate.x = start.x - rightDir.x * (float)dist;
-		candidate.y = start.y - rightDir.y * (float)dist;
-		candidate.z = start.z - rightDir.z * (float)dist;
-
-		memset(&tr, 0, sizeof(tr));
-		EngineTraceLine((const float *)&enemyEye, (const float *)&candidate, 0, EdictFromEntvars(pev), &tr);
-		if (tr.flFraction != 1.0f)
+		vecSpot = vecStart - vecOffset;
+		if (FValidCover(pev, vecStart, vecSpot, -(vecRight * flWidth), vecEnemyEye))
 		{
-			TraceResult tr2;
-			memset(&tr2, 0, sizeof(tr2));
-			EngineTraceLine((const float *)&start, (const float *)&candidate, 1, EdictFromEntvars(pev), &tr2);
-			if (tr2.flFraction == 1.0f)
+			flScore = CoverScore(pev, vecSpot, vecEnemyEye);
+			if (flScore < flBestLeftScore)
 			{
-				Vector offset;
-				offset.x = rightDir.x * sizeY;
-				offset.y = rightDir.y * sizeY;
-				offset.z = rightDir.z * sizeY;
-
-				Vector candidate2;
-				VectorSubtract(candidate, offset, candidate2);
-
-				TraceResult tr3;
-				memset(&tr3, 0, sizeof(tr3));
-				EngineTraceLine((const float *)&candidate, (const float *)&candidate2, 1, EdictFromEntvars(pev), &tr3);
-				if (tr3.flFraction == 1.0f)
-				{
-					float score = CoverScore(pev, candidate, enemyEye);
-					if (score < bestLeftScore)
-					{
-						bestLeft = candidate;
-						bestLeftScore = score;
-					}
-				}
-			}
-		}
-
-		dist += 32;
-	}
-
-	Vector origin = PevVector(pev, PEV_ORIGIN);
-
-	if (bestLeft.x != origin.x || bestLeft.y != origin.y || bestLeft.z != origin.z)
-		bestLeft = TraceToFloor(pev, bestLeft, 128.0f);
-
-	if (bestRight.x != origin.x || bestRight.y != origin.y || bestRight.z != origin.z)
-		bestRight = TraceToFloor(pev, bestRight, 128.0f);
-
-	if (g_fDrawLines)
-	{
-		Vector enemyOrigin = PevVector(pevEnemy, PEV_ORIGIN);
-		DrawDebugLine(origin, bestRight);
-		DrawDebugLine(bestRight, enemyOrigin);
-		DrawDebugLine(origin, bestLeft);
-		DrawDebugLine(bestLeft, enemyOrigin);
-	}
-
-	// Binary forces the cover Z back to the monster's origin.z, discarding the
-	// floor-traced z (FindRetreat does the same; returns origin.z).
-	bestLeft.z = origin.z;
-	bestRight.z = origin.z;
-
-	if (bestRight.x == origin.x && bestRight.y == origin.y && bestRight.z == origin.z
-		&& bestLeft.x == origin.x && bestLeft.y == origin.y && bestLeft.z == origin.z)
-	{
-		return origin;
-	}
-
-	if (bestRight.x == origin.x && bestRight.y == origin.y && bestRight.z == origin.z)
-	{
-		m_MonsterState = 11;
-		return bestLeft;
-	}
-
-	if (bestLeft.x == origin.x && bestLeft.y == origin.y && bestLeft.z == origin.z)
-	{
-		m_MonsterState = 12;
-		return bestRight;
-	}
-
-	Vector deltaRight;
-	VectorSubtract(bestRight, origin, deltaRight);
-
-	Vector deltaLeft;
-	VectorSubtract(bestLeft, origin, deltaLeft);
-
-	if (VectorLength(deltaLeft) > VectorLength(deltaRight))
-	{
-		m_MonsterState = 12;
-		return bestRight;
-	}
-
-	m_MonsterState = 11;
-	return bestLeft;
-}
-
-Vector CBaseMonster::FindRetreat(entvars_t *pevEnemy)
-{
-	Vector best = PevVector(pev, PEV_ORIGIN);
-	Vector bestDebug = best;
-	float bestScore = 2048.0f;
-
-	if (!pev || !pevEnemy)
-		return best;
-
-	Vector enemyEye;
-	VectorAdd(PevVector(pevEnemy, PEV_ORIGIN), PevVector(pevEnemy, PEV_VIEWOFS), enemyEye);
-
-	Vector delta;
-	VectorSubtract(PevVector(pevEnemy, PEV_ORIGIN), PevVector(pev, PEV_ORIGIN), delta);
-	float distToEnemy = VectorLength(delta);
-
-	int step = (int)distToEnemy / 8;
-	if (step <= 0)
-		step = 1;
-
-	Vector angles = PevVector(pev, PEV_ANGLES);
-	EngineMakeVectors((const float *)&angles);
-
-	void *globals = gpGlobals;
-	const float *forward = GlobalsForward(globals);
-	const float *right = GlobalsRight(globals);
-	if (!forward || !right)
-		return best;
-
-	Vector forwardDir;
-	forwardDir.x = forward[0];
-	forwardDir.y = forward[1];
-	forwardDir.z = forward[2];
-
-	Vector rightDir;
-	rightDir.x = right[0];
-	rightDir.y = right[1];
-	rightDir.z = right[2];
-
-	Vector start = PevVector(pev, PEV_ORIGIN);
-	start.z = start.z + 16.0f;
-
-	Vector viewOfs = PevVector(pevEnemy, PEV_VIEWOFS);
-	Vector enemyEye2;
-	VectorAdd(enemyEye, viewOfs, enemyEye2);
-
-	for (int offset = -(int)distToEnemy; offset <= (int)distToEnemy; offset += step)
-	{
-		Vector candidate;
-		candidate.x = start.x + forwardDir.x * distToEnemy + rightDir.x * (float)offset;
-		candidate.y = start.y + forwardDir.y * distToEnemy + rightDir.y * (float)offset;
-		candidate.z = start.z + forwardDir.z * distToEnemy + rightDir.z * (float)offset;
-
-		TraceResult tr;
-		memset(&tr, 0, sizeof(tr));
-		EngineTraceLine((const float *)&start, (const float *)&candidate, 0, EdictFromEntvars(pev), &tr);
-		if (tr.flFraction != 1.0f)
-		{
-			float back = -(PevVector(pev, PEV_SIZE).y * 0.8f);
-			Vector hit = TraceEndPosToVector(tr);
-			candidate.x = hit.x + forwardDir.x * back;
-			candidate.y = hit.y + forwardDir.y * back;
-			candidate.z = hit.z + forwardDir.z * back;
-		}
-
-		Vector candidate2;
-		VectorAdd(candidate, viewOfs, candidate2);
-
-		TraceResult tr2;
-		memset(&tr2, 0, sizeof(tr2));
-		EngineTraceLine((const float *)&candidate2, (const float *)&enemyEye2, 0, EdictFromEntvars(pev), &tr2);
-		if (tr2.flFraction != 1.0f)
-		{
-			float score = CoverScore(pev, candidate, enemyEye);
-			if (score < bestScore)
-			{
-				bestScore = score;
-				bestDebug = candidate;
-				best.x = candidate.x;
-				best.y = candidate.y;
-				best.z = PevVector(pev, PEV_ORIGIN).z;
+				vecBestLeft = vecSpot;
+				flBestLeftScore = flScore;
 			}
 		}
 	}
 
-	DrawDebugLine(PevVector(pev, PEV_ORIGIN), bestDebug);
-	return best;
-}
+	if (vecBestLeft != pev->origin)
+		vecBestLeft = TraceToFloor(pev, vecBestLeft, 128.0f);
 
-Vector CBaseMonster::FindShootPosition(entvars_t *pevEnemy)
-{
-	Vector origin = PevVector(pev, PEV_ORIGIN);
+	if (vecBestRight != pev->origin)
+		vecBestRight = TraceToFloor(pev, vecBestRight, 128.0f);
 
-	if (!pev || !pevEnemy)
-		return origin;
+	DrawDebugLine(pev->origin, vecBestRight);
+	DrawDebugLine(vecBestRight, pevEnemy->origin);
+	DrawDebugLine(pev->origin, vecBestLeft);
+	DrawDebugLine(vecBestLeft, pevEnemy->origin);
 
-	Vector enemyEye;
-	VectorAdd(PevVector(pevEnemy, PEV_ORIGIN), PevVector(pevEnemy, PEV_VIEWOFS), enemyEye);
+	vecBestLeft.z = pev->origin.z;
+	vecBestRight.z = pev->origin.z;
 
-	Vector angles = PevVector(pev, PEV_ANGLES);
-	EngineMakeVectors((const float *)&angles);
+	if (vecBestRight == pev->origin && vecBestLeft == pev->origin)
+		return pev->origin;
 
-	void *globals = gpGlobals;
-	const float *forward = GlobalsForward(globals);
-	const float *right = GlobalsRight(globals);
-	if (!forward || !right)
-		return origin;
-
-	Vector forwardDir;
-	forwardDir.x = forward[0];
-	forwardDir.y = forward[1];
-	forwardDir.z = forward[2];
-
-	Vector rightDir;
-	rightDir.x = right[0];
-	rightDir.y = right[1];
-	rightDir.z = right[2];
-
-	float halfWidth = PevVector(pev, PEV_SIZE).x * 0.5f;
-
-	Vector start;
-	start.x = origin.x - forwardDir.x * halfWidth;
-	start.y = origin.y - forwardDir.y * halfWidth;
-	start.z = origin.z - forwardDir.z * halfWidth + 16.0f;
-
-	int enemyIndex = EngineIndexOfEdict(EdictFromEntvars(pevEnemy));
-	int dist = 16;
-	Vector leftCandidate = origin;
-	int foundLeft = 0;
-	for (int i = 0; i < 6; i++)
+	if (vecBestRight == pev->origin)
 	{
-		Vector candidate;
-		candidate.x = start.x + rightDir.x * (float)dist;
-		candidate.y = start.y + rightDir.y * (float)dist;
-		candidate.z = start.z + rightDir.z * (float)dist;
-
-		TraceResult tr;
-		memset(&tr, 0, sizeof(tr));
-		EngineTraceLine((const float *)&candidate, (const float *)&enemyEye, 1, EdictFromEntvars(pev), &tr);
-		if (TraceHitIndex(&tr) == enemyIndex)
-		{
-			TraceResult tr2;
-			memset(&tr2, 0, sizeof(tr2));
-			EngineTraceLine((const float *)&candidate, (const float *)&start, 1, EdictFromEntvars(pev), &tr2);
-			if (tr2.flFraction == 1.0f)
-			{
-				m_MonsterState = 12;
-				m_IdealMonsterState = 7;
-
-				float shift = PevVector(pev, PEV_SIZE).x * 0.75f;
-				Vector shifted;
-				shifted.x = candidate.x + rightDir.x * shift;
-				shifted.y = candidate.y + rightDir.y * shift;
-				shifted.z = candidate.z + rightDir.z * shift;
-				return TraceToFloor(pev, shifted, 128.0f);
-			}
-		}
-
-		candidate.x = start.x - rightDir.x * (float)dist;
-		candidate.y = start.y - rightDir.y * (float)dist;
-		candidate.z = start.z - rightDir.z * (float)dist;
-
-		memset(&tr, 0, sizeof(tr));
-		EngineTraceLine((const float *)&candidate, (const float *)&enemyEye, 1, EdictFromEntvars(pev), &tr);
-		if (TraceHitIndex(&tr) == enemyIndex)
-		{
-			TraceResult tr2;
-			memset(&tr2, 0, sizeof(tr2));
-			EngineTraceLine((const float *)&candidate, (const float *)&start, 1, EdictFromEntvars(pev), &tr2);
-			if (tr2.flFraction == 1.0f)
-			{
-				leftCandidate = candidate;
-				foundLeft = 1;
-				break;
-			}
-		}
-
-		dist += 16;
+		m_MonsterState = MONSTERSTATE_MOVE_LEFT;
+		return vecBestLeft;
 	}
 
-	if (!foundLeft)
+	if (vecBestLeft == pev->origin)
 	{
-		m_MonsterState = m_IdealMonsterState;
-		return origin;
+		m_MonsterState = MONSTERSTATE_MOVE_RIGHT;
+		return vecBestRight;
 	}
 
-	m_MonsterState = 11;
-	m_IdealMonsterState = 7;
+	// take the closer one
+	if ((vecBestLeft - pev->origin).Length() > (vecBestRight - pev->origin).Length())
+	{
+		m_MonsterState = MONSTERSTATE_MOVE_RIGHT;
+		return vecBestRight;
+	}
 
-	float shift = PevVector(pev, PEV_SIZE).x * 0.75f;
-	Vector shifted;
-	shifted.x = leftCandidate.x - rightDir.x * shift;
-	shifted.y = leftCandidate.y - rightDir.y * shift;
-	shifted.z = leftCandidate.z - rightDir.z * shift;
-
-	return TraceToFloor(pev, shifted, 128.0f);
+	m_MonsterState = MONSTERSTATE_MOVE_LEFT;
+	return vecBestLeft;
 }
 
 //=========================================================
-// UpdateEnemyInfo
+// FindRetreat - looks for cover from the enemy ahead of
+// the monster, as far away as the enemy is. Returns
+// pev->origin when there is none.
+//=========================================================
+Vector CBaseMonster::FindRetreat(entvars_t *pevEnemy)
+{
+	Vector vecBest = pev->origin;
+	Vector vecBestDebug = vecBest;
+	float flBestScore = COVER_MAX_SCORE;
+
+	if (!pevEnemy)
+		return vecBest;
+
+	Vector vecEnemyEye = pevEnemy->origin + pevEnemy->view_ofs;
+	float flDist = (pevEnemy->origin - pev->origin).Length();
+
+	int iDist = (int)flDist;
+	int iStep = iDist / 8;
+	if (iStep <= 0)
+		iStep = 1;
+
+	UTIL_MakeVectors(pev->angles);
+	Vector vecForward = gpGlobals->v_forward;
+	Vector vecRight = gpGlobals->v_right;
+
+	Vector vecStart = pev->origin;
+	vecStart.z += 16.0f;
+
+	Vector vecEnemyTarget = vecEnemyEye + pevEnemy->view_ofs;
+
+	for (int iOffset = -iDist; iOffset <= iDist; iOffset += iStep)
+	{
+		Vector vecSpot = vecStart + vecForward * flDist + vecRight * (float)iOffset;
+
+		TraceResult tr;
+		UTIL_TraceLine(vecStart, vecSpot, ignore_monsters, ENT(pev), &tr);
+
+		// blocked, stay a bit away from the wall
+		if (tr.flFraction != 1.0f)
+			vecSpot = tr.vecEndPos - vecForward * (pev->size.y * 0.8f);
+
+		UTIL_TraceLine(vecSpot + pevEnemy->view_ofs, vecEnemyTarget, ignore_monsters, ENT(pev), &tr);
+
+		if (tr.flFraction != 1.0f)
+		{
+			float flScore = CoverScore(pev, vecSpot, vecEnemyEye);
+			if (flScore < flBestScore)
+			{
+				flBestScore = flScore;
+				vecBestDebug = vecSpot;
+				vecBest = Vector(vecSpot.x, vecSpot.y, pev->origin.z);
+			}
+		}
+	}
+
+	DrawDebugLine(pev->origin, vecBestDebug);
+
+	return vecBest;
+}
+
+//=========================================================
+// FShootSpot - the enemy can be hit from vecSpot, and the
+// monster can get there from vecStart
+//=========================================================
+static BOOL FShootSpot(entvars_t *pev, const Vector &vecSpot, const Vector &vecStart, EOFFSET eoffsetEnemy, const Vector &vecEnemyEye)
+{
+	TraceResult tr;
+
+	UTIL_TraceLine(vecSpot, vecEnemyEye, dont_ignore_monsters, ENT(pev), &tr);
+	if (tr.pHit != eoffsetEnemy)
+		return FALSE;
+
+	UTIL_TraceLine(vecSpot, vecStart, dont_ignore_monsters, ENT(pev), &tr);
+
+	return tr.flFraction == 1.0f;
+}
+
+//=========================================================
+// FindShootPosition - looks to the right and to the left
+// for a spot to shoot the enemy from, and sets the move
+// state to go there. Returns pev->origin when there is none.
+//=========================================================
+Vector CBaseMonster::FindShootPosition(entvars_t *pevEnemy)
+{
+	if (!pevEnemy)
+		return pev->origin;
+
+	Vector vecEnemyEye = pevEnemy->origin + pevEnemy->view_ofs;
+
+	UTIL_MakeVectors(pev->angles);
+
+	// from the back of the monster
+	Vector vecStart = pev->origin - gpGlobals->v_forward * (pev->size.x * 0.5f);
+	vecStart.z += 16.0f;
+
+	EOFFSET eoffsetEnemy = OFFSET(pevEnemy);
+
+	for (int i = 1; i <= 6; i++)
+	{
+		Vector vecOffset = gpGlobals->v_right * (float)(i * 16);
+		Vector vecSpot;
+
+		vecSpot = vecStart + vecOffset;
+		if (FShootSpot(pev, vecSpot, vecStart, eoffsetEnemy, vecEnemyEye))
+		{
+			m_MonsterState = MONSTERSTATE_MOVE_RIGHT;
+			m_IdealMonsterState = MONSTERSTATE_COMBAT;
+			return TraceToFloor(pev, vecSpot + gpGlobals->v_right * (pev->size.x * 0.75f), 128.0f);
+		}
+
+		vecSpot = vecStart - vecOffset;
+		if (FShootSpot(pev, vecSpot, vecStart, eoffsetEnemy, vecEnemyEye))
+		{
+			m_MonsterState = MONSTERSTATE_MOVE_LEFT;
+			m_IdealMonsterState = MONSTERSTATE_COMBAT;
+			return TraceToFloor(pev, vecSpot - gpGlobals->v_right * (pev->size.x * 0.75f), 128.0f);
+		}
+	}
+
+	m_MonsterState = m_IdealMonsterState;
+	return pev->origin;
+}
+
+//=========================================================
+// UpdateEnemyInfo - checks whether the enemy can be seen,
+// updates its last known position and turns towards it.
+// Returns the distance to the enemy.
 //=========================================================
 float CBaseMonster::UpdateEnemyInfo(entvars_t *pevEnemy)
 {
-	if (!pev || !pevEnemy)
-		return 0.0f;
+	if (!pevEnemy)
+		return 0;
 
-	m_afEnemyFlags = (unsigned char)(m_afEnemyFlags & ~3);
+	m_afEnemyFlags &= ~(ENEMY_IN_VIEWCONE | ENEMY_VISIBLE);
 
 	if (FVisible(pev, pevEnemy))
-		m_afEnemyFlags |= 2;
+		m_afEnemyFlags |= ENEMY_VISIBLE;
 
 	if (FInViewCone(pev, pevEnemy, 0.1f))
-		m_afEnemyFlags |= 1;
+		m_afEnemyFlags |= ENEMY_IN_VIEWCONE;
 
-	Vector delta;
-	VectorSubtract(PevVector(pevEnemy, PEV_ORIGIN), PevVector(pev, PEV_ORIGIN), delta);
-	float dist = VectorLength(delta);
+	float flDist = (pevEnemy->origin - pev->origin).Length();
 
-	if (((m_afEnemyFlags & 2) && (m_afEnemyFlags & 1)) || ((m_afEnemyFlags & 2) && dist < 256.0f))
+	if ((m_afEnemyFlags & ENEMY_VISIBLE) && ((m_afEnemyFlags & ENEMY_IN_VIEWCONE) || flDist < 256.0f))
 	{
+		// seen, tell the squad leader
 		m_iRouteGoal = 0;
 		m_iRouteIndex = 0;
-		m_afEnemyFlags |= 4;
-		m_vecEnemyLKP = PevVector(pevEnemy, PEV_ORIGIN);
+		m_afEnemyFlags |= ENEMY_SEEN;
+		m_vecEnemyLKP = pevEnemy->origin;
 
 		if (m_iSquadSize > 1 && m_pSquadLeader)
 		{
-			CBaseMonster *pLeader = (CBaseMonster *)EngineGetPrivateData(EdictFromEntvars(m_pSquadLeader));
+			CBaseMonster *pLeader = (CBaseMonster *)Instance(m_pSquadLeader);
 			if (pLeader)
 				pLeader->m_vecEnemyLKP = m_vecEnemyLKP;
 		}
 	}
 	else if (m_iSquadSize > 1 && m_pSquadLeader)
 	{
-		CBaseMonster *pLeader = (CBaseMonster *)EngineGetPrivateData(EdictFromEntvars(m_pSquadLeader));
+		// ask the squad leader
+		CBaseMonster *pLeader = (CBaseMonster *)Instance(m_pSquadLeader);
 		if (pLeader)
 			m_vecEnemyLKP = pLeader->m_vecEnemyLKP;
 	}
 
-	VectorSubtract(m_vecEnemyLKP, PevVector(pev, PEV_ORIGIN), delta);
-	PevFloat(pev, PEV_IDEAL_YAW) = EngineVecToYaw((const float *)&delta);
+	pev->ideal_yaw = UTIL_VecToYaw(m_vecEnemyLKP - pev->origin);
 
-	return dist;
+	return flDist;
 }
 
 //=========================================================
-// WalkMonsterStart
+// WalkMonsterStart - puts the monster on the floor and
+// starts its AI. A monster with a target walks to that
+// path_corner.
 //=========================================================
-void CBaseMonster::WalkMonsterStart(CBaseEntity* pOther)
+void CBaseMonster::WalkMonsterStart(CBaseEntity *pOther)
 {
-	if (!pev)
+	if (gpGlobals->deathmatch != 0)
+	{
+		REMOVE_ENTITY(ENT(pev));
 		return;
-
-	void *globals = gpGlobals;
-	if (globals)
-	{
-		if ((*(int *)((unsigned char *)globals + 144) & 0x7FFFFFFF) != 0)
-		{
-			EngineRemoveEntity(EdictFromEntvars(pev));
-			return;
-		}
 	}
 
-	PevVector(pev, PEV_ORIGIN).z = PevVector(pev, PEV_ORIGIN).z + 1.0f;
-	EngineDropToFloor(EdictFromEntvars(pev));
+	pev->origin.z += 1.0f;
+	DROP_TO_FLOOR(ENT(pev));
 
-	if (EngineWalkMove(EdictFromEntvars(pev), 0.0f, 0.0f) == 0.0f)
+	if (WALK_MOVE(ENT(pev), 0.0f, 0.0f) == 0.0f)
 	{
-		const char *pszClassname = EngineStringFromIndex(PevInt(pev, PEV_CLASSNAME));
-		EngineAlertMessage(3, "Monster %s stuck in wall--level design error", pszClassname);
-		PevFloat(pev, PEV_STUCK) = 1.0f;
+		ALERT(at_error, "Monster %s stuck in wall--level design error", STRING(pev->classname));
+		pev->effects = EF_BRIGHTFIELD;
 	}
 
-	PevFloat(pev, PEV_TAKEDAMAGE) = 2.0f;
-	PevFloat(pev, PEV_IDEAL_YAW) = PevVector(pev, PEV_ANGLES).y;
-	PevVector(pev, PEV_VIEWOFS).x = 0.0f;
-	PevVector(pev, PEV_VIEWOFS).y = 0.0f;
-	PevVector(pev, PEV_VIEWOFS).z = 64.0f;
-	// pev->flags (offset 380 / 0x17C) is a FLOAT-encoded int. Binary WalkMonsterStart
-	// does flags = (float)((int)flags | 0x20):
-	//   fld [pev+0x17C]; call __ftol; or eax,0x20; fild; fstp [pev+0x17C].
-	// Writing via raw PevInt OR-s 0x20 into the float BIT PATTERN and stores it back
-	// as an int, so FL_MONSTER (0x20) is never actually set in the decoded flags --
-	// breaking engine monster movement/physics. The monster could then only idle.
-	PevFloat(pev, PEV_FLAGS) = (float)(((int)PevFloat(pev, PEV_FLAGS)) | 0x20);
+	pev->takedamage = DAMAGE_AIM;
+	pev->ideal_yaw = pev->angles.y;
+	pev->view_ofs = Vector(0.0f, 0.0f, 64.0f);
+	pev->flags = (int)pev->flags | FL_MONSTER;
 
 	m_iRouteGoal = 0;
 	m_iRouteIndex = 0;
 	SetThink(&CBaseMonster::MonsterThink);
-	m_MonsterState = 1;
+	m_MonsterState = MONSTERSTATE_IDLE;
 
-	int targetNameIndex = PevInt(pev, PEV_TARGET);
-	if (targetNameIndex)
+	if (!FStringNull(pev->target))
 	{
-		const char *targetName = EngineStringFromIndex(targetNameIndex);
-		if (targetName)
+		const char *pszTarget = STRING(pev->target);
+		edict_t *pentTarget = FIND_ENTITY_BY_STRING(NULL, "targetname", pszTarget);
+
+		pev->goalentity = pentTarget ? OFFSET(pentTarget) : 0;
+
+		if (pev->goalentity)
 		{
-			edict_t *pTarget = EngineFindEntityByString(NULL, "targetname", targetName);
-			PevInt(pev, PEV_GOALENTINDEX) = pTarget ? EngineIndexOfEdict(pTarget) : 0;
-			if (PevInt(pev, PEV_GOALENTINDEX))
-			{
-				entvars_t *pevTarget = EngineGetVarsOfEnt(pTarget);
-				if (pevTarget)
-				{
-					Vector delta;
-					VectorSubtract(PevVector(pevTarget, PEV_ORIGIN), PevVector(pev, PEV_ORIGIN), delta);
-					PevFloat(pev, PEV_IDEAL_YAW) = EngineVecToYaw((const float *)&delta);
+			entvars_t *pevTarget = VARS(pentTarget);
 
-					const char *pszClassname = EngineStringFromIndex(PevInt(pevTarget, PEV_CLASSNAME));
-					if (!pszClassname || strcmp(pszClassname, "path_corner") != 0)
-					{
-						EngineAlertMessage(2, "WalkMonsterStart--monster's initial goal '%s' is not a path_corner", targetName);
-					}
+			pev->ideal_yaw = UTIL_VecToYaw(pevTarget->origin - pev->origin);
 
-					m_MonsterState = 4;
-				}
-			}
-			else
-			{
-				const char *pszClassname = EngineStringFromIndex(PevInt(pev, PEV_CLASSNAME));
-				EngineAlertMessage(3, "WalkMonsterStart--%s couldn't find target %s", pszClassname, targetName);
-			}
+			if (!FClassnameIs(pevTarget, "path_corner"))
+				ALERT(at_warning, "WalkMonsterStart--monster's initial goal '%s' is not a path_corner", pszTarget);
+
+			m_MonsterState = MONSTERSTATE_WALK;
+		}
+		else
+		{
+			ALERT(at_error, "WalkMonsterStart--%s couldn't find target %s", STRING(pev->classname), pszTarget);
 		}
 	}
 
-	PevFloat(pev, PEV_NEXTTHINK) = RandomFloat(0.0f, 0.5f) + PevFloat(pev, PEV_NEXTTHINK);
+	// spread the monsters' think times
+	pev->nextthink += RANDOM_FLOAT(0.0f, 0.5f);
 }
 
 //=========================================================
-// MonsterThink
+// MonsterThink - runs the AI for the current monster state
 //=========================================================
-void CBaseMonster::MonsterThink(CBaseEntity* pOther)
+void CBaseMonster::MonsterThink(CBaseEntity *pOther)
 {
-	if (!pev)
-		return;
+	pev->nextthink = gpGlobals->time + MONSTER_THINK_INTERVAL;
 
-	SetNextThink(MONSTER_THINK_INTERVAL);
-
-	Vector oldOrigin = PevVector(pev, PEV_ORIGIN);
+	Vector vecOldOrigin = pev->origin;
 
 	SetActivity(m_MonsterState);
 	AdvanceAnimation(MONSTER_THINK_INTERVAL);
 
 	entvars_t *pevEnemy = NULL;
-	float flDist = 0.0f;
+	float flDist = 0;
 
-	int enemyIndex = PevInt(pev, PEV_ENEMY);
-	if (enemyIndex && PevFloat(pev, PEV_HEALTH) > 0.0f)
+	if (pev->enemy && pev->health > 0)
 	{
-		edict_t *pEnemyEdict = EnginePEntityOfEntIndex(enemyIndex);
-		pevEnemy = pEnemyEdict ? EngineGetVarsOfEnt(pEnemyEdict) : NULL;
-		if (!pevEnemy || PevFloat(pevEnemy, PEV_HEALTH) <= 0.0f)
+		pevEnemy = VARS(pev->enemy);
+
+		// the enemy is dead
+		if (pevEnemy->health <= 0)
 		{
-			PevInt(pev, PEV_ENEMY) = 0;
-			m_MonsterState = 1;
+			pev->enemy = 0;
+			m_MonsterState = MONSTERSTATE_IDLE;
 			return;
 		}
 
 		flDist = UpdateEnemyInfo(pevEnemy);
 	}
 
-	if (PevInt(pev, PEV_ENEMY) == 0 && PevFloat(pev, PEV_HEALTH) > 0.0f)
+	// look for the player
+	if (!pev->enemy && pev->health > 0)
 	{
-		edict_t *pClient = EngineFindClientInPVS();
-		if (pClient && EngineIndexOfEdict(pClient))
+		edict_t *pentClient = FIND_CLIENT_IN_PVS();
+
+		if (!FNullEnt(pentClient))
 		{
-			entvars_t *pevClient = EngineGetVarsOfEnt(pClient);
-			if (pevClient
-				&& FInViewCone(pev, pevClient, 0.1f)
-				&& FVisible(pev, pevClient)
-				&& (((int)PevFloat(pevClient, PEV_FLAGS)) & 0x80) == 0)
+			entvars_t *pevClient = VARS(pentClient);
+
+			if (FInViewCone(pev, pevClient, 0.1f) && FVisible(pev, pevClient) && !((int)pevClient->flags & FL_NOTARGET))
 			{
-				if (Classify() != 5)
+				if (Classify() != CLASS_PLAYER_ALLY)
 				{
-					if ((((int)PevFloat(pev, PEV_SPAWNFLAGS)) & 1) == 0 || FInViewCone(pevClient, pev, 0.7f))
+					if (!((int)pev->spawnflags & SF_MONSTER_WAIT_TILL_SEEN) || FInViewCone(pevClient, pev, 0.7f))
 					{
-						int clientIndex = EngineIndexOfEdict(pClient);
-						PevInt(pev, PEV_ENEMY) = clientIndex;
-						PevInt(pev, PEV_GOALENTINDEX) = clientIndex;
-						m_vecEnemyLKP = PevVector(pevClient, PEV_ORIGIN);
-						m_flLastEnemySightTime = GlobalTime();
+						pev->enemy = OFFSET(pentClient);
+						pev->goalentity = pev->enemy;
+						m_vecEnemyLKP = pevClient->origin;
+						m_flLastEnemySightTime = gpGlobals->time;
 						AlertSound();
 					}
 				}
@@ -990,266 +716,214 @@ void CBaseMonster::MonsterThink(CBaseEntity* pOther)
 
 	switch (m_MonsterState)
 	{
-	case 1:
-	case 2:
-	case 3:
-		if (GlobalTime() > m_flNextSoundTime && (((int)PevFloat(pev, PEV_FLAGS)) & 2) == 0)
+	case MONSTERSTATE_IDLE:
+	case MONSTERSTATE_IDLE2:
+	case MONSTERSTATE_IDLE3:
+		if (gpGlobals->time > m_flNextSoundTime && !((int)pev->flags & FL_SWIM))
 			IdleSound();
 
+		// pick the next idle animation
 		if (m_fSequenceFinished)
 		{
-			int n = rand() % 10;
-			if (n == 0)
-				m_MonsterState = 2;
-			else if (n == 1)
-				m_MonsterState = 3;
+			int iIdle = rand() % 10;
+
+			if (iIdle == 0)
+				m_MonsterState = MONSTERSTATE_IDLE2;
+			else if (iIdle == 1)
+				m_MonsterState = MONSTERSTATE_IDLE3;
 			else
-				m_MonsterState = 1;
+				m_MonsterState = MONSTERSTATE_IDLE;
 		}
 		break;
 
-	case 4:
+	case MONSTERSTATE_WALK:
+		if (!FNullEnt(pev->goalentity))
 		{
-			int goalIndex = PevInt(pev, PEV_GOALENTINDEX);
-			entvars_t *pevGoal = NULL;
-			if (goalIndex)
-			{
-				edict_t *pGoal = EnginePEntityOfEntIndex(goalIndex);
-				pevGoal = pGoal ? EngineGetVarsOfEnt(pGoal) : NULL;
-			}
-
-			if (pevGoal)
-			{
-				Vector goal = PevVector(pevGoal, PEV_ORIGIN);
-				EngineMoveToOrigin(EdictFromEntvars(pev), (const float *)&goal, m_flGroundSpeed, 1);
-			}
-
-			if (GlobalTime() > m_flNextSoundTime && (((int)PevFloat(pev, PEV_FLAGS)) & 2) == 0)
-				IdleSound();
+			Vector vecGoal = VARS(pev->goalentity)->origin;
+			MOVE_TO_ORIGIN(ENT(pev), vecGoal, m_flGroundSpeed, MOVE_CHASE);
 		}
+
+		if (gpGlobals->time > m_flNextSoundTime && !((int)pev->flags & FL_SWIM))
+			IdleSound();
 		break;
 
-	case 5:
-		EngineChangeYaw(EdictFromEntvars(pev));
+	case MONSTERSTATE_COMBAT_FACE:
+		CHANGE_YAW(ENT(pev));
 		CheckAttacks(pevEnemy, flDist);
 		break;
 
-	case 6:
-		EngineChangeYaw(EdictFromEntvars(pev));
-		if (!CheckAttacks(pevEnemy, flDist))
+	case MONSTERSTATE_COMBAT_IDLE:
+		CHANGE_YAW(ENT(pev));
+
+		if (!CheckAttacks(pevEnemy, flDist)
+			&& (m_afEnemyFlags & (ENEMY_IN_VIEWCONE | ENEMY_VISIBLE)) == (ENEMY_IN_VIEWCONE | ENEMY_VISIBLE))
 		{
-			if ((m_afEnemyFlags & 3) == 3)
-				m_MonsterState = 7;
+			m_MonsterState = MONSTERSTATE_COMBAT;
 		}
 		break;
 
-	case 7:
-		EngineChangeYaw(EdictFromEntvars(pev));
+	case MONSTERSTATE_COMBAT:
+		CHANGE_YAW(ENT(pev));
+
 		if (!CheckAttacks(pevEnemy, flDist)
 			&& m_flDistTooFar < flDist
-			&& (m_afEnemyFlags & 2) != 0
-			&& EngineWalkMove(EdictFromEntvars(pev), PevFloat(pev, PEV_IDEAL_YAW), 15.0f) != 0.0f)
+			&& (m_afEnemyFlags & ENEMY_VISIBLE)
+			&& WALK_MOVE(ENT(pev), pev->ideal_yaw, 15.0f) != 0.0f)
 		{
-			m_MonsterState = 8;
+			m_MonsterState = MONSTERSTATE_CHASE;
 		}
 		break;
 
-	case 8:
-		{
-			Vector delta;
-			VectorSubtract(m_vecEnemyLKP, PevVector(pev, PEV_ORIGIN), delta);
-			PevFloat(pev, PEV_IDEAL_YAW) = EngineVecToYaw((const float *)&delta);
+	case MONSTERSTATE_CHASE:
+		pev->ideal_yaw = UTIL_VecToYaw(m_vecEnemyLKP - pev->origin);
+		MOVE_TO_ORIGIN(ENT(pev), m_vecEnemyLKP, m_flGroundSpeed, MOVE_CHASE);
 
-			Vector goal = m_vecEnemyLKP;
-			EngineMoveToOrigin(EdictFromEntvars(pev), (const float *)&goal, m_flGroundSpeed, 1);
-
-			Vector newOrigin = PevVector(pev, PEV_ORIGIN);
-			if (newOrigin.x == oldOrigin.x && newOrigin.y == oldOrigin.y && newOrigin.z == oldOrigin.z)
-			{
-				m_MonsterState = 7;
-			}
-			else if (m_flDistTooFar > flDist && (m_afEnemyFlags & 2) != 0)
-			{
-				m_MonsterState = 7;
-			}
-		}
+		// stuck, or close enough
+		if (pev->origin == vecOldOrigin)
+			m_MonsterState = MONSTERSTATE_COMBAT;
+		else if (m_flDistTooFar > flDist && (m_afEnemyFlags & ENEMY_VISIBLE))
+			m_MonsterState = MONSTERSTATE_COMBAT;
 		break;
 
-	case 9:
+	case MONSTERSTATE_HUNT:
 		{
-			Vector dir = {0.0f, 0.0f, 0.0f};
-			EngineParticleEffect((const float *)&m_vecEnemyLKP, (const float *)&dir, 255.0f, 20.0f);
+			PARTICLE_EFFECT(m_vecEnemyLKP, g_vecZero, 255.0f, 20.0f);
 
-			Vector delta;
-			VectorSubtract(PevVector(pev, PEV_ORIGIN), m_vecEnemyLKP, delta);
-			float dist = VectorLength(delta);
+			float flGoalDist = (pev->origin - m_vecEnemyLKP).Length();
+			pev->ideal_yaw = UTIL_VecToYaw(m_vecEnemyLKP - pev->origin);
 
-			Vector yawDelta;
-			VectorSubtract(m_vecEnemyLKP, PevVector(pev, PEV_ORIGIN), yawDelta);
-			PevFloat(pev, PEV_IDEAL_YAW) = EngineVecToYaw((const float *)&yawDelta);
-
-			if (m_flGroundSpeed > dist)
+			if (m_flGroundSpeed > flGoalDist)
 			{
-				EngineMoveToOrigin(EdictFromEntvars(pev), (const float *)&m_vecEnemyLKP, dist, 1);
-				EngineAlertMessage(1, "there!\n");
-				if ((m_afEnemyFlags & 2) != 0)
-					m_MonsterState = 8;
+				MOVE_TO_ORIGIN(ENT(pev), m_vecEnemyLKP, flGoalDist, MOVE_CHASE);
+				ALERT(at_console, "there!\n");
+
+				if (m_afEnemyFlags & ENEMY_VISIBLE)
+					m_MonsterState = MONSTERSTATE_CHASE;
 				else
-					m_MonsterState = 1;
+					m_MonsterState = MONSTERSTATE_IDLE;
 			}
 			else
 			{
-				EngineMoveToOrigin(EdictFromEntvars(pev), (const float *)&m_vecRoute[m_iRouteIndex], m_flGroundSpeed, 1);
+				MOVE_TO_ORIGIN(ENT(pev), m_vecRoute[m_iRouteIndex], m_flGroundSpeed, MOVE_CHASE);
 			}
 		}
 		break;
 
-	case 10:
+	case MONSTERSTATE_FOLLOW:
 		if (m_pMoveTarget)
 		{
 			UpdateEnemyInfo(m_pMoveTarget);
 
-			Vector delta;
-			VectorSubtract(PevVector(m_pMoveTarget, PEV_ORIGIN), PevVector(pev, PEV_ORIGIN), delta);
-			if (VectorLength(delta) <= m_flGoalRadius)
+			if ((m_pMoveTarget->origin - pev->origin).Length() <= m_flGoalRadius)
 			{
-				EngineChangeYaw(EdictFromEntvars(pev));
+				CHANGE_YAW(ENT(pev));
 			}
 			else
 			{
-				Vector goal = PevVector(m_pMoveTarget, PEV_ORIGIN);
-				EngineMoveToOrigin(EdictFromEntvars(pev), (const float *)&goal, m_flGroundSpeed, 1);
+				Vector vecGoal = m_pMoveTarget->origin;
+				MOVE_TO_ORIGIN(ENT(pev), vecGoal, m_flGroundSpeed, MOVE_CHASE);
 			}
 		}
 		break;
 
-	case 11:
-	case 12:
+	case MONSTERSTATE_MOVE_LEFT:
+	case MONSTERSTATE_MOVE_RIGHT:
 		{
-			Vector delta;
-			VectorSubtract(PevVector(pev, PEV_ORIGIN), m_vecMoveGoal, delta);
-			float dist = VectorLength(delta);
+			float flGoalDist = (pev->origin - m_vecMoveGoal).Length();
 
-			float moveDist = m_flGroundSpeed;
-			if (moveDist > dist)
+			if (m_flGroundSpeed > flGoalDist)
 			{
-				moveDist = dist;
-				EngineMoveToOrigin(EdictFromEntvars(pev), (const float *)&m_vecMoveGoal, moveDist, 0);
+				MOVE_TO_ORIGIN(ENT(pev), m_vecMoveGoal, flGoalDist, MOVE_STRAIGHT);
 				m_MonsterState = m_IdealMonsterState;
 			}
 			else
 			{
-				EngineMoveToOrigin(EdictFromEntvars(pev), (const float *)&m_vecMoveGoal, moveDist, 0);
+				MOVE_TO_ORIGIN(ENT(pev), m_vecMoveGoal, m_flGroundSpeed, MOVE_STRAIGHT);
 			}
 
-			Vector newOrigin = PevVector(pev, PEV_ORIGIN);
-			if (newOrigin.x == oldOrigin.x && newOrigin.y == oldOrigin.y && newOrigin.z == oldOrigin.z)
+			if (pev->origin == vecOldOrigin)
 			{
-				EngineAlertMessage(1, "Inhibited!\n");
+				ALERT(at_console, "Inhibited!\n");
 				m_MonsterState = m_IdealMonsterState;
 			}
 		}
 		break;
 
-	case 20:
-		m_MonsterState = 31;
-		EngineChangeYaw(EdictFromEntvars(pev));
+	case MONSTERSTATE_ALERT:
+		m_MonsterState = MONSTERSTATE_ATTACK;
+		CHANGE_YAW(ENT(pev));
 		break;
 
-	case 22:
+	case MONSTERSTATE_WAIT:
 		return;
 
-	case 23:
+	case MONSTERSTATE_RETREAT:
 		{
-			Vector delta;
-			VectorSubtract(m_vecMoveGoal, PevVector(pev, PEV_ORIGIN), delta);
-			float dist = VectorLength(delta);
-			if (dist > 20.0f)
+			Vector vecToGoal = m_vecMoveGoal - pev->origin;
+
+			if (vecToGoal.Length() > 20.0f)
 			{
-				PevFloat(pev, PEV_IDEAL_YAW) = EngineVecToYaw((const float *)&delta);
-				EngineMoveToOrigin(EdictFromEntvars(pev), (const float *)&m_vecMoveGoal, m_flGroundSpeed, 1);
+				pev->ideal_yaw = UTIL_VecToYaw(vecToGoal);
+				MOVE_TO_ORIGIN(ENT(pev), m_vecMoveGoal, m_flGroundSpeed, MOVE_CHASE);
 			}
 			else
 			{
-				m_MonsterState = 5;
+				m_MonsterState = MONSTERSTATE_COMBAT_FACE;
 			}
 		}
 		break;
 
-	case 25:
-		{
-			Vector goal = FindCover(pevEnemy);
-			m_vecMoveGoal = goal;
-			if (goal.x == PevVector(pev, PEV_ORIGIN).x
-				&& goal.y == PevVector(pev, PEV_ORIGIN).y
-				&& goal.z == PevVector(pev, PEV_ORIGIN).z)
-			{
-				m_MonsterState = m_IdealMonsterState;
-			}
-		}
+	case MONSTERSTATE_FIND_COVER:
+		m_vecMoveGoal = FindCover(pevEnemy);
+		if (m_vecMoveGoal == pev->origin)
+			m_MonsterState = m_IdealMonsterState;
 		break;
 
-	case 26:
-		{
-			Vector goal = FindRetreat(pevEnemy);
-			m_vecMoveGoal = goal;
-			if (goal.x != PevVector(pev, PEV_ORIGIN).x
-				|| goal.y != PevVector(pev, PEV_ORIGIN).y
-				|| goal.z != PevVector(pev, PEV_ORIGIN).z)
-			{
-				m_MonsterState = 23;
-			}
-			else
-			{
-				m_MonsterState = 7;
-			}
-		}
+	case MONSTERSTATE_FIND_RETREAT:
+		m_vecMoveGoal = FindRetreat(pevEnemy);
+		if (m_vecMoveGoal != pev->origin)
+			m_MonsterState = MONSTERSTATE_RETREAT;
+		else
+			m_MonsterState = MONSTERSTATE_COMBAT;
 		break;
 
-	case 27:
-		{
-			Vector goal = FindShootPosition(pevEnemy);
-			m_vecMoveGoal = goal;
-			if (goal.x == PevVector(pev, PEV_ORIGIN).x
-				&& goal.y == PevVector(pev, PEV_ORIGIN).y
-				&& goal.z == PevVector(pev, PEV_ORIGIN).z)
-			{
-				m_MonsterState = 6;
-			}
-		}
+	case MONSTERSTATE_FIND_SHOOT_POSITION:
+		m_vecMoveGoal = FindShootPosition(pevEnemy);
+		if (m_vecMoveGoal == pev->origin)
+			m_MonsterState = MONSTERSTATE_COMBAT_IDLE;
 		break;
 
-	case 29:
-	case 30:
-		EngineChangeYaw(EdictFromEntvars(pev));
+	case MONSTERSTATE_MELEE_ATTACK:
+	case MONSTERSTATE_RANGE_ATTACK:
+		CHANGE_YAW(ENT(pev));
 		break;
 
-	case 31:
+	case MONSTERSTATE_ATTACK:
 		if (!CheckAttacks(pevEnemy, flDist))
-			m_MonsterState = 6;
+			m_MonsterState = MONSTERSTATE_COMBAT_IDLE;
 		break;
 
-	case 35:
-	case 36:
-	case 37:
-	case 38:
-		EngineChangeYaw(EdictFromEntvars(pev));
+	case MONSTERSTATE_DIE1:
+	case MONSTERSTATE_DIE2:
+	case MONSTERSTATE_DIE3:
+	case MONSTERSTATE_DIE4:
+		CHANGE_YAW(ENT(pev));
+
 		if (m_fSequenceFinished)
 		{
-			PevFloat(pev, PEV_FRAMERATE) = 0.0f;
-			PevFloat(pev, PEV_SOLID) = 0.0f;
-			m_MonsterState = 42;
+			pev->framerate = 0;
+			pev->solid = SOLID_NOT;
+			m_MonsterState = MONSTERSTATE_DEAD;
 			SetThink(&CBaseEntity::SUB_DoNothing);
 		}
 		break;
 
-	case 42:
+	case MONSTERSTATE_DEAD:
 		SetThink(&CBaseEntity::SUB_DoNothing);
 		break;
 
 	default:
-		EngineAlertMessage(3, "Monster's state is bogus: %d", m_MonsterState);
+		ALERT(at_error, "Monster's state is bogus: %d", m_MonsterState);
 		break;
 	}
-
 }

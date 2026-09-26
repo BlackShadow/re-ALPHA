@@ -23,7 +23,6 @@
 CBaseEntity::CBaseEntity()
 {
 	pev = NULL;
-	m_pReserved = NULL;
 	m_pfnThink = NULL;
 	m_pfnTouch = NULL;
 	m_pfnUse = NULL;

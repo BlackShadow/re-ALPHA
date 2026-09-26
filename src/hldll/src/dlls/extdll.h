@@ -37,6 +37,10 @@ typedef void *LPVOID;
 // Exports are listed in hl.def
 #define DLLEXPORT
 
+#ifndef WINAPI
+#define WINAPI	__stdcall
+#endif
+
 // Shared engine/DLL constants
 #include "../public/const.h"
 

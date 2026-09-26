@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,43 +12,28 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// World - worldspawn entity (precaches base assets,
-// sets up cvars, light styles, decals and the body queue)
+// World - worldspawn precaches the shared models and sounds
+// and sets up the light styles, decals and body queue
 //=========================================================
 
-#include <new>
-#include <string.h>
+#include "extdll.h"
+#include "util.h"
 #include "cbase.h"
-#include "enginefuncs.h"
-#include "hl_exports.h"
-#include "utils.h"
+#include "decals.h"
 
-//=========================================================
-// Shared world globals (cross-entity state in the original
-// hl.dll).  Kept file-local until shared storage exists.
-//=========================================================
+extern int g_LastSpawnEntIndex;		// the spawn spot the last player used
+extern int g_fSquirmPlayed;			// tentacle ambient sounds
+extern int g_fFliesPlayed;
 
-extern int g_LastSpawnEntIndex;		// last spawn point (ent index)
-extern int g_fSquirmPlayed;			// tentacle squirm ambient gate
-extern int g_fFliesPlayed;			// tentacle flies ambient gate
-int g_pBodyQueueHead;				// body queue head/cursor (ent index)
+EOFFSET g_pBodyQueueHead;			// first entity of the body queue
 
-static short g_sModelIndexShell;	// "models/shell.mdl" index
-short g_sModelIndexShrapnel;		// "models/shrapnel.mdl" index
+static short g_sModelIndexShell;
+short g_sModelIndexShrapnel;
 
-//=========================================================
-// Number of bodies kept in the gib/body queue.
-//=========================================================
+#define BODYQUE_SIZE		4
 
-#define BODYQUE_SIZE	4
-
-//=========================================================
-// Base sounds precached by every level.
-//=========================================================
-
-static const char* pBaseSounds[] =
+static const char *gBaseSounds[] =
 {
 	"common/null.wav",
 	"common/thump.wav",
@@ -84,11 +69,7 @@ static const char* pBaseSounds[] =
 	"common/water2.wav",
 };
 
-//=========================================================
-// Base models precached by every level.
-//=========================================================
-
-static const char* pBaseModels[] =
+static const char *gBaseModels[] =
 {
 	"models/doctor.mdl",
 	"models/gib_b_bone.mdl",
@@ -98,76 +79,41 @@ static const char* pBaseModels[] =
 	"models/gib_lung.mdl",
 };
 
-//=========================================================
-// Light styles.  Each entry is { style index, pattern }.
-//=========================================================
-
-typedef struct LightStyleEntry
+// decal names, in the order of the DECAL_* indices
+static const char *gDecals[] =
 {
-	int			style;
-	const char*	pattern;
-} LightStyleEntry;
-
-static const LightStyleEntry pLightStyles[] =
-{
-	{  0, "m" },
-	{  1, "mmnmmommommnonmmonqnmmo" },
-	{  2, "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba" },
-	{  3, "mmmmmaaaaammmmmaaaaaabcdefgabcdefg" },
-	{  4, "mamamamamama" },
-	{  5, "jklmnopqrstuvwxyzyxwvutsrqponmlkj" },
-	{  6, "nmonqnmomnmomomno" },
-	{  7, "mmmaaaabcdefgmmmmaaaammmaamm" },
-	{  8, "mmmaaammmaaammmabcdefaaaammmmabcdefmmmaaaa" },
-	{  9, "aaaaaaaazzzzzzzz" },
-	{ 10, "mmamammmmammamamaaamammma" },
-	{ 11, "abcdefghijklmnopqrrqponmlkjihgfedcba" },
-	{ 12, "mmnnmmnnnmmnn" },
-	{ 63, "a" },
+	"{shot1",		// DECAL_SHOT1
+	"{shot2",		// DECAL_SHOT2
+	"{shot3",		// DECAL_SHOT3
+	"{shot4",		// DECAL_SHOT4
+	"{shot5",		// DECAL_SHOT5
+	"{hl",			// DECAL_HL
+	"{lambda01",	// DECAL_LAMBDA1
+	"{lambda02",	// DECAL_LAMBDA2
+	"{lambda03",	// DECAL_LAMBDA3
+	"{lambda04",	// DECAL_LAMBDA4
+	"{lambda05",	// DECAL_LAMBDA5
+	"{lambda06",	// DECAL_LAMBDA6
+	"{scorch1",		// DECAL_SCORCH1
+	"{scorch2",		// DECAL_SCORCH2
+	"{blood1",		// DECAL_BLOOD1
+	"{blood2",		// DECAL_BLOOD2
+	"{blood3",		// DECAL_BLOOD3
+	"{blood4",		// DECAL_BLOOD4
+	"{blood5",		// DECAL_BLOOD5
+	"{blood6",		// DECAL_BLOOD6
+	"{yblood1",		// DECAL_YBLOOD1
+	"{yblood2",		// DECAL_YBLOOD2
+	"{yblood3",		// DECAL_YBLOOD3
+	"{yblood4",		// DECAL_YBLOOD4
+	"{yblood5",		// DECAL_YBLOOD5
+	"{yblood6",		// DECAL_YBLOOD6
+	"{break1",		// DECAL_BREAK1
+	"{break2",		// DECAL_BREAK2
+	"{break3",		// DECAL_BREAK3
 };
 
-//=========================================================
-// Decals.  Registered in fixed index order.
-//=========================================================
-
-static const char* pDecals[] =
-{
-	"{shot1",
-	"{shot2",
-	"{shot3",
-	"{shot4",
-	"{shot5",
-	"{hl",
-	"{lambda01",
-	"{lambda02",
-	"{lambda03",
-	"{lambda04",
-	"{lambda05",
-	"{lambda06",
-	"{scorch1",
-	"{scorch2",
-	"{blood1",
-	"{blood2",
-	"{blood3",
-	"{blood4",
-	"{blood5",
-	"{blood6",
-	"{yblood1",
-	"{yblood2",
-	"{yblood3",
-	"{yblood4",
-	"{yblood5",
-	"{yblood6",
-	"{break1",
-	"{break2",
-	"{break3",
-};
-
-//=========================================================
-// Weapon assets precached by every level (W_Precache).
-//=========================================================
-
-static const char* pWeaponModels[] =
+static const char *gWeaponModels[] =
 {
 	"models/grenade.mdl",
 	"sprites/shard.spr",
@@ -176,7 +122,7 @@ static const char* pWeaponModels[] =
 	"models/v_mp5.mdl",
 };
 
-static const char* pWeaponSounds[] =
+static const char *gWeaponSounds[] =
 {
 	"weapons/debris1.wav",
 	"weapons/debris2.wav",
@@ -196,148 +142,128 @@ static const char* pWeaponSounds[] =
 	"weapons/g_bounce3.wav",
 };
 
-//=========================================================
-// CWorld
-//=========================================================
-
 class CWorld : public CBaseEntity
 {
 public:
 	void Spawn();
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CWorld) <= 28, CWorld_private_data_size);
-
 //=========================================================
-// W_Precache - precache weapon assets and
-// record the shell/shrapnel model indices.
+// W_Precache - the weapon models and sounds
 //=========================================================
 static void W_Precache()
 {
-	int i;
+	for (int i = 0; i < (int)ARRAYSIZE(gWeaponModels); i++)
+		PRECACHE_MODEL(gWeaponModels[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pWeaponModels); ++i)
-		EnginePrecacheModel(pWeaponModels[i]);
+	g_sModelIndexShell = (short)PRECACHE_MODEL("models/shell.mdl");
+	g_sModelIndexShrapnel = (short)PRECACHE_MODEL("models/shrapnel.mdl");
 
-	g_sModelIndexShell = (short)EnginePrecacheModel("models/shell.mdl");
-	g_sModelIndexShrapnel = (short)EnginePrecacheModel("models/shrapnel.mdl");
-
-	for (i = 0; i < (int)ARRAYSIZE(pWeaponSounds); ++i)
-		EnginePrecacheSound(pWeaponSounds[i]);
+	for (int i = 0; i < (int)ARRAYSIZE(gWeaponSounds); i++)
+		PRECACHE_SOUND(gWeaponSounds[i]);
 }
 
 //=========================================================
-// InitBodyQue - allocate the body queue.
-// Each node carries the "bodyque" classname and chains to
-// the next node through PEV_OWNER_ENTINDEX; the last node
-// loops back to the head.
+// InitBodyQue - creates the body queue, a ring of
+// BODYQUE_SIZE "bodyque" entities linked by pev->owner
 //=========================================================
 static void InitBodyQue()
 {
-	int classnameIndex;
-	int i;
-	int headIndex;
-	int prevIndex;
+	string_t istrClassname = ALLOC_STRING("bodyque");
 
-	classnameIndex = EngineAllocString("bodyque");
+	EOFFSET eoffsetHead = 0;
+	EOFFSET eoffsetPrev = 0;
 
-	headIndex = 0;
-	prevIndex = 0;
-
-	for (i = 0; i < BODYQUE_SIZE; ++i)
+	for (int i = 0; i < BODYQUE_SIZE; i++)
 	{
-		edict_t* created = EngineCreateEntity();
-		int index = EngineIndexOfEdict(created);
+		EOFFSET eoffset = OFFSET(CREATE_ENTITY());
 
 		if (i == 0)
 		{
-			g_pBodyQueueHead = index;
-			headIndex = index;
+			g_pBodyQueueHead = eoffset;
+			eoffsetHead = eoffset;
 		}
 		else
 		{
-			edict_t* pPrev = EnginePEntityOfEntIndex(prevIndex);
-			entvars_t* pevPrev = pPrev ? EngineGetVarsOfEnt(pPrev) : NULL;
-			if (pevPrev)
-				PevInt(pevPrev, PEV_OWNER_ENTINDEX) = index;
+			VARS(eoffsetPrev)->owner = eoffset;
 		}
 
-		edict_t* pEdict = EnginePEntityOfEntIndex(index);
-		entvars_t* pevNode = pEdict ? EngineGetVarsOfEnt(pEdict) : NULL;
-		if (pevNode)
-			PevInt(pevNode, PEV_CLASSNAME) = classnameIndex;
+		VARS(eoffset)->classname = istrClassname;
 
-		prevIndex = index;
+		eoffsetPrev = eoffset;
 	}
 
-	// Close the ring: the last node points back at the head.
-	{
-		edict_t* pLast = EnginePEntityOfEntIndex(prevIndex);
-		entvars_t* pevLast = pLast ? EngineGetVarsOfEnt(pLast) : NULL;
-		if (pevLast)
-			PevInt(pevLast, PEV_OWNER_ENTINDEX) = headIndex;
-	}
+	// the last body points back at the head
+	VARS(eoffsetPrev)->owner = eoffsetHead;
 }
 
-//=========================================================
-// Spawn
-//=========================================================
 void CWorld::Spawn()
 {
-	int i;
-
 	g_LastSpawnEntIndex = 0;
 
 	InitBodyQue();
 
-	EngineCvarSetString("sv_gravity", "800");
-	EngineCvarSetString("room_type", "0");
+	CVAR_SET_STRING("sv_gravity", "800");
+	CVAR_SET_STRING("room_type", "0");	// clear the DSP
 
-	g_fSquirmPlayed = 0;
-	g_fFliesPlayed = 0;
+	g_fSquirmPlayed = FALSE;
+	g_fFliesPlayed = FALSE;
 
 	W_Precache();
 
-	for (i = 0; i < (int)ARRAYSIZE(pBaseSounds); ++i)
-		EnginePrecacheSound(pBaseSounds[i]);
+	for (int i = 0; i < (int)ARRAYSIZE(gBaseSounds); i++)
+		PRECACHE_SOUND(gBaseSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pBaseModels); ++i)
-		EnginePrecacheModel(pBaseModels[i]);
+	for (int i = 0; i < (int)ARRAYSIZE(gBaseModels); i++)
+		PRECACHE_MODEL(gBaseModels[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pLightStyles); ++i)
-		EngineLightStyle(pLightStyles[i].style, pLightStyles[i].pattern);
+	// Light styles: 'a' is total darkness, 'z' is full bright.
+	// Styles from 32 up are switched by named lights (lights.cpp).
 
-	for (i = 0; i < (int)ARRAYSIZE(pDecals); ++i)
-		EngineDecalIndex(i, pDecals[i]);
+	// 0 normal
+	LIGHT_STYLE(0, "m");
+
+	// 1 flicker (first variety)
+	LIGHT_STYLE(1, "mmnmmommommnonmmonqnmmo");
+
+	// 2 slow strong pulse
+	LIGHT_STYLE(2, "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba");
+
+	// 3 candle (first variety)
+	LIGHT_STYLE(3, "mmmmmaaaaammmmmaaaaaabcdefgabcdefg");
+
+	// 4 fast strobe
+	LIGHT_STYLE(4, "mamamamamama");
+
+	// 5 gentle pulse
+	LIGHT_STYLE(5, "jklmnopqrstuvwxyzyxwvutsrqponmlkj");
+
+	// 6 flicker (second variety)
+	LIGHT_STYLE(6, "nmonqnmomnmomomno");
+
+	// 7 candle (second variety)
+	LIGHT_STYLE(7, "mmmaaaabcdefgmmmmaaaammmaamm");
+
+	// 8 candle (third variety)
+	LIGHT_STYLE(8, "mmmaaammmaaammmabcdefaaaammmmabcdefmmmaaaa");
+
+	// 9 slow strobe
+	LIGHT_STYLE(9, "aaaaaaaazzzzzzzz");
+
+	// 10 fluorescent flicker
+	LIGHT_STYLE(10, "mmamammmmammamamaaamammma");
+
+	// 11 slow pulse, not fading to black
+	LIGHT_STYLE(11, "abcdefghijklmnopqrrqponmlkjihgfedcba");
+
+	// 12 underwater light mutation
+	LIGHT_STYLE(12, "mmnnmmnnnmmnn");
+
+	// 63 testing
+	LIGHT_STYLE(63, "a");
+
+	for (int i = 0; i < (int)ARRAYSIZE(gDecals); i++)
+		DECAL_SET_NAME(i, gDecals[i]);
 }
 
-//=========================================================
-// worldspawn (export)
-//=========================================================
-DLLEXPORT void worldspawn(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 28);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 28);
-
-		CWorld* world = new (privateData) CWorld();
-		world->pev = entvars;
-		gpGlobals = entvars->pSystemGlobals;
-	}
-}
+LINK_ENTITY_TO_CLASS(worldspawn, CWorld);

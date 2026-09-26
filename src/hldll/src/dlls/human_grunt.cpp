@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,49 +12,55 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// HGrunt - Human grunt monster
+// Human grunt - squad soldier with an MP5 and grenades
 //=========================================================
 
-#include <new>
-#include <stdlib.h>
-#include <string.h>
-#include "basemonster.h"
-#include "enginefuncs.h"
-#include "ggrenade.h"
-#include "hl_exports.h"
+#include "extdll.h"
+#include "util.h"
+#include "cbase.h"
 #include "monsters.h"
-#include "utils.h"
+#include "weapons.h"
+#include "ggrenade.h"
 
-//=========================================================
-// Monster-specific constants
-//=========================================================
+#define HGRUNT_THINK_INTERVAL		0.1f
+#define HGRUNT_HEALTH				50.0f	// plus up to 25
+#define HGRUNT_YAW_SPEED			14.0f
+#define HGRUNT_CHASE_DIST			512.0f	// chases an enemy that is further away
+#define HGRUNT_MELEE_DIST			64.0f
+#define HGRUNT_RANGE_DIST			1024.0f	// also the range of his bullets
+#define HGRUNT_BULLET_SPREAD		0.035f
+#define HGRUNT_CLIP_SIZE			45
+#define HGRUNT_SQUAD_RADIUS			512
+#define HGRUNT_GRENADE_DELAY		5.0f	// time between grenade throws
+#define HGRUNT_GRENADE_MIN_SPEED	400.0f	// too close to throw a grenade
+#define HGRUNT_KICK_DAMAGE			5.0f
+#define HGRUNT_HEAVY_PAIN_DAMAGE	10.0f
 
-#define HGRUNT_THINK_INTERVAL 0.1f
-#define HGRUNT_MELEE_DIST 64.0f
-#define HGRUNT_RANGE_DIST 1024.0f
+// GetAnimationEventFlags() bits
+#define HGRUNT_AE_RELOAD			(1<<1)
+#define HGRUNT_AE_KICK				(1<<3)
 
-#define HGRUNT_GRENADE_CHECK_DELAY 5.0f
-#define HGRUNT_GRENADE_MIN_VEL 400.0f
+// hgrunt.mdl sequences, named by the monster state that plays them
+enum
+{
+	HGRUNT_SEQ_WALK = 0,
+	HGRUNT_SEQ_RUN = 2,				// also MONSTERSTATE_HUNT and MONSTERSTATE_RETREAT
+	HGRUNT_SEQ_DIE1,
+	HGRUNT_SEQ_DIE3,
+	HGRUNT_SEQ_PAIN = 9,			// also MONSTERSTATE_HEAVY_PAIN
+	HGRUNT_SEQ_IDLE = 11,			// also the combat face and combat idle states
+	HGRUNT_SEQ_UNUSED,				// accepted by SetActivity, but no state plays it
+	HGRUNT_SEQ_COMBAT,
+	HGRUNT_SEQ_RELOAD,
+	HGRUNT_SEQ_SHOOT,				// MONSTERSTATE_RANGE_ATTACK
+	HGRUNT_SEQ_KICK,				// MONSTERSTATE_MELEE_ATTACK
+	HGRUNT_SEQ_MOVE_LEFT = 21,
+	HGRUNT_SEQ_MOVE_RIGHT,
+	HGRUNT_SEQ_SPAWN,				// matches no state, so the first SetActivity always switches
+};
 
-#define HGRUNT_DMG_KICK 5.0f
-#define HGRUNT_DMG_HEAVY_PAIN 10.0f
-
-#define HGRUNT_VOL 1.0f
-#define HGRUNT_ATTN_IDLE 2.0f
-#define HGRUNT_ATTN_COMBAT 0.8f
-
-static const char kHGruntModel[] = "models/hgrunt.mdl";
-static const char kHAssaultModel[] = "models/hassault.mdl";
-static const char kHumanAssaultClassname[] = "monster_human_assault";
-static const char kHootSound[] = "player/hoot1.wav";
-
-//=========================================================
-// Sound Table
-//=========================================================
-
-static const char* pPainSounds[] =
+static const char *pPainSounds[] =
 {
 	"hgrunt/gr_pain1.wav",
 	"hgrunt/gr_pain2.wav",
@@ -63,71 +69,41 @@ static const char* pPainSounds[] =
 	"hgrunt/gr_pain5.wav",
 };
 
-static const char* pIdleSounds[] =
+static const char *pIdleSounds[] =
 {
 	"hgrunt/gr_idle1.wav",
 	"hgrunt/gr_idle2.wav",
 	"hgrunt/gr_idle3.wav",
 };
 
-static const char* pAlertSounds[] =
+static const char *pAlertSounds[] =
 {
 	"hgrunt/gr_alert1.wav",
 };
 
-static const char* pMgunSounds[] =
+static const char *pMgunSounds[] =
 {
 	"hgrunt/gr_mgun1.wav",
 	"hgrunt/gr_mgun2.wav",
 	"hgrunt/gr_mgun3.wav",
 };
 
-static const char* pDieSounds[] =
+static const char *pDieSounds[] =
 {
 	"hgrunt/gr_die1.wav",
 	"hgrunt/gr_die2.wav",
 	"hgrunt/gr_die3.wav",
 };
 
-static const char* pReloadSounds[] =
+static const char *pReloadSounds[] =
 {
 	"hgrunt/gr_reload1.wav",
 };
 
-static const char* pLoadTalkSounds[] =
+static const char *pLoadTalkSounds[] =
 {
 	"hgrunt/gr_loadtalk.wav",
 };
-
-//=========================================================
-// Helpers
-//=========================================================
-
-static entvars_t* EnemyVars(entvars_t* pevSelf)
-{
-	if (!pevSelf)
-		return NULL;
-
-	int enemyIndex = PevInt(pevSelf, PEV_ENEMY);
-	if (!enemyIndex)
-		return NULL;
-
-	edict_t* pEdict = EnginePEntityOfEntIndex(enemyIndex);
-	return pEdict ? EngineGetVarsOfEnt(pEdict) : NULL;
-}
-
-static const char* HGruntModelForClassname(entvars_t* pevSelf)
-{
-	const char* classname = EngineStringFromIndex(PevInt(pevSelf, PEV_CLASSNAME));
-	if (classname && strcmp(classname, kHumanAssaultClassname) == 0)
-		return kHAssaultModel;
-
-	return kHGruntModel;
-}
-
-//=========================================================
-// CHGrunt
-//=========================================================
 
 class CHGrunt : public CBaseMonster
 {
@@ -136,35 +112,36 @@ public:
 
 	void Spawn();
 	int Classify();
-
-private:
 	void SetActivity(int activity);
 	void IdleSound();
 	void AlertSound();
-	int CheckAttacks(entvars_t* pevEnemy, float flDist);
+	int CheckAttacks(entvars_t *pevEnemy, float flDist);
+	void Pain(float flDamage);
+	void Death(int iDeathType);
 
-	void ShootThink(CBaseEntity* pOther);
-	void MeleeAttackThink(CBaseEntity* pOther);
-	void ReloadThink(CBaseEntity* pOther);
-	void HeavyPainThink(CBaseEntity* pOther);
+	void ShootThink(CBaseEntity *pOther);
+	void MeleeAttackThink(CBaseEntity *pOther);
+	void ReloadThink(CBaseEntity *pOther);
+	void HeavyPainThink(CBaseEntity *pOther);
 
-	void ThrowGrenade(entvars_t* pevEnemy);
-	void Pain(float flDamage);		// vtable slot 13
-	void Death(int gibType);		// vtable slot 14
-	// SetDeathActivity is the shared CBaseMonster::SetDeathActivity;
-	// Death tail-calls it just like the binary, so no grunt-specific override exists.
+	void TossGrenade(entvars_t *pevEnemy);
 
-private:
-	float m_flNextGrenadeCheck;
-	float m_flNextPainSound;
+	float	m_flNextGrenadeCheck;
+	float	m_flNextPainSound;		// the loud pain sounds play at most this often
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CHGrunt) <= 336, CHGrunt_private_data_size);
+LINK_ENTITY_TO_CLASS(monster_human_grunt, CHGrunt);
 
 CHGrunt::CHGrunt()
 {
 	m_flNextGrenadeCheck = 0.0f;
 	m_flNextPainSound = 0.0f;
+}
+
+// from our eyes to the enemy's eyes
+static Vector ShootDirection(entvars_t *pev, entvars_t *pevEnemy)
+{
+	return ((pevEnemy->origin + pevEnemy->view_ofs) - (pev->origin + pev->view_ofs)).Normalize();
 }
 
 //=========================================================
@@ -173,47 +150,37 @@ CHGrunt::CHGrunt()
 void CHGrunt::Spawn()
 {
 	int i;
-	const char* pszModel = HGruntModelForClassname(pev);
+	const char *szModel = FClassnameIs(pev, "monster_human_assault") ? "models/hassault.mdl" : "models/hgrunt.mdl";
 
-	EnginePrecacheModel(pszModel);
+	PRECACHE_MODEL(szModel);
 
-	EnginePrecacheSound(kHootSound);
-	EnginePrecacheSound(pReloadSounds[0]);
-	EnginePrecacheSound(pLoadTalkSounds[0]);
+	PRECACHE_SOUND("player/hoot1.wav");
+	PRECACHE_SOUND(pReloadSounds[0]);
+	PRECACHE_SOUND(pLoadTalkSounds[0]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pPainSounds); ++i)
-		EnginePrecacheSound(pPainSounds[i]);
+	for (i = 0; i < ARRAYSIZE(pPainSounds); i++)
+		PRECACHE_SOUND(pPainSounds[i]);
 
-	EnginePrecacheSound(pAlertSounds[0]);
+	PRECACHE_SOUND(pAlertSounds[0]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pIdleSounds); ++i)
-		EnginePrecacheSound(pIdleSounds[i]);
+	for (i = 0; i < ARRAYSIZE(pIdleSounds); i++)
+		PRECACHE_SOUND(pIdleSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pMgunSounds); ++i)
-		EnginePrecacheSound(pMgunSounds[i]);
+	for (i = 0; i < ARRAYSIZE(pMgunSounds); i++)
+		PRECACHE_SOUND(pMgunSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pDieSounds); ++i)
-		EnginePrecacheSound(pDieSounds[i]);
+	for (i = 0; i < ARRAYSIZE(pDieSounds); i++)
+		PRECACHE_SOUND(pDieSounds[i]);
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineSetModel(edict, pszModel);
+	SET_MODEL(ENT(pev), szModel);
+	UTIL_SetSize(pev, Vector(-18.0f, -18.0f, 0.0f), Vector(18.0f, 18.0f, 72.0f));
 
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 18.0f, 18.0f, 72.0f);
-		VecSet(mins, -18.0f, -18.0f, 0.0f);
-		if (edict)
-			EngineSetSize(edict, mins, maxs);
-	}
-
-	PevFloat(pev, PEV_SOLID) = 3.0f;
-	PevFloat(pev, PEV_MOVETYPE) = 4.0f;
-	PevFloat(pev, PEV_STUCK) = 0.0f;
-	PevFloat(pev, PEV_HEALTH) = RandomFloat(0.0f, 25.0f) + 50.0f;
-	PevFloat(pev, PEV_YAWSPEED) = 14.0f;
-	PevInt(pev, PEV_SEQUENCE) = 23;
+	pev->solid = SOLID_SLIDEBOX;
+	pev->movetype = MOVETYPE_STEP;
+	pev->effects = 0;
+	pev->health = RANDOM_FLOAT(0.0f, 25.0f) + HGRUNT_HEALTH;
+	pev->yaw_speed = HGRUNT_YAW_SPEED;
+	pev->sequence = HGRUNT_SEQ_SPAWN;
 
 	m_afEnemyFlags = 0;
 	m_iRouteGoal = 0;
@@ -222,26 +189,22 @@ void CHGrunt::Spawn()
 	m_pSquadLeader = NULL;
 	m_pSquadNext = NULL;
 
-	m_iAmmo = 45;
-	m_flDistTooFar = 512.0f;
-	m_bloodColor = 70;
+	m_iAmmo = HGRUNT_CLIP_SIZE;
+	m_flDistTooFar = HGRUNT_CHASE_DIST;
+	m_bloodColor = BLOOD_COLOR_RED;
 
-	PevInt(pev, PEV_WEAPON) = 4;
+	pev->weapon = WEAPON_MP5;
 
 	m_flNextGrenadeCheck = 0.0f;
 	m_flNextPainSound = 0.0f;
 
 	SetThink(&CBaseMonster::WalkMonsterStart);
-	// The binary adds to the existing nextthink, it does not reset it from time.
-	PevFloat(pev, PEV_NEXTTHINK) = RandomFloat(0.0f, 0.5f) + PevFloat(pev, PEV_NEXTTHINK) + 0.5f;
+	pev->nextthink = RANDOM_FLOAT(0.0f, 0.5f) + pev->nextthink + 0.5f;
 }
 
-//=========================================================
-// Classify
-//=========================================================
 int CHGrunt::Classify()
 {
-	return 1;
+	return CLASS_HUMAN_MILITARY;
 }
 
 //=========================================================
@@ -253,102 +216,104 @@ void CHGrunt::SetActivity(int activity)
 
 	switch (activity)
 	{
-	case 1:
-	case 2:
-	case 3:
-	case 5:
-	case 6:
-		sequence = 11;
+	case MONSTERSTATE_IDLE:
+	case MONSTERSTATE_IDLE2:
+	case MONSTERSTATE_IDLE3:
+	case MONSTERSTATE_COMBAT_FACE:
+	case MONSTERSTATE_COMBAT_IDLE:
+		sequence = HGRUNT_SEQ_IDLE;
 		break;
 
-	case 4:
-		sequence = 0;
+	case MONSTERSTATE_WALK:
+		sequence = HGRUNT_SEQ_WALK;
 		break;
 
-	case 7:
-		sequence = 13;
+	case MONSTERSTATE_COMBAT:
+		sequence = HGRUNT_SEQ_COMBAT;
 		break;
 
-	case 8:
-	case 9:
-	case 23:
-		sequence = 2;
+	case MONSTERSTATE_CHASE:
+	case MONSTERSTATE_HUNT:
+	case MONSTERSTATE_RETREAT:
+		sequence = HGRUNT_SEQ_RUN;
 		break;
 
-	case 11:
-		sequence = 21;
+	case MONSTERSTATE_MOVE_LEFT:
+		sequence = HGRUNT_SEQ_MOVE_LEFT;
 		break;
 
-	case 12:
-		sequence = 22;
+	case MONSTERSTATE_MOVE_RIGHT:
+		sequence = HGRUNT_SEQ_MOVE_RIGHT;
 		break;
 
-	case 18:
-	case 33:
-		sequence = 9;
+	case MONSTERSTATE_PAIN:
+	case MONSTERSTATE_HEAVY_PAIN:
+		sequence = HGRUNT_SEQ_PAIN;
 		break;
 
-	case 29:
-		sequence = 16;
+	case MONSTERSTATE_MELEE_ATTACK:
+		sequence = HGRUNT_SEQ_KICK;
 		break;
 
-	case 30:
-		sequence = 15;
+	case MONSTERSTATE_RANGE_ATTACK:
+		sequence = HGRUNT_SEQ_SHOOT;
 		break;
 
-	case 32:
-		sequence = 14;
+	case MONSTERSTATE_RELOAD:
+		sequence = HGRUNT_SEQ_RELOAD;
 		break;
 
-	case 35:
-		sequence = 3;
+	case MONSTERSTATE_DIE1:
+		sequence = HGRUNT_SEQ_DIE1;
 		break;
 
-	case 37:
-		sequence = 4;
+	case MONSTERSTATE_DIE3:
+		sequence = HGRUNT_SEQ_DIE3;
 		break;
 
-	case 20:
-	case 25:
-	case 26:
-	case 27:
-	case 31:
+	// keep the current animation
+	case MONSTERSTATE_ALERT:
+	case MONSTERSTATE_FIND_COVER:
+	case MONSTERSTATE_FIND_RETREAT:
+	case MONSTERSTATE_FIND_SHOOT_POSITION:
+	case MONSTERSTATE_ATTACK:
 		return;
 
 	default:
-		EngineAlertMessage(1, "HGrunt's monster state is bogus: %d", activity);
+		ALERT(at_console, "HGrunt's monster state is bogus: %d", activity);
 		return;
 	}
 
-	if (PevInt(pev, PEV_SEQUENCE) == sequence)
+	if (pev->sequence == sequence)
 		return;
 
-	PevInt(pev, PEV_SEQUENCE) = sequence;
-	PevFloat(pev, PEV_FRAME) = 0.0f;
+	pev->sequence = sequence;
+	pev->frame = 0;
 	ResetSequenceInfo(HGRUNT_THINK_INTERVAL);
 
 	switch (sequence)
 	{
-	case 0:
-	case 2:
-	case 3:
-	case 4:
-	case 9:
-	case 14:
-	case 15:
-	case 16:
-	case 21:
-	case 22:
+	case HGRUNT_SEQ_WALK:
+	case HGRUNT_SEQ_RUN:
+	case HGRUNT_SEQ_DIE1:
+	case HGRUNT_SEQ_DIE3:
+	case HGRUNT_SEQ_PAIN:
+	case HGRUNT_SEQ_RELOAD:
+	case HGRUNT_SEQ_SHOOT:
+	case HGRUNT_SEQ_KICK:
+	case HGRUNT_SEQ_MOVE_LEFT:
+	case HGRUNT_SEQ_MOVE_RIGHT:
 		break;
 
-	case 11:
-	case 12:
-	case 13:
-		PevFloat(pev, PEV_FRAME) = RandomFloat(0.0f, 1.0f) * 256.0f;
+	// looping animations start at a random frame
+	case HGRUNT_SEQ_IDLE:
+	case HGRUNT_SEQ_UNUSED:
+	case HGRUNT_SEQ_COMBAT:
+		pev->frame = RANDOM_FLOAT(0.0f, 1.0f) * 256.0f;
 		break;
 
 	default:
-		EngineAlertMessage(1, "Bogus HGrunt anim: %d", sequence);
+		ALERT(at_console, "Bogus HGrunt anim: %d", sequence);
 		m_flFrameRate = 0.0f;
 		m_flGroundSpeed = 0.0f;
 		break;
@@ -360,174 +325,150 @@ void CHGrunt::SetActivity(int activity)
 //=========================================================
 void CHGrunt::IdleSound()
 {
-	float rnd = RandomFloat(0.0f, 1.0f);
-	float vol = RandomFloat(0.5f, 1.0f);
-	const char* sound;
+	float flRand = RANDOM_FLOAT(0.0f, 1.0f);
+	float flVolume = RANDOM_FLOAT(0.5f, 1.0f);
+	const char *pszSound;
 
-	if (rnd <= 0.33f)
-		sound = pIdleSounds[0];
-	else if (rnd <= 0.66f)
-		sound = pIdleSounds[1];
+	if (flRand <= 0.33f)
+		pszSound = pIdleSounds[0];
+	else if (flRand <= 0.66f)
+		pszSound = pIdleSounds[1];
 	else
-		sound = pIdleSounds[2];
+		pszSound = pIdleSounds[2];
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, sound, vol, HGRUNT_ATTN_IDLE);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSound, flVolume, ATTN_IDLE);
 
-	m_flNextSoundTime = GlobalTime() + RandomFloat(0.0f, 5.0f) + 3.0f;
+	m_flNextSoundTime = gpGlobals->time + RANDOM_FLOAT(0.0f, 5.0f) + 3.0f;
 }
 
 //=========================================================
-// AlertSound
+// AlertSound - the first grunt to see the enemy forms a
+// squad and leads it
 //=========================================================
 void CHGrunt::AlertSound()
 {
 	if (m_iSquadSize > 1)
 		return;
 
-	int recruits = SquadRecruit(512);
-	if (recruits == 0)
+	int iRecruits = SquadRecruit(HGRUNT_SQUAD_RADIUS);
+	if (iRecruits == 0)
 	{
-		EngineAlertMessage(1, "No Squad");
-		m_MonsterState = 8;
+		ALERT(at_console, "No Squad");
+		m_MonsterState = MONSTERSTATE_CHASE;
 		return;
 	}
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, pAlertSounds[0], HGRUNT_VOL, HGRUNT_ATTN_COMBAT);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pAlertSounds[0], VOL_NORM, ATTN_NORM);
 
-	// During the walk the leader advertises the full count (recruits + own
-	// previous size); each member receives that value.  After the walk the
-	// leader's own size is reset to the recruit count alone.
-	unsigned int flGroupSize = (unsigned int)recruits + m_iSquadSize;
-	m_iSquadSize = flGroupSize;
+	unsigned int iSquadSize = (unsigned int)iRecruits + m_iSquadSize;
+	m_iSquadSize = iSquadSize;
 
-	if (flGroupSize)
+	// grunts take cover, assault grunts attack
+	entvars_t *pevMember = pev;
+	for (unsigned int i = 0; i < iSquadSize; i++)
 	{
-		unsigned int i = 0;
-		entvars_t* pevMember = pev;
-		do
+		CBaseMonster *pMember = (CBaseMonster *)CBaseEntity::Instance(pevMember);
+		if (!pMember)
+			break;
+
+		if (FClassnameIs(pevMember, "monster_human_grunt"))
 		{
-			edict_t* pMemberEdict = EdictFromEntvars(pevMember);
-			CBaseMonster* pMember = pMemberEdict ? (CBaseMonster*)EngineGetPrivateData(pMemberEdict) : NULL;
-			if (!pMember)
-				break;
-
-			const char* classname = EngineStringFromIndex(PevInt(pevMember, PEV_CLASSNAME));
-			if (classname)
-			{
-				if (strcmp(classname, "monster_human_grunt") == 0)
-				{
-					pMember->m_MonsterState = 25;
-					pMember->m_IdealMonsterState = 5;
-				}
-				else if (strcmp(classname, "monster_human_assault") == 0)
-				{
-					pMember->m_MonsterState = 20;
-				}
-			}
-
-			++i;
-			pMember->m_iSquadSize = flGroupSize;
-			EngineAlertMessage(1, "%d\n", pMember->m_iSquadSize);
-
-			pevMember = pMember->m_pSquadNext;
+			pMember->m_MonsterState = MONSTERSTATE_FIND_COVER;
+			pMember->m_IdealMonsterState = MONSTERSTATE_COMBAT_FACE;
 		}
-		while (flGroupSize > i);
+		else if (FClassnameIs(pevMember, "monster_human_assault"))
+		{
+			pMember->m_MonsterState = MONSTERSTATE_ALERT;
+		}
+
+		pMember->m_iSquadSize = iSquadSize;
+		ALERT(at_console, "%d\n", pMember->m_iSquadSize);
+
+		pevMember = pMember->m_pSquadNext;
 	}
 
-	EngineAlertMessage(1, "group of: %d\n", m_iSquadSize);
+	ALERT(at_console, "group of: %d\n", m_iSquadSize);
 
-	m_iSquadSize = (unsigned int)recruits;
-	m_MonsterState = 20;
-	m_IdealMonsterState = 26;
-	m_fSquadLeader = 1;	// binary sets *(this+0x138)=1 (this monster now leads the squad)
+	m_iSquadSize = (unsigned int)iRecruits;
+	m_MonsterState = MONSTERSTATE_ALERT;
+	m_IdealMonsterState = MONSTERSTATE_FIND_RETREAT;
+	m_fSquadLeader = TRUE;
 }
 
 //=========================================================
-// CheckAttacks
+// CheckAttacks - kicks, shoots, throws a grenade at an
+// enemy out of sight, or reloads
 //=========================================================
-int CHGrunt::CheckAttacks(entvars_t* pevEnemy, float flDist)
+int CHGrunt::CheckAttacks(entvars_t *pevEnemy, float flDist)
 {
 	if (!pevEnemy)
-		return 0;
+		return FALSE;
 
 	if (m_iAmmo > 0)
 	{
 		if (flDist <= HGRUNT_MELEE_DIST && CheckMeleeAttack(pevEnemy))
 		{
-			m_IdealMonsterState = 7;
+			m_IdealMonsterState = MONSTERSTATE_COMBAT;
 			SetThink(&CHGrunt::MeleeAttackThink);
-			return 1;
+			return TRUE;
 		}
 
 		if (CheckRangeAttack(pevEnemy) && flDist <= HGRUNT_RANGE_DIST)
 		{
-			m_IdealMonsterState = 7;
+			m_IdealMonsterState = MONSTERSTATE_COMBAT;
 			SetThink(&CHGrunt::ShootThink);
-			return 1;
+			return TRUE;
 		}
 
-		if (GlobalTime() <= m_flNextGrenadeCheck)
-			return 0;
+		if (gpGlobals->time <= m_flNextGrenadeCheck)
+			return FALSE;
 
 		if (FVisible(pev, pevEnemy))
-			return 0;
+			return FALSE;
 
-		ThrowGrenade(pevEnemy);
-		m_flNextGrenadeCheck = GlobalTime() + HGRUNT_GRENADE_CHECK_DELAY;
-		return 1;
+		TossGrenade(pevEnemy);
+		m_flNextGrenadeCheck = gpGlobals->time + HGRUNT_GRENADE_DELAY;
+		return TRUE;
 	}
 
-	m_IdealMonsterState = FVisible(pev, pevEnemy) ? 31 : 27;
+	if (FVisible(pev, pevEnemy))
+		m_IdealMonsterState = MONSTERSTATE_ATTACK;
+	else
+		m_IdealMonsterState = MONSTERSTATE_FIND_SHOOT_POSITION;
+
 	SetThink(&CHGrunt::ReloadThink);
-	return 1;
+	return TRUE;
 }
 
 //=========================================================
 // ShootThink
 //=========================================================
-void CHGrunt::ShootThink(CBaseEntity* pOther)
+void CHGrunt::ShootThink(CBaseEntity *pOther)
 {
-	SetNextThink(HGRUNT_THINK_INTERVAL);
+	pev->nextthink = gpGlobals->time + HGRUNT_THINK_INTERVAL;
 
-	entvars_t* pevEnemy = EnemyVars(pev);
-	if (!pevEnemy)
+	if (FNullEnt(pev->enemy))
 		return;
 
-	if (m_MonsterState != 30)
+	entvars_t *pevEnemy = VARS(pev->enemy);
+
+	if (m_MonsterState != MONSTERSTATE_RANGE_ATTACK)
 	{
-		float start[3];
-		float end[3];
+		Vector vecDir = ShootDirection(pev, pevEnemy);
 
-		start[0] = PevVector(pev, PEV_ORIGIN).x + PevVector(pev, PEV_VIEWOFS).x;
-		start[1] = PevVector(pev, PEV_ORIGIN).y + PevVector(pev, PEV_VIEWOFS).y;
-		start[2] = PevVector(pev, PEV_ORIGIN).z + PevVector(pev, PEV_VIEWOFS).z;
-
-		end[0] = PevVector(pevEnemy, PEV_ORIGIN).x + PevVector(pevEnemy, PEV_VIEWOFS).x;
-		end[1] = PevVector(pevEnemy, PEV_ORIGIN).y + PevVector(pevEnemy, PEV_VIEWOFS).y;
-		end[2] = PevVector(pevEnemy, PEV_ORIGIN).z + PevVector(pevEnemy, PEV_VIEWOFS).z;
-
-		float dir[3];
-		Vec3Sub(dir, end, start);
-		if (!VecNormalize(dir))
-			VecSet(dir, 0.0f, 0.0f, 0.0f);
-
-		if (CheckFriendlyFire(pev, dir[0], dir[1], dir[2], HGRUNT_RANGE_DIST))
+		// a friend is in the way, move
+		if (CheckFriendlyFire(pev, vecDir, HGRUNT_RANGE_DIST))
 		{
-			m_MonsterState = 27;
-			m_IdealMonsterState = 31;
+			m_MonsterState = MONSTERSTATE_FIND_SHOOT_POSITION;
+			m_IdealMonsterState = MONSTERSTATE_ATTACK;
 			SetThink(&CBaseMonster::MonsterThink);
 			return;
 		}
 
-		m_MonsterState = 30;
-		SetActivity(30);
+		m_MonsterState = MONSTERSTATE_RANGE_ATTACK;
+		SetActivity(MONSTERSTATE_RANGE_ATTACK);
 	}
 
-	GetAnimationEventFlags(HGRUNT_THINK_INTERVAL);
 	AdvanceAnimation(HGRUNT_THINK_INTERVAL);
 
 	float flDist = UpdateEnemyInfo(pevEnemy);
@@ -537,150 +478,99 @@ void CHGrunt::ShootThink(CBaseEntity* pOther)
 		return;
 	}
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineChangeYaw(edict);
+	CHANGE_YAW(ENT(pev));
 
-	if ((m_afEnemyFlags & 2) == 0)
+	if (!(m_afEnemyFlags & ENEMY_VISIBLE))
 	{
-		m_MonsterState = 6;
+		m_MonsterState = MONSTERSTATE_COMBAT_IDLE;
 		SetThink(&CBaseMonster::MonsterThink);
 		return;
 	}
 
+	Vector vecDir = ShootDirection(pev, pevEnemy);
+
+	if (CheckFriendlyFire(pev, vecDir, HGRUNT_RANGE_DIST))
 	{
-		float start[3];
-		float end[3];
+		m_MonsterState = MONSTERSTATE_FIND_SHOOT_POSITION;
+		m_IdealMonsterState = MONSTERSTATE_ATTACK;
+		SetThink(&CBaseMonster::MonsterThink);
+		return;
+	}
 
-		start[0] = PevVector(pev, PEV_ORIGIN).x + PevVector(pev, PEV_VIEWOFS).x;
-		start[1] = PevVector(pev, PEV_ORIGIN).y + PevVector(pev, PEV_VIEWOFS).y;
-		start[2] = PevVector(pev, PEV_ORIGIN).z + PevVector(pev, PEV_VIEWOFS).z;
+	EMIT_SOUND(ENT(pev), CHAN_WEAPON, pMgunSounds[rand() % ARRAYSIZE(pMgunSounds)], VOL_NORM, ATTN_NORM);
 
-		end[0] = PevVector(pevEnemy, PEV_ORIGIN).x + PevVector(pevEnemy, PEV_VIEWOFS).x;
-		end[1] = PevVector(pevEnemy, PEV_ORIGIN).y + PevVector(pevEnemy, PEV_VIEWOFS).y;
-		end[2] = PevVector(pevEnemy, PEV_ORIGIN).z + PevVector(pevEnemy, PEV_VIEWOFS).z;
+	FireBullets(1, vecDir, HGRUNT_BULLET_SPREAD, HGRUNT_BULLET_SPREAD, BULLET_NONE, HGRUNT_RANGE_DIST);
+	m_iAmmo--;
 
-		float dir[3];
-		Vec3Sub(dir, end, start);
-		if (!VecNormalize(dir))
-			VecSet(dir, 0.0f, 0.0f, 0.0f);
-
-		if (CheckFriendlyFire(pev, dir[0], dir[1], dir[2], HGRUNT_RANGE_DIST))
+	if (m_fSequenceFinished)
+	{
+		if (m_iAmmo > 0)
 		{
-			m_MonsterState = 27;
-			m_IdealMonsterState = 31;
-			SetThink(&CBaseMonster::MonsterThink);
-			return;
+			pev->frame = 0;
 		}
-
-		if (edict)
-			EngineEmitSound(edict, 1, pMgunSounds[rand() % ARRAYSIZE(pMgunSounds)], HGRUNT_VOL, HGRUNT_ATTN_COMBAT);
-
-		FireBullets(1, dir, 0.035f, 0.035f, 0, HGRUNT_RANGE_DIST);
-		--m_iAmmo;
-
-		if (m_fSequenceFinished)
+		else
 		{
-			if (m_iAmmo > 0)
-			{
-				PevFloat(pev, PEV_FRAME) = 0.0f;
-			}
-			else
-			{
-				m_MonsterState = 25;
-				m_IdealMonsterState = 31;
-				SetThink(&CBaseMonster::MonsterThink);
-				m_flNextAttack = GlobalTime() + 1.0f;
-			}
+			// out of ammo, take cover to reload
+			m_MonsterState = MONSTERSTATE_FIND_COVER;
+			m_IdealMonsterState = MONSTERSTATE_ATTACK;
+			SetThink(&CBaseMonster::MonsterThink);
+			m_flNextAttack = gpGlobals->time + 1.0f;
 		}
 	}
 }
 
 //=========================================================
-// MeleeAttackThink
+// MeleeAttackThink - kicks the enemy away
 //=========================================================
-void CHGrunt::MeleeAttackThink(CBaseEntity* pOther)
+void CHGrunt::MeleeAttackThink(CBaseEntity *pOther)
 {
-	SetNextThink(HGRUNT_THINK_INTERVAL);
+	pev->nextthink = gpGlobals->time + HGRUNT_THINK_INTERVAL;
 
-	if (m_MonsterState != 29)
+	if (m_MonsterState != MONSTERSTATE_MELEE_ATTACK)
 	{
-		m_MonsterState = 29;
-		SetActivity(29);
-		m_flNextAttack = GlobalTime() + 2.0f;
+		m_MonsterState = MONSTERSTATE_MELEE_ATTACK;
+		SetActivity(MONSTERSTATE_MELEE_ATTACK);
+		m_flNextAttack = gpGlobals->time + 2.0f;
 	}
 
-	int events = GetAnimationEventFlags(HGRUNT_THINK_INTERVAL);
+	int iEvents = GetAnimationEventFlags(HGRUNT_THINK_INTERVAL);
 	AdvanceAnimation(HGRUNT_THINK_INTERVAL);
 
-	entvars_t* pevEnemy = EnemyVars(pev);
-	if (pevEnemy)
-		UpdateEnemyInfo(pevEnemy);
+	if (!FNullEnt(pev->enemy))
+		UpdateEnemyInfo(VARS(pev->enemy));
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineChangeYaw(edict);
+	CHANGE_YAW(ENT(pev));
 
-	if ((events & 8) != 0)
+	if (iEvents & HGRUNT_AE_KICK)
 	{
-		if (edict)
-			EngineEmitSound(edict, 2, kHootSound, HGRUNT_VOL, HGRUNT_ATTN_COMBAT);
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, "player/hoot1.wav", VOL_NORM, ATTN_NORM);
 
-		// The binary copies pev->angles and calls MakeVectors at the top of the
-		// (events&8) block, so gpGlobals forward/up are recomputed from the grunt's
-		// facing before the kick trace and the (250*forward + 200*up) knockback.
-		EngineMakeVectors(VecPtr(PevVector(pev, PEV_ANGLES)));
-		void* globals = gpGlobals;
-		const float* forward = GlobalsForward(globals);
-		const float* up = GlobalsUp(globals);
+		UTIL_MakeVectors(pev->angles);
 
-		float start[3];
-		start[0] = PevVector(pev, PEV_ORIGIN).x;
-		start[1] = PevVector(pev, PEV_ORIGIN).y;
-		start[2] = PevVector(pev, PEV_ORIGIN).z + 50.0f;
-
-		float end[3];
-		end[0] = start[0] + (forward ? forward[0] : 0.0f) * 64.0f;
-		end[1] = start[1] + (forward ? forward[1] : 0.0f) * 64.0f;
-		end[2] = start[2] + (forward ? forward[2] : 0.0f) * 64.0f - 16.0f;
+		Vector vecStart = pev->origin;
+		vecStart.z += 50.0f;
+		Vector vecEnd = vecStart + gpGlobals->v_forward * 64.0f;
+		vecEnd.z -= 16.0f;
 
 		TraceResult tr;
-		memset(&tr, 0, sizeof(tr));
-		EngineTraceLine(start, end, 1, edict, &tr);
+		UTIL_TraceLine(vecStart, vecEnd, dont_ignore_monsters, ENT(pev), &tr);
 
-		// The binary resolves the traced entity unconditionally and gates only
-		// on its takedamage flag (no flFraction/index guard).
+		edict_t *pentHit = ENT(tr.pHit);
+		entvars_t *pevHit = VARS(pentHit);
+
+		if (pevHit->takedamage != DAMAGE_NO)
 		{
-			edict_t* pHitEdict = TraceHitEdict(&tr);
-			entvars_t* pevHit = pHitEdict ? EngineGetVarsOfEnt(pHitEdict) : NULL;
+			CBaseEntity *pHit = CBaseEntity::Instance(pentHit);
+			if (pHit)
+				pHit->TakeDamage(pev, pev, HGRUNT_KICK_DAMAGE);
 
-			if (pevHit && (PevInt(pevHit, PEV_TAKEDAMAGE) & 0x7FFFFFFF) != 0)
-			{
-				CBaseEntity* pEntity = (CBaseEntity*)EngineGetPrivateData(pHitEdict);
-				if (pEntity)
-					pEntity->TakeDamage(pev, pev, HGRUNT_DMG_KICK);
+			pevHit->punchangle.x = 15.0f;
+			pevHit->velocity = pevHit->velocity + gpGlobals->v_forward * 250.0f + gpGlobals->v_up * 200.0f;
 
-				PevFloat(pevHit, PEV_V_ANGLE) = 15.0f;
-
-				if (forward)
-				{
-					PevVector(pevHit, PEV_VELOCITY).x += forward[0] * 250.0f;
-					PevVector(pevHit, PEV_VELOCITY).y += forward[1] * 250.0f;
-					PevVector(pevHit, PEV_VELOCITY).z += forward[2] * 250.0f;
-				}
-
-				if (up)
-				{
-					PevVector(pevHit, PEV_VELOCITY).x += up[0] * 200.0f;
-					PevVector(pevHit, PEV_VELOCITY).y += up[1] * 200.0f;
-					PevVector(pevHit, PEV_VELOCITY).z += up[2] * 200.0f;
-				}
-
-				m_flNextAttack = GlobalTime();
-				m_MonsterState = m_IdealMonsterState;
-				SetThink(&CBaseMonster::MonsterThink);
-				return;
-			}
+			m_flNextAttack = gpGlobals->time;
+			m_MonsterState = m_IdealMonsterState;
+			SetThink(&CBaseMonster::MonsterThink);
+			return;
 		}
 	}
 
@@ -694,40 +584,35 @@ void CHGrunt::MeleeAttackThink(CBaseEntity* pOther)
 //=========================================================
 // ReloadThink
 //=========================================================
-void CHGrunt::ReloadThink(CBaseEntity* pOther)
+void CHGrunt::ReloadThink(CBaseEntity *pOther)
 {
-	SetNextThink(HGRUNT_THINK_INTERVAL);
+	pev->nextthink = gpGlobals->time + HGRUNT_THINK_INTERVAL;
 
-	if (m_MonsterState != 32)
+	if (m_MonsterState != MONSTERSTATE_RELOAD)
 	{
-		m_MonsterState = 32;
-		SetActivity(32);
+		m_MonsterState = MONSTERSTATE_RELOAD;
+		SetActivity(MONSTERSTATE_RELOAD);
 	}
 
-	int events = GetAnimationEventFlags(HGRUNT_THINK_INTERVAL);
+	int iEvents = GetAnimationEventFlags(HGRUNT_THINK_INTERVAL);
 	AdvanceAnimation(HGRUNT_THINK_INTERVAL);
 
-	entvars_t* pevEnemy = EnemyVars(pev);
-	if (pevEnemy)
-		UpdateEnemyInfo(pevEnemy);
+	if (!FNullEnt(pev->enemy))
+		UpdateEnemyInfo(VARS(pev->enemy));
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineChangeYaw(edict);
+	CHANGE_YAW(ENT(pev));
 
-	if ((events & 2) != 0)
+	if (iEvents & HGRUNT_AE_RELOAD)
 	{
-		if (edict)
-		{
-			EngineEmitSound(edict, 1, pReloadSounds[0], HGRUNT_VOL, HGRUNT_ATTN_COMBAT);
-			if (RandomFloat(0.0f, 1.0f) < 0.25f)
-				EngineEmitSound(edict, 2, pLoadTalkSounds[0], HGRUNT_VOL, HGRUNT_ATTN_COMBAT);
-		}
+		EMIT_SOUND(ENT(pev), CHAN_WEAPON, pReloadSounds[0], VOL_NORM, ATTN_NORM);
+
+		if (RANDOM_FLOAT(0.0f, 1.0f) < 0.25f)
+			EMIT_SOUND(ENT(pev), CHAN_VOICE, pLoadTalkSounds[0], VOL_NORM, ATTN_NORM);
 	}
 
 	if (m_fSequenceFinished)
 	{
-		m_iAmmo = 45;
+		m_iAmmo = HGRUNT_CLIP_SIZE;
 		SetThink(&CBaseMonster::MonsterThink);
 		m_MonsterState = m_IdealMonsterState;
 	}
@@ -736,24 +621,25 @@ void CHGrunt::ReloadThink(CBaseEntity* pOther)
 //=========================================================
 // HeavyPainThink
 //=========================================================
-void CHGrunt::HeavyPainThink(CBaseEntity* pOther)
+void CHGrunt::HeavyPainThink(CBaseEntity *pOther)
 {
-	if (m_MonsterState != 33)
+	if (m_MonsterState != MONSTERSTATE_HEAVY_PAIN)
 	{
-		m_MonsterState = 33;
-		SetActivity(33);
+		m_MonsterState = MONSTERSTATE_HEAVY_PAIN;
+		SetActivity(MONSTERSTATE_HEAVY_PAIN);
 	}
 
-	SetNextThink(HGRUNT_THINK_INTERVAL);
+	pev->nextthink = gpGlobals->time + HGRUNT_THINK_INTERVAL;
 	AdvanceAnimation(HGRUNT_THINK_INTERVAL);
 
-	entvars_t* pevEnemy = EnemyVars(pev);
-	if (pevEnemy)
+	entvars_t *pevEnemy = NULL;
+	if (!FNullEnt(pev->enemy))
+	{
+		pevEnemy = VARS(pev->enemy);
 		UpdateEnemyInfo(pevEnemy);
+	}
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineChangeYaw(edict);
+	CHANGE_YAW(ENT(pev));
 
 	if (!m_fSequenceFinished)
 		return;
@@ -762,251 +648,160 @@ void CHGrunt::HeavyPainThink(CBaseEntity* pOther)
 
 	if (pevEnemy && FInViewCone(pev, pevEnemy, 0.1f))
 	{
-		m_MonsterState = 25;
-		m_IdealMonsterState = 5;
+		m_MonsterState = MONSTERSTATE_FIND_COVER;
+		m_IdealMonsterState = MONSTERSTATE_COMBAT_FACE;
 	}
 	else
 	{
-		m_MonsterState = 6;
+		m_MonsterState = MONSTERSTATE_COMBAT_IDLE;
 	}
 }
 
 //=========================================================
-// ThrowGrenade
+// TossGrenade - throws a grenade at an enemy that is out
+// of sight, unless one of us is close to it
 //=========================================================
-void CHGrunt::ThrowGrenade(entvars_t* pevEnemy)
+void CHGrunt::TossGrenade(entvars_t *pevEnemy)
 {
-	if (!pevEnemy)
+	Vector vecTarget = pevEnemy->origin;
+	vecTarget.z += 32.0f;
+
+	Vector vecStart = pev->origin;
+	vecStart.z += 32.0f;
+
+	Vector vecTossTarget = GetTossTarget(pev, vecStart, vecTarget);
+
+	if (vecTossTarget == g_vecZero)
 		return;
 
-	float vecTarget[3];
-	vecTarget[0] = PevVector(pevEnemy, PEV_ORIGIN).x;
-	vecTarget[1] = PevVector(pevEnemy, PEV_ORIGIN).y;
-	vecTarget[2] = PevVector(pevEnemy, PEV_ORIGIN).z + 32.0f;
-
-	float vecStart[3];
-	vecStart[0] = PevVector(pev, PEV_ORIGIN).x;
-	vecStart[1] = PevVector(pev, PEV_ORIGIN).y;
-	vecStart[2] = PevVector(pev, PEV_ORIGIN).z + 32.0f;
-
-	float vecTossTarget[3];
-	GetTossTarget(vecTossTarget, pev, vecStart, vecTarget);
-
-	if (vecTossTarget[0] == 0.0f && vecTossTarget[1] == 0.0f && vecTossTarget[2] == 0.0f)
-		return;
-
+	edict_t *pentEnt = FIND_ENTITY_IN_SPHERE(pevEnemy->origin, 72.0f);
+	while (!FNullEnt(pentEnt))
 	{
-		const char* myClass = EngineStringFromIndex(PevInt(pev, PEV_CLASSNAME));
-		Vector enemyOrigin = PevVector(pevEnemy, PEV_ORIGIN);
+		entvars_t *pevEnt = VARS(pentEnt);
+		if (FStrEq(STRING(pevEnt->classname), STRING(pev->classname)))
+			return;
 
-		edict_t* pEnt = EngineFindEntityInSphere((const float*)&enemyOrigin, 72.0f);
-		while (pEnt)
-		{
-			if (!EngineIndexOfEdict(pEnt))
-				break;
-
-			entvars_t* pevEnt = EngineGetVarsOfEnt(pEnt);
-			if (!pevEnt)
-				break;
-
-			const char* pszClass = EngineStringFromIndex(PevInt(pevEnt, PEV_CLASSNAME));
-			if (pszClass && myClass && strcmp(pszClass, myClass) == 0)
-				return;
-
-			int chainIndex = PevInt(pevEnt, PEV_CHAIN);
-			pEnt = chainIndex ? EnginePEntityOfEntIndex(chainIndex) : NULL;
-		}
+		pentEnt = ENT(pevEnt->chain);
 	}
 
-	float dir[3];
-	dir[0] = vecTossTarget[0] - PevVector(pev, PEV_ORIGIN).x;
-	dir[1] = vecTossTarget[1] - PevVector(pev, PEV_ORIGIN).y;
-	dir[2] = vecTossTarget[2] - PevVector(pev, PEV_ORIGIN).z;
-
-	float len = VecLength(dir);
-	if (len <= 0.0f)
+	Vector vecDir = vecTossTarget - pev->origin;
+	float flDist = vecDir.Length();
+	if (flDist <= 0.0f)
 		return;
 
-	float inv = 1.0f / len;
-	dir[0] *= inv;
-	dir[1] *= inv;
-	dir[2] *= inv;
+	vecDir = vecDir * (1.0f / flDist);
 
-	float dx = PevVector(pev, PEV_ORIGIN).x - vecTossTarget[0];
-	float dy = PevVector(pev, PEV_ORIGIN).y - vecTossTarget[1];
+	// throw harder the further away and the higher the target is
+	float flHorizontal = (pev->origin - vecTossTarget).Length2D();
+	float flSpeed = (flHorizontal * 2.0f + vecTossTarget.z - pev->origin.z) * 0.5f;
 
-	float flHoriz = sqrtf(dx * dx + dy * dy);
-	float flAdjust = (flHoriz * 2.0f + vecTossTarget[2] - PevVector(pev, PEV_ORIGIN).z) * 0.5f;
-
-	float vecVel[3];
-	vecVel[0] = dir[0] * flAdjust * 2.0f;
-	vecVel[1] = dir[1] * flAdjust * 2.0f;
-	vecVel[2] = dir[2] * flAdjust * 2.0f;
-
-	if (VecLength(vecVel) < HGRUNT_GRENADE_MIN_VEL)
+	Vector vecVelocity = vecDir * flSpeed * 2.0f;
+	if (vecVelocity.Length() < HGRUNT_GRENADE_MIN_SPEED)
 		return;
 
-	ShootTimedGrenade(pev, vecStart, vecVel);
+	ShootTimedGrenade(pev, vecStart, vecVelocity);
 }
 
 //=========================================================
-// Pain - vtable slot 13
+// Pain
 //=========================================================
 void CHGrunt::Pain(float flDamage)
 {
-	float rnd = RandomFloat(0.0f, 1.0f);
-	PevFloat(pev, PEV_PAIN_FINISHED) = GlobalTime() + 1.0f;
+	float flRand = RANDOM_FLOAT(0.0f, 1.0f);
+	pev->pain_finished = gpGlobals->time + 1.0f;
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
+	const char *pszSound;
+
+	if (gpGlobals->time <= m_flNextPainSound)
 	{
-		const char* sound = pPainSounds[2];
-
-		if (GlobalTime() <= m_flNextPainSound)
-		{
-			if (rnd <= 0.33f)
-				sound = pPainSounds[2];
-			else if (rnd <= 0.66f)
-				sound = pPainSounds[3];
-			else
-				sound = pPainSounds[4];
-		}
+		if (flRand <= 0.33f)
+			pszSound = pPainSounds[2];
+		else if (flRand <= 0.66f)
+			pszSound = pPainSounds[3];
 		else
-		{
-			if (rnd <= 0.2f)
-				sound = pPainSounds[0];
-			else if (rnd <= 0.4f)
-				sound = pPainSounds[1];
-			else if (rnd <= 0.6f)
-				sound = pPainSounds[2];
-			else if (rnd <= 0.8f)
-				sound = pPainSounds[3];
-			else
-				sound = pPainSounds[4];
+			pszSound = pPainSounds[4];
+	}
+	else
+	{
+		if (flRand <= 0.2f)
+			pszSound = pPainSounds[0];
+		else if (flRand <= 0.4f)
+			pszSound = pPainSounds[1];
+		else if (flRand <= 0.6f)
+			pszSound = pPainSounds[2];
+		else if (flRand <= 0.8f)
+			pszSound = pPainSounds[3];
+		else
+			pszSound = pPainSounds[4];
 
-			m_flNextPainSound = GlobalTime() + 15.0f;
-		}
-
-		EngineEmitSound(edict, 2, sound, HGRUNT_VOL, HGRUNT_ATTN_COMBAT);
+		m_flNextPainSound = gpGlobals->time + 15.0f;
 	}
 
-	if (m_MonsterState == 1 || m_MonsterState == 4)
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSound, VOL_NORM, ATTN_NORM);
+
+	// hurt while not fighting yet, rally the squad
+	if (m_MonsterState == MONSTERSTATE_IDLE || m_MonsterState == MONSTERSTATE_WALK)
 	{
-		// Being hurt while idle/walking rallies the squad (vtable slot 12).
 		AlertSound();
 		SetThink(&CBaseMonster::MonsterThink);
 		return;
 	}
 
-	if (flDamage >= HGRUNT_DMG_HEAVY_PAIN)
+	if (flDamage >= HGRUNT_HEAVY_PAIN_DAMAGE)
 	{
 		SetThink(&CHGrunt::HeavyPainThink);
-		SetNextThink(0.0f);
+		pev->nextthink = gpGlobals->time;
 		return;
 	}
 
 	SetThink(&CBaseMonster::MonsterThink);
 
-	entvars_t* pevEnemy = EnemyVars(pev);
-	if (!pevEnemy)
+	if (FNullEnt(pev->enemy))
 		return;
 
-	if (FVisible(pev, pevEnemy))
+	if (FVisible(pev, VARS(pev->enemy)))
 	{
-		if (m_MonsterState != 11 && m_MonsterState != 12)
+		if (m_MonsterState != MONSTERSTATE_MOVE_LEFT && m_MonsterState != MONSTERSTATE_MOVE_RIGHT)
 		{
-			if (RandomFloat(0.0f, 1.0f) >= 0.75f)
+			if (RANDOM_FLOAT(0.0f, 1.0f) >= 0.75f)
 			{
-				m_MonsterState = 31;
+				m_MonsterState = MONSTERSTATE_ATTACK;
 			}
 			else
 			{
-				m_MonsterState = 25;
-				m_IdealMonsterState = 5;
+				m_MonsterState = MONSTERSTATE_FIND_COVER;
+				m_IdealMonsterState = MONSTERSTATE_COMBAT_FACE;
 			}
 		}
 	}
 	else
 	{
-		m_MonsterState = 27;
-		m_IdealMonsterState = 6;
+		m_MonsterState = MONSTERSTATE_FIND_SHOOT_POSITION;
+		m_IdealMonsterState = MONSTERSTATE_COMBAT_IDLE;
 	}
 }
 
 //=========================================================
-// Death - vtable slot 14
+// Death
 //=========================================================
-void CHGrunt::Death(int gibType)
+void CHGrunt::Death(int iDeathType)
 {
-	HL_UNUSED(gibType);
+	float flRand = RANDOM_FLOAT(0.0f, 1.0f);
 
-	float rnd = RandomFloat(0.0f, 1.0f);
-
-	// The binary: the die scream plays on a normal kill and is
-	// SILENT on heavy over-kill. The binary uses an unsigned compare of the raw
-	// health bits against 0xC1F00000 (-30.0f): play when health > -30.
-	if (PevFloat(pev, PEV_HEALTH) > -30.0f)
+	// no scream when blown apart
+	if (pev->health > GIB_HEALTH)
 	{
-		const char* sound;
+		const char *pszSound;
 
-		if (rnd <= 0.33f)
-			sound = pDieSounds[0];
-		else if (rnd <= 0.66f)
-			sound = pDieSounds[1];
+		if (flRand <= 0.33f)
+			pszSound = pDieSounds[0];
+		else if (flRand <= 0.66f)
+			pszSound = pDieSounds[1];
 		else
-			sound = pDieSounds[2];
+			pszSound = pDieSounds[2];
 
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineEmitSound(edict, 2, sound, HGRUNT_VOL, HGRUNT_ATTN_COMBAT);
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSound, VOL_NORM, ATTN_NORM);
 	}
 
-	// The binary always tail-calls the binary, the shared
-	// CBaseMonster::SetDeathActivity(0).
-	SetDeathActivity(0);
+	SetDeathActivity(DEATH_NORMAL);
 }
-
-//=========================================================
-// TakeDamage routes through the shared CBaseMonster::TakeDamage
-// (vtable slot 17), which raises Pain
-// Death (which tail-calls SetDeathActivity).
-//=========================================================
-
-//=========================================================
-// monster_human_grunt
-//=========================================================
-DLLEXPORT void monster_human_grunt(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 336);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 336);
-
-		CHGrunt* monster = new (privateData) CHGrunt();
-		monster->pev = entvars;
-		gpGlobals = entvars->pSystemGlobals;
-	}
-}
-
-// NOTE: the original alpha hl.dll has NO monster_human_assault spawn export.
-// Maps (c1a2a/c2a4a/c2a4b/c3a1) place that classname, but with no spawn
-// function the engine removes those entities, so the original game never shows
-// an "assault"/minigun grunt.  A prior recreation added a monster_human_assault
-// export bound to CHGrunt with models/hassault.mdl; driven by the hgrunt
-// sequence indices that model rendered as a broken flat-shaded blob ("the cube")
-// that the original never produced.  Removed to match the original export table.

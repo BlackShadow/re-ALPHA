@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,576 +12,459 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// Turret - ceiling/floor mounted auto turret.  Deploys,
-// scans for targets, tracks them with two bone controllers
-// and fires a machine gun.  Heavy think-driven state machine.
+// Turret - ceiling or floor mounted gun. It deploys when
+// it spots an enemy, aims with two bone controllers and
+// fires until the enemy is dead or out of sight.
 //=========================================================
 
-#include <new>
-#include <stdlib.h>
-#include <string.h>
+#include "extdll.h"
+#include "util.h"
+#include "cbase.h"
 #include "basemonster.h"
-#include "enginefuncs.h"
-#include "hl_exports.h"
 #include "monsters.h"
-#include "utils.h"
+#include "decals.h"
+#include "studio.h"
 
-//=========================================================
-// monster-specific constants
-//=========================================================
+// angle indices
+#define PITCH	0
+#define YAW		1
+#define ROLL	2
 
-#define TURRET_THINK_FAST		0.1f
+#define TURRET_THINK_INTERVAL	0.1f
 #define TURRET_DEPLOY_DELAY		0.4f
 #define TURRET_SPAWN_DELAY		0.3f
 #define TURRET_SEARCH_DELAY		0.3f
+#define TURRET_SPINUP_DELAY		1.4f
 
-#define TURRET_TURNRATE			360.0f
-#define TURRET_TURN_STEP		4.5f
+#define TURRET_TURN_STEP		4.5f		// degrees per think for both controllers
 #define TURRET_RANGE			1024.0f
-#define TURRET_MAX_SPIN			5.0f
+#define TURRET_BULLET_DAMAGE	2.0f
 
-#define TURRET_VOL				1.0f
-#define TURRET_ATTN_NORM		0.8f
-#define TURRET_ATTN_PING		2.0f
+#define TURRET_ORIENT_FLOOR		0
+#define TURRET_ORIENT_CEILING	1
 
-// pev byte offsets not yet named in utils.h -> recorded in shared_needs.
-#define PEV_IDEAL_PITCH			364		// float
-#define PEV_PITCH_SPEED			368		// float
-#define PEV_CONTROLLER			172		// 4 packed controller bytes
+// bone controllers
+#define TURRET_CONTROLLER_YAW	0
+#define TURRET_CONTROLLER_PITCH	1
 
-static const char kTurretModel[] = "models/turret.mdl";
-
-//=========================================================
-// Sound Table
-//=========================================================
-
-static const char kSndFire[]		= "turret/tu_fire1.wav";
-static const char kSndPing[]		= "turret/tu_ping.wav";
-static const char kSndActive[]		= "turret/tu_active.wav";
-static const char kSndDie[]			= "turret/tu_die.wav";
-static const char kSndDie2[]		= "turret/tu_die2.wav";
-static const char kSndDie3[]		= "turret/tu_die3.wav";
-static const char kSndRetract[]		= "turret/tu_retract.wav";
-static const char kSndDeploy[]		= "turret/tu_deploy.wav";
-static const char kSndSpinUp[]		= "turret/tu_spinup.wav";
-static const char kSndSpinDown[]	= "turret/tu_spindown.wav";
-static const char kSndSearch[]		= "turret/tu_search.wav";
-static const char kSndAlert[]		= "turret/tu_alert.wav";
-
-//=========================================================
-// SetBoneController
-// Maps an angle value onto a packed bone-controller byte for
-// the turret's studio model.  Mirrors the engine model helper.
-//=========================================================
-static void SetBoneController(entvars_t* pev, int controller, float value)
+// turret.mdl sequences
+enum
 {
-	edict_t* edict = EdictFromEntvars(pev);
-	if (!edict)
+	TURRET_SEQ_IDLE = 0,	// retracted
+	TURRET_SEQ_ACTIVE,
+	TURRET_SEQ_DEPLOY,
+	TURRET_SEQ_RETIRE,		// played backwards
+};
+
+//=========================================================
+// SetBoneController - sets a controller of the model to
+// the given angle
+//=========================================================
+static void SetBoneController(entvars_t *pev, int iController, float flValue)
+{
+	studiohdr_t *pstudiohdr = (studiohdr_t *)GET_MODEL_PTR(ENT(pev));
+	if (!pstudiohdr)
 		return;
 
-	unsigned char* pStudioHdr = (unsigned char*)EngineGetModelPtr(edict);
-	if (!pStudioHdr)
+	if (iController >= pstudiohdr->numbonecontrollers)
 		return;
 
-	// studiohdr_t: numbonecontrollers at +84, bonecontrollerindex at +88.
-	int numControllers = *(int*)(pStudioHdr + 84);
-	if (controller >= numControllers)
-		return;
+	mstudiobonecontroller_t *pbonecontroller = (mstudiobonecontroller_t *)((unsigned char *)pstudiohdr + pstudiohdr->bonecontrollerindex) + iController;
 
-	// each mstudiobonecontroller_t is 16 bytes: +4 type flags, +8 start, +12 end.
-	unsigned char* pController = pStudioHdr + 16 * controller + *(int*)(pStudioHdr + 88);
+	float flStart = pbonecontroller->start;
+	float flEnd = pbonecontroller->end;
 
-	float flStart = *(float*)(pController + 8);
-	float flEnd = *(float*)(pController + 12);
-
-	if ((pController[4] & 0x38) != 0
+	// wrap the angle of a rotational controller that doesn't go all the way around
+	if ((pbonecontroller->type & (STUDIO_XR | STUDIO_YR | STUDIO_ZR))
 		&& flStart + 359.0f >= flEnd
-		&& (flStart + flEnd) * 0.5f + 180.0f < value)
+		&& (flStart + flEnd) * 0.5f + 180.0f < flValue)
 	{
-		value = value - 360.0f;
+		flValue = flValue - 360.0f;
 	}
 
-	int setting = (int)((value - flStart) / (flEnd - flStart) * 255.0f);
-	if (setting < 0)
-		setting = 0;
-	if (setting > 255)
-		setting = 255;
+	int iSetting = (int)((flValue - flStart) / (flEnd - flStart) * 255.0f);
+	if (iSetting < 0)
+		iSetting = 0;
+	if (iSetting > 255)
+		iSetting = 255;
 
-	int* pControllerBytes = (int*)((unsigned char*)pev + PEV_CONTROLLER);
-	*pControllerBytes = (*pControllerBytes & ~(255 << (8 * controller))) | (setting << (8 * controller));
+	pev->controller[iController] = iSetting;
 }
 
 //=========================================================
-// Multi-damage / bullet-impact helpers
-//
-// The turret's FireThink does NOT call CBaseEntity::FireBullets
-// ; it inlines a turret-specific two-bullet loop that calls the
-// shared impact-effects routine and the multi-damage helpers
-// . Those engine helpers are file-static
-// inside combat.cpp, so they are reproduced here verbatim for the turret.
+// Multi-damage: the turret's own copy of the bullet damage
+// helpers. The damage of all bullets that hit the same
+// entity in a row is added up and applied at once.
 //=========================================================
 
-enum
-{
-	TURRET_SVC_TEMPENTITY	= 23,
-	TURRET_TE_GUNSHOT		= 2,
-	TURRET_TE_TRACER		= 6,
-	TURRET_TE_BLOODSTREAM	= 101,
-	TURRET_TE_BLOOD			= 103,
-	TURRET_TE_DECAL			= 104,
-};
-
-static int s_multiDamageTarget = 0;
-static float s_multiDamageAmount = 0.0f;
+static EOFFSET	g_eoffsetMultiDamage;
+static float	g_flMultiDamage;
 
 static void ClearMultiDamage()
 {
-	s_multiDamageTarget = 0;
-	s_multiDamageAmount = 0.0f;
+	g_eoffsetMultiDamage = 0;
+	g_flMultiDamage = 0.0f;
 }
 
-static void ApplyMultiDamage(entvars_t* pevInflictor)
+//=========================================================
+// ApplyMultiDamage - deals the added up damage, and now and
+// then splats blood on the wall behind the victim
+//=========================================================
+static void ApplyMultiDamage(entvars_t *pevInflictor)
 {
-	if (!pevInflictor || !s_multiDamageTarget)
+	if (FNullEnt(g_eoffsetMultiDamage))
 		return;
 
-	void* globals = GlobalsFromEntvars(pevInflictor);
+	edict_t *pentHit = ENT(g_eoffsetMultiDamage);
+	entvars_t *pevHit = VARS(pentHit);
+	CBaseEntity *pHit = CBaseEntity::Instance(pentHit);
 
-	edict_t* pHitEdict = EnginePEntityOfEntIndex(s_multiDamageTarget);
-	if (!pHitEdict)
-		return;
-
-	entvars_t* pevHit = EngineGetVarsOfEnt(pHitEdict);
-	CBaseEntity* pHit = (CBaseEntity*)EngineGetPrivateData(pHitEdict);
 	if (pHit)
-		pHit->TakeDamage(pevInflictor, pevInflictor, s_multiDamageAmount);
+		pHit->TakeDamage(pevInflictor, pevInflictor, g_flMultiDamage);
 
-	if (!pevHit)
+	if (FClassnameIs(pevHit, "cycler"))
 		return;
 
-	const char* pszClassname = EngineStringFromIndex(PevInt(pevHit, PEV_CLASSNAME));
-	if (pszClassname && strcmp(pszClassname, "cycler") == 0)
+	if (RANDOM_FLOAT(0.0f, 1.0f) >= 0.3f)
 		return;
 
-	if (RandomFloat(0.0f, 1.0f) >= 0.3f)
-		return;
+	UTIL_MakeVectors(pevInflictor->origin - pevHit->origin);
 
-	float delta[3];
-	delta[0] = PevVector(pevInflictor, PEV_ORIGIN).x - PevVector(pevHit, PEV_ORIGIN).x;
-	delta[1] = PevVector(pevInflictor, PEV_ORIGIN).y - PevVector(pevHit, PEV_ORIGIN).y;
-	delta[2] = PevVector(pevInflictor, PEV_ORIGIN).z - PevVector(pevHit, PEV_ORIGIN).z;
+	Vector vecSrc = pevHit->origin;
+	vecSrc.z += pevHit->size.z * 0.5f;
 
-	EngineMakeVectors(delta);
-
-	float vecSrc[3];
-	vecSrc[0] = PevVector(pevHit, PEV_ORIGIN).x;
-	vecSrc[1] = PevVector(pevHit, PEV_ORIGIN).y;
-	vecSrc[2] = PevVector(pevHit, PEV_ORIGIN).z + PevVector(pevHit, PEV_SIZE).z * 0.5f;
-
-	float vecDir[3];
-	{
-		const float* right = GlobalsRight(globals);
-		const float* up = GlobalsUp(globals);
-		float randRight = RandomFloat(-1.0f, 1.0f) * 0.45f;	// FIRST draw -> v_right
-		float randUp = RandomFloat(-1.0f, 1.0f) * 0.45f;	// SECOND draw -> v_up
-
-		vecDir[0] = -g_vecAttackDir[0] + (up ? up[0] : 0.0f) * randUp + (right ? right[0] : 0.0f) * randRight;
-		vecDir[1] = -g_vecAttackDir[1] + (up ? up[1] : 0.0f) * randUp + (right ? right[1] : 0.0f) * randRight;
-		vecDir[2] = -g_vecAttackDir[2] + (up ? up[2] : 0.0f) * randUp + (right ? right[2] : 0.0f) * randRight;
-	}
-
-	float vecEnd[3];
-	vecEnd[0] = vecSrc[0] + vecDir[0] * 128.0f;
-	vecEnd[1] = vecSrc[1] + vecDir[1] * 128.0f;
-	vecEnd[2] = vecSrc[2] + vecDir[2] * 128.0f;
+	float flRight = RANDOM_FLOAT(-1.0f, 1.0f) * 0.45f;
+	float flUp = RANDOM_FLOAT(-1.0f, 1.0f) * 0.45f;
+	Vector vecDir = -g_vecAttackDir + gpGlobals->v_up * flUp + gpGlobals->v_right * flRight;
 
 	TraceResult tr;
-	memset(&tr, 0, sizeof(tr));
-	// Reproduction of the binary's blood-decal trace: fNoMonsters arg = 0
-	// (ignore monsters; decal lands on the wall behind the victim).
-	EngineTraceLine(vecSrc, vecEnd, 0, pHitEdict, &tr);
+	UTIL_TraceLine(vecSrc, vecSrc + vecDir * 128.0f, ignore_monsters, pentHit, &tr);
 
 	if (tr.flFraction != 1.0f)
 	{
-		int bloodColor = pHit ? pHit->BloodColor() : 0;
+		int iBloodColor = pHit ? pHit->BloodColor() : 0;
 
-		EngineWriteByte(0, TURRET_SVC_TEMPENTITY);
-		EngineWriteByte(0, TURRET_TE_DECAL);
-		EngineWriteCoord(0, tr.vecEndPos[0]);
-		EngineWriteCoord(0, tr.vecEndPos[1]);
-		EngineWriteCoord(0, tr.vecEndPos[2]);
-		EngineWriteShort(0, (short)EngineModelIndex(TraceHitIndex(&tr)));
+		WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+		WRITE_BYTE(MSG_BROADCAST, TE_DECAL);
+		WRITE_COORD(MSG_BROADCAST, tr.vecEndPos.x);
+		WRITE_COORD(MSG_BROADCAST, tr.vecEndPos.y);
+		WRITE_COORD(MSG_BROADCAST, tr.vecEndPos.z);
+		WRITE_SHORT(MSG_BROADCAST, ENTINDEX(tr.pHit));
 
-		if (bloodColor == 70)
-			EngineWriteByte(0, RandomLong(14, 19));
+		if (iBloodColor == BLOOD_COLOR_RED)
+			WRITE_BYTE(MSG_BROADCAST, RANDOM_LONG(DECAL_BLOOD1, DECAL_BLOOD6));
 		else
-			EngineWriteByte(0, RandomLong(20, 25));
+			WRITE_BYTE(MSG_BROADCAST, RANDOM_LONG(DECAL_YBLOOD1, DECAL_YBLOOD6));
 	}
 }
 
-static void AddMultiDamage(entvars_t* pevInflictor, int hitEntIndex, float flDamage)
+static void AddMultiDamage(entvars_t *pevInflictor, EOFFSET eoffsetHit, float flDamage)
 {
-	if (!hitEntIndex)
+	if (FNullEnt(eoffsetHit))
 		return;
 
-	if (hitEntIndex == s_multiDamageTarget)
+	if (eoffsetHit == g_eoffsetMultiDamage)
 	{
-		s_multiDamageAmount += flDamage;
+		g_flMultiDamage += flDamage;
 		return;
 	}
 
 	ApplyMultiDamage(pevInflictor);
-	s_multiDamageTarget = hitEntIndex;
-	s_multiDamageAmount = flDamage;
+	g_eoffsetMultiDamage = eoffsetHit;
+	g_flMultiDamage = flDamage;
 }
 
-static void BloodEffect(const float* vecOrigin, int bloodColor, float bloodAmount)
+static void SpawnBlood(const Vector &vecSpot, int iBloodColor, float flAmount)
 {
-	if (bloodAmount > 255.0f)
-		bloodAmount = 255.0f;
+	if (flAmount > 255.0f)
+		flAmount = 255.0f;
 
-	EngineWriteByte(0, TURRET_SVC_TEMPENTITY);
-	EngineWriteByte(0, TURRET_TE_BLOOD);
-	EngineWriteCoord(0, vecOrigin[0]);
-	EngineWriteCoord(0, vecOrigin[1]);
-	EngineWriteCoord(0, vecOrigin[2]);
-	EngineWriteCoord(0, g_vecAttackDir[0]);
-	EngineWriteCoord(0, g_vecAttackDir[1]);
-	EngineWriteCoord(0, g_vecAttackDir[2]);
-	EngineWriteByte(0, (unsigned char)bloodColor);
-	EngineWriteByte(0, (unsigned char)(int)bloodAmount);
+	WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+	WRITE_BYTE(MSG_BROADCAST, TE_BLOOD);
+	WRITE_COORD(MSG_BROADCAST, vecSpot.x);
+	WRITE_COORD(MSG_BROADCAST, vecSpot.y);
+	WRITE_COORD(MSG_BROADCAST, vecSpot.z);
+	WRITE_COORD(MSG_BROADCAST, g_vecAttackDir.x);
+	WRITE_COORD(MSG_BROADCAST, g_vecAttackDir.y);
+	WRITE_COORD(MSG_BROADCAST, g_vecAttackDir.z);
+	WRITE_BYTE(MSG_BROADCAST, (unsigned char)iBloodColor);
+	WRITE_BYTE(MSG_BROADCAST, (int)flAmount);
 }
 
-// ImpactEffects: apply bullet damage + spawn impact visuals.
-static void ImpactEffects(entvars_t* pevInflictor, float flDamage, int fSkipEffects, const float* vecDir, TraceResult* ptr)
+//=========================================================
+// ImpactEffects - damage, blood and the bullet hole of one
+// bullet
+//=========================================================
+static void ImpactEffects(entvars_t *pevInflictor, float flDamage, BOOL fSkipEffects, const Vector &vecDir, TraceResult *ptr)
 {
-	if (!pevInflictor || !vecDir || !ptr)
-		return;
+	EOFFSET eoffsetHit = ptr->pHit;
+	edict_t *pentHit = ENT(eoffsetHit);
+	entvars_t *pevHit = VARS(pentHit);
 
-	int hitEntIndex = TraceHitIndex(ptr);
-	// World hit -> tr.pHit == 0 (prog offset). Resolve through PROG_TO_EDICT like the
-	// binary (no null-guard) so wall hits keep a valid pevHit and emit the decal.
-	edict_t* pHitEdict = EnginePEntityOfEntIndex(hitEntIndex);
-	entvars_t* pevHit = pHitEdict ? EngineGetVarsOfEnt(pHitEdict) : NULL;
+	Vector vecHit = ptr->vecEndPos - vecDir * 4.0f;
 
-	float hitPos[3];
-	hitPos[0] = ptr->vecEndPos[0] - vecDir[0] * 4.0f;
-	hitPos[1] = ptr->vecEndPos[1] - vecDir[1] * 4.0f;
-	hitPos[2] = ptr->vecEndPos[2] - vecDir[2] * 4.0f;
-
-	if (pevHit && (PevInt(pevHit, PEV_TAKEDAMAGE) & 0x7FFFFFFF) != 0)
+	if (pevHit->takedamage != DAMAGE_NO)
 	{
-		CBaseEntity* pEntity = (CBaseEntity*)EngineGetPrivateData(pHitEdict);
-		int bloodColor = pEntity ? pEntity->BloodColor() : 0;
+		CBaseEntity *pEntity = CBaseEntity::Instance(pentHit);
+		int iBloodColor = pEntity ? pEntity->BloodColor() : 0;
 
-		AddMultiDamage(pevInflictor, hitEntIndex, flDamage);
+		AddMultiDamage(pevInflictor, eoffsetHit, flDamage);
 
-		const char* pszClassname = EngineStringFromIndex(PevInt(pevHit, PEV_CLASSNAME));
-		if (pszClassname)
-		{
-			if (strcmp(pszClassname, "func_glass") == 0)
-				return;
-			if (strcmp(pszClassname, "func_breakable") == 0)
-				return;
-		}
-
-		if (PevFloat(pevHit, PEV_HEALTH) > 1000.0f)
+		if (FClassnameIs(pevHit, "func_glass") || FClassnameIs(pevHit, "func_breakable"))
 			return;
 
-		BloodEffect(hitPos, bloodColor, flDamage);
+		// very tough things don't bleed
+		if (pevHit->health > 1000.0f)
+			return;
 
-		if (PevFloat(pevHit, PEV_HEALTH) <= s_multiDamageAmount)
+		SpawnBlood(vecHit, iBloodColor, flDamage);
+
+		// a stream of blood for a killing shot
+		if (pevHit->health <= g_flMultiDamage)
 		{
-			float org[3];
-			org[0] = ptr->vecEndPos[0] + vecDir[0] * 8.0f;
-			org[1] = ptr->vecEndPos[1] + vecDir[1] * 8.0f;
-			org[2] = ptr->vecEndPos[2] + vecDir[2] * 8.0f;
+			Vector vecSpot = ptr->vecEndPos + vecDir * 8.0f;
 
-			EngineWriteByte(0, TURRET_SVC_TEMPENTITY);
-			EngineWriteByte(0, TURRET_TE_BLOODSTREAM);
-			EngineWriteCoord(0, org[0]);
-			EngineWriteCoord(0, org[1]);
-			EngineWriteCoord(0, org[2]);
-			EngineWriteCoord(0, RandomFloat(-1.0f, 1.0f));
-			EngineWriteCoord(0, RandomFloat(-1.0f, 1.0f));
-			EngineWriteCoord(0, RandomFloat(0.0f, 1.0f));
-			EngineWriteByte(0, (unsigned char)bloodColor);
-			EngineWriteByte(0, (unsigned char)RandomLong(80, 150));
+			WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+			WRITE_BYTE(MSG_BROADCAST, TE_BLOODSTREAM);
+			WRITE_COORD(MSG_BROADCAST, vecSpot.x);
+			WRITE_COORD(MSG_BROADCAST, vecSpot.y);
+			WRITE_COORD(MSG_BROADCAST, vecSpot.z);
+			WRITE_COORD(MSG_BROADCAST, RANDOM_FLOAT(-1.0f, 1.0f));
+			WRITE_COORD(MSG_BROADCAST, RANDOM_FLOAT(-1.0f, 1.0f));
+			WRITE_COORD(MSG_BROADCAST, RANDOM_FLOAT(0.0f, 1.0f));
+			WRITE_BYTE(MSG_BROADCAST, (unsigned char)iBloodColor);
+			WRITE_BYTE(MSG_BROADCAST, RANDOM_LONG(80, 150));	// speed
 		}
 	}
 
-	if (!fSkipEffects && pevHit && PevFloat(pevHit, PEV_SOLID) == 4.0f)
+	if (!fSkipEffects && pevHit->solid == SOLID_BSP)
 	{
-		EngineWriteByte(0, TURRET_SVC_TEMPENTITY);
-		EngineWriteByte(0, TURRET_TE_GUNSHOT);
-		EngineWriteCoord(0, hitPos[0]);
-		EngineWriteCoord(0, hitPos[1]);
-		EngineWriteCoord(0, hitPos[2]);
+		WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+		WRITE_BYTE(MSG_BROADCAST, TE_GUNSHOT);
+		WRITE_COORD(MSG_BROADCAST, vecHit.x);
+		WRITE_COORD(MSG_BROADCAST, vecHit.y);
+		WRITE_COORD(MSG_BROADCAST, vecHit.z);
 
-		EngineWriteByte(0, TURRET_SVC_TEMPENTITY);
-		EngineWriteByte(0, TURRET_TE_DECAL);
-		EngineWriteCoord(0, ptr->vecEndPos[0]);
-		EngineWriteCoord(0, ptr->vecEndPos[1]);
-		EngineWriteCoord(0, ptr->vecEndPos[2]);
-		EngineWriteShort(0, (short)EngineModelIndex(TraceHitIndex(ptr)));	// binary writes ModelIndex(tr.pHit), like ApplyMultiDamage
+		WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+		WRITE_BYTE(MSG_BROADCAST, TE_DECAL);
+		WRITE_COORD(MSG_BROADCAST, ptr->vecEndPos.x);
+		WRITE_COORD(MSG_BROADCAST, ptr->vecEndPos.y);
+		WRITE_COORD(MSG_BROADCAST, ptr->vecEndPos.z);
+		WRITE_SHORT(MSG_BROADCAST, ENTINDEX(ptr->pHit));
 
-		if (hitEntIndex && (PevInt(pevHit, PEV_RENDERMODE) & 0x7FFFFFFF) != 0)
-			EngineWriteByte(0, RandomLong(26, 28));
+		// glass cracks on see-through brushes
+		if (!FNullEnt(eoffsetHit) && pevHit->rendermode != kRenderNormal)
+			WRITE_BYTE(MSG_BROADCAST, RANDOM_LONG(DECAL_BREAK1, DECAL_BREAK3));
 		else
-			EngineWriteByte(0, RandomLong(0, 4));
+			WRITE_BYTE(MSG_BROADCAST, RANDOM_LONG(DECAL_SHOT1, DECAL_SHOT5));
 	}
 }
 
 //=========================================================
 // CTurret
 //=========================================================
-
 class CTurret : public CBaseMonster
 {
 public:
 	CTurret();
 
 	void Spawn();
-	void KeyValue(KeyValueData* pkvd);
+	void KeyValue(KeyValueData *pkvd);
 	int Classify();
-	void Use(CBaseEntity* pOther);
-	int TakeDamage(entvars_t* inflictor, entvars_t* attacker, float damage);	// custom
+	void Use(CBaseEntity *pOther);
+	int TakeDamage(entvars_t *pevInflictor, entvars_t *pevAttacker, float flDamage);
+	void Death(int iDeathType);
 
-private:
-	void Death(int gibType);		// vtable slot 14
+	void InitialThink(CBaseEntity *pOther);
+	void AutoSearchThink(CBaseEntity *pOther);
+	void DeployThink(CBaseEntity *pOther);
+	void RetractThink(CBaseEntity *pOther);
+	void ActiveThink(CBaseEntity *pOther);
+	void SpinUpThink(CBaseEntity *pOther);
+	void FireThink(CBaseEntity *pOther);
 
-	// think states
-	void InitialThink(CBaseEntity* pOther);
-	void AutoSearchThink(CBaseEntity* pOther);
-	void DeployThink(CBaseEntity* pOther);
-	void RetractThink(CBaseEntity* pOther);
-	void ActiveThink(CBaseEntity* pOther);
-	void SpinUpThink(CBaseEntity* pOther);
-	void FireThink(CBaseEntity* pOther);
-
-	// helpers
-	void SetTurretAnim(int sequence);
+	void SetTurretAnim(int iSequence);
 	void MoveTurret();
-	edict_t* FindEnemy();
+	edict_t *FindEnemy();
 
-private:
-	int m_iOn;					// member+344
-	int m_iAutoStart;			// member+352
-	int m_iSpin;				// member+348 (always-fire flag)
-	int m_iOrientation;			// member+340 (0 = floor, 1 = ceiling)
-	int m_iTurnRate;			// member+336
-	float m_flMaxSpin;			// member+372 (maxsleep)
-	float m_flSearchSpeed;		// member+376 (searchspeed)
-	float m_flLastSight;		// member+368
-	float m_flStartSpin;		// member+412 (ping/start-spin timer)
-	int m_iMuzzleFlash;			// member+308 (tracer cycle 0..3)
-	float m_flBaseYaw;			// member+416 (designer-set base yaw, angles.y)
+	int		m_iOn;
+	int		m_iAutoStart;
+	int		m_fBerserk;				// badly damaged, fires wildly
+	int		m_iOrientation;			// TURRET_ORIENT_*
+	int		m_iTurnRate;
+	float	m_flMaxSpin;			// how long the turret keeps firing at an enemy out of sight
+	float	m_flSearchSpeed;
+	float	m_flLastSight;			// time to give up on an enemy out of sight
+	float	m_flPingTime;			// time of the next ping
+	int		m_iTracerCount;
+	float	m_flBaseYaw;			// yaw the turret was placed with
 
-	float m_vecGoalAngles[2];	// member+396 [0], member+400 [1]
-	float m_vecCurAngles[3];	// member+384 [0], member+388 [1], member+392 [2]
-	float m_vecLastSight[3];	// member+356..364
+	float	m_vecGoalAngles[2];		// pitch and yaw to turn to
+	float	m_vecCurAngles[3];
+	Vector	m_vecLastSight;
 };
-
-HL_COMPILE_TIME_ASSERT(sizeof(CTurret) <= 420, CTurret_private_data_size);
 
 CTurret::CTurret()
 {
 	m_iOn = 0;
 	m_iAutoStart = 0;
-	m_iSpin = 0;
-	m_iOrientation = 0;
+	m_fBerserk = 0;
+	m_iOrientation = TURRET_ORIENT_FLOOR;
 	m_iTurnRate = 10;
 	m_flMaxSpin = 5.0f;
 	m_flSearchSpeed = 0.0f;
 	m_flLastSight = 0.0f;
-	m_flStartSpin = 0.0f;
-	m_iMuzzleFlash = 0;
+	m_flPingTime = 0.0f;
+	m_iTracerCount = 0;
 	m_flBaseYaw = 0.0f;
 
-	m_vecGoalAngles[0] = 0.0f;
-	m_vecGoalAngles[1] = 0.0f;
-	m_vecCurAngles[0] = 0.0f;
-	m_vecCurAngles[1] = 0.0f;
-	m_vecCurAngles[2] = 0.0f;
-	m_vecLastSight[0] = 0.0f;
-	m_vecLastSight[1] = 0.0f;
-	m_vecLastSight[2] = 0.0f;
+	m_vecGoalAngles[PITCH] = 0.0f;
+	m_vecGoalAngles[YAW] = 0.0f;
+	m_vecCurAngles[PITCH] = 0.0f;
+	m_vecCurAngles[YAW] = 0.0f;
+	m_vecCurAngles[ROLL] = 0.0f;
+	m_vecLastSight = g_vecZero;
 }
 
-//=========================================================
-// Spawn
-//=========================================================
 void CTurret::Spawn()
 {
-	EnginePrecacheSound(kSndFire);
-	EnginePrecacheSound(kSndPing);
-	EnginePrecacheSound(kSndActive);
-	EnginePrecacheSound(kSndDie);
-	EnginePrecacheSound(kSndDie2);
-	EnginePrecacheSound(kSndDie3);
-	EnginePrecacheSound(kSndRetract);
-	EnginePrecacheSound(kSndDeploy);
-	EnginePrecacheSound(kSndSpinUp);
-	EnginePrecacheSound(kSndSpinDown);
-	EnginePrecacheSound(kSndSearch);
-	EnginePrecacheSound(kSndAlert);
+	PRECACHE_SOUND("turret/tu_fire1.wav");
+	PRECACHE_SOUND("turret/tu_ping.wav");
+	PRECACHE_SOUND("turret/tu_active.wav");
+	PRECACHE_SOUND("turret/tu_die.wav");
+	PRECACHE_SOUND("turret/tu_die2.wav");
+	PRECACHE_SOUND("turret/tu_die3.wav");
+	PRECACHE_SOUND("turret/tu_retract.wav");
+	PRECACHE_SOUND("turret/tu_deploy.wav");
+	PRECACHE_SOUND("turret/tu_spinup.wav");
+	PRECACHE_SOUND("turret/tu_spindown.wav");
+	PRECACHE_SOUND("turret/tu_search.wav");
+	PRECACHE_SOUND("turret/tu_alert.wav");
 
-	EnginePrecacheModel(kTurretModel);
+	PRECACHE_MODEL("models/turret.mdl");
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineSetModel(edict, kTurretModel);
+	SET_MODEL(ENT(pev), "models/turret.mdl");
+	UTIL_SetSize(pev, Vector(-16.0f, -16.0f, 0.0f), Vector(16.0f, 16.0f, 16.0f));
 
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 16.0f, 16.0f, 16.0f);
-		VecSet(mins, -16.0f, -16.0f, 0.0f);
-		if (edict)
-			EngineSetSize(edict, mins, maxs);
-	}
+	m_MonsterState = MONSTERSTATE_IDLE;
 
-	m_MonsterState = 1;
-
-	// pev+28 is an unnamed field in the alpha entvars (see SHARED_NEEDS);
-	// this nextthink is immediately overwritten below by GlobalTime()+0.3.
-	PevFloat(pev, PEV_NEXTTHINK) = PevFloat(pev, 28) + 1.0f;
-	PevFloat(pev, PEV_MOVETYPE) = 5.0f;
-	PevInt(pev, PEV_SEQUENCE) = 0;
-	PevFloat(pev, PEV_FRAME) = 0.0f;
-	PevFloat(pev, PEV_SOLID) = 3.0f;
-	PevFloat(pev, PEV_HEALTH) = 100.0f;
-	PevFloat(pev, PEV_TAKEDAMAGE) = 2.0f;
-
-	// flags |= FL_MONSTER (0x20)
-	{
-		float& flags = PevFloat(pev, PEV_FLAGS);
-		flags = (float)((int)flags | 0x20);
-	}
+	pev->nextthink = pev->ltime + 1.0f;
+	pev->movetype = MOVETYPE_FLY;
+	pev->sequence = TURRET_SEQ_IDLE;
+	pev->frame = 0.0f;
+	pev->solid = SOLID_SLIDEBOX;
+	pev->health = 100.0f;
+	pev->takedamage = DAMAGE_AIM;
+	pev->flags = (float)((int)pev->flags | FL_MONSTER);
 
 	m_iOn = 0;
-	m_iSpin = 0;
+	m_fBerserk = 0;
 	m_iTurnRate = 10;
 	m_flMaxSpin = 5.0f;
 
 	SetUse(&CTurret::Use);
 
-	// stash the designer-set base yaw (angles.y, pev+80), then zero it.
-	m_flBaseYaw = PevVector(pev, PEV_ANGLES).y;
-	PevVector(pev, PEV_ANGLES).y = 0.0f;
+	// the controllers do the turning, the model keeps yaw 0
+	m_flBaseYaw = pev->angles.y;
+	pev->angles.y = 0.0f;
 
 	SetThink(&CTurret::InitialThink);
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + TURRET_SPAWN_DELAY;
+	pev->nextthink = gpGlobals->time + TURRET_SPAWN_DELAY;
 }
 
-//=========================================================
-// KeyValue
-//=========================================================
-void CTurret::KeyValue(KeyValueData* pkvd)
+void CTurret::KeyValue(KeyValueData *pkvd)
 {
-	if (!pkvd)
-		return;
-
-	if (strcmp(pkvd->szKeyName, "maxsleep") == 0)
+	if (FStrEq(pkvd->szKeyName, "maxsleep"))
 	{
 		m_flMaxSpin = (float)atof(pkvd->szValue);
-		pkvd->fHandled = 1;
+		pkvd->fHandled = TRUE;
 	}
-	else if (strcmp(pkvd->szKeyName, "orientation") == 0)
+	else if (FStrEq(pkvd->szKeyName, "orientation"))
 	{
 		m_iOrientation = atoi(pkvd->szValue);
-		pkvd->fHandled = 1;
+		pkvd->fHandled = TRUE;
 	}
-	else if (strcmp(pkvd->szKeyName, "searchspeed") == 0)
+	else if (FStrEq(pkvd->szKeyName, "searchspeed"))
 	{
 		m_flSearchSpeed = (float)atoi(pkvd->szValue);
-		pkvd->fHandled = 1;
+		pkvd->fHandled = TRUE;
 	}
-	else if (strcmp(pkvd->szKeyName, "autostart") == 0)
+	else if (FStrEq(pkvd->szKeyName, "autostart"))
 	{
 		m_iAutoStart = atoi(pkvd->szValue);
-		pkvd->fHandled = 1;
+		pkvd->fHandled = TRUE;
 	}
-	else if (strcmp(pkvd->szKeyName, "turnrate") == 0)
+	else if (FStrEq(pkvd->szKeyName, "turnrate"))
 	{
 		m_iTurnRate = atoi(pkvd->szValue);
-		pkvd->fHandled = 1;
+		pkvd->fHandled = TRUE;
 	}
-	else if (strcmp(pkvd->szKeyName, "style") == 0
-		|| strcmp(pkvd->szKeyName, "height") == 0
-		|| strcmp(pkvd->szKeyName, "killtarget") == 0
-		|| strcmp(pkvd->szKeyName, "value1") == 0
-		|| strcmp(pkvd->szKeyName, "value2") == 0
-		|| strcmp(pkvd->szKeyName, "value3") == 0)
+	else if (FStrEq(pkvd->szKeyName, "style")
+		|| FStrEq(pkvd->szKeyName, "height")
+		|| FStrEq(pkvd->szKeyName, "killtarget")
+		|| FStrEq(pkvd->szKeyName, "value1")
+		|| FStrEq(pkvd->szKeyName, "value2")
+		|| FStrEq(pkvd->szKeyName, "value3"))
 	{
-		pkvd->fHandled = 1;
+		pkvd->fHandled = TRUE;
 	}
 }
 
-//=========================================================
-// Classify
-//=========================================================
 int CTurret::Classify()
 {
-	return 6;
+	return CLASS_MACHINE;
 }
 
-//=========================================================
-// SetTurretAnim
-// Sets sequence + frame/framerate for deploy/retract/active.
-//=========================================================
-void CTurret::SetTurretAnim(int sequence)
+void CTurret::SetTurretAnim(int iSequence)
 {
-	if (PevInt(pev, PEV_SEQUENCE) == sequence)
+	if (pev->sequence == iSequence)
 		return;
 
-	PevInt(pev, PEV_SEQUENCE) = sequence;
-	ResetSequenceInfo(TURRET_THINK_FAST);
+	pev->sequence = iSequence;
+	ResetSequenceInfo(TURRET_THINK_INTERVAL);
 
-	if (sequence == 3)
+	if (iSequence == TURRET_SEQ_RETIRE)
 	{
-		// retract: play backwards from the last frame
-		PevFloat(pev, PEV_FRAME) = 255.0f;
-		PevFloat(pev, PEV_FRAMERATE) = -1.0f;
+		pev->frame = 255.0f;
+		pev->framerate = -1.0f;
 	}
 	else
 	{
-		PevFloat(pev, PEV_FRAME) = 0.0f;
-		PevFloat(pev, PEV_FRAMERATE) = 1.0f;
+		pev->frame = 0.0f;
+		pev->framerate = 1.0f;
 	}
 }
 
 //=========================================================
-// InitialThink
-// One-shot startup: aim straight, decide between an
-// auto-search loop and a dormant idle.
+// InitialThink - turns the model to its placement angles
+// and waits, or starts searching when set to autostart
 //=========================================================
-void CTurret::InitialThink(CBaseEntity* pOther)
+void CTurret::InitialThink(CBaseEntity *pOther)
 {
-	// binary gates the pitch setup behind m_iOrientation==1 (ceiling turret); floor
-	// turrets (orientation 0) never get the ChangePitch / ideal_pitch+pitch_speed overwrite.
-	if (m_iOrientation == 1)
+	if (m_iOrientation == TURRET_ORIENT_CEILING)
 	{
-		PevFloat(pev, PEV_IDEAL_PITCH) = 180.0f;
-		PevFloat(pev, PEV_PITCH_SPEED) = 360.0f;
-		EngineChangePitch(EdictFromEntvars(pev));
-		PevFloat(pev, PEV_IDEAL_YAW) = -m_flBaseYaw;
+		// upside down
+		pev->idealpitch = 180.0f;
+		pev->pitch_speed = 360.0f;
+		CHANGE_PITCH(ENT(pev));
+		pev->ideal_yaw = -m_flBaseYaw;
 	}
 	else
-		PevFloat(pev, PEV_IDEAL_YAW) = m_flBaseYaw;
+	{
+		pev->ideal_yaw = m_flBaseYaw;
+	}
 
-	PevFloat(pev, PEV_YAWSPEED) = 360.0f;
-	EngineChangeYaw(EdictFromEntvars(pev));
+	pev->yaw_speed = 360.0f;
+	CHANGE_YAW(ENT(pev));
 
-	m_vecGoalAngles[0] = 360.0f;
+	m_vecGoalAngles[PITCH] = 360.0f;
 
 	if (m_iAutoStart)
 	{
 		m_iOn = 1;
 		SetThink(&CTurret::AutoSearchThink);
-		PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + TURRET_THINK_FAST;
+		pev->nextthink = gpGlobals->time + TURRET_THINK_INTERVAL;
 	}
 	else
 	{
@@ -590,214 +473,73 @@ void CTurret::InitialThink(CBaseEntity* pOther)
 }
 
 //=========================================================
-// AutoSearchThink
-// Hunt for an enemy; on success, deploy.
+// AutoSearchThink - looks for an enemy, deploys when it
+// finds one
 //=========================================================
-void CTurret::AutoSearchThink(CBaseEntity* pOther)
+void CTurret::AutoSearchThink(CBaseEntity *pOther)
 {
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + TURRET_SEARCH_DELAY;
+	pev->nextthink = gpGlobals->time + TURRET_SEARCH_DELAY;
 
-	// drop the enemy if it died (health gone negative)
-	int enemyIndex = PevInt(pev, PEV_ENEMY);
-	if (enemyIndex)
-	{
-		edict_t* pEnemyEdict = EnginePEntityOfEntIndex(enemyIndex);
-		entvars_t* pevEnemy = pEnemyEdict ? EngineGetVarsOfEnt(pEnemyEdict) : NULL;
-		if (pevEnemy && *(unsigned int*)&PevFloat(pevEnemy, PEV_HEALTH) > 0x80000000)
-			PevInt(pev, PEV_ENEMY) = 0;
-	}
+	// forget a dead enemy
+	if (!FNullEnt(pev->enemy) && VARS(pev->enemy)->health < 0.0f)
+		pev->enemy = 0;
 
-	if (PevInt(pev, PEV_ENEMY))
+	if (pev->enemy)
 		return;
 
-	edict_t* pFound = FindEnemy();
-	if (!pFound || !EngineIndexOfEdict(pFound))
+	edict_t *pentFound = FindEnemy();
+	if (FNullEnt(pentFound))
 		return;
 
 	SetThink(&CTurret::DeployThink);
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + TURRET_DEPLOY_DELAY;
+	pev->nextthink = gpGlobals->time + TURRET_DEPLOY_DELAY;
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 3, kSndAlert, TURRET_VOL, TURRET_ATTN_NORM);
+	EMIT_SOUND(ENT(pev), CHAN_ITEM, "turret/tu_alert.wav", VOL_NORM, ATTN_NORM);
 }
 
 //=========================================================
-// DeployThink
-// Raise the turret out of its housing.
+// FindEnemy - picks a visible client in the PVS, or the
+// first living enemy in range, as pev->enemy
 //=========================================================
-void CTurret::DeployThink(CBaseEntity* pOther)
+edict_t *CTurret::FindEnemy()
 {
-	SetTurretAnim(2);
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + TURRET_THINK_FAST;
-	AdvanceAnimation(TURRET_THINK_FAST);
+	edict_t *pentTarget = NULL;
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 3, kSndDeploy, TURRET_VOL, TURRET_ATTN_NORM);
+	edict_t *pentClient = FIND_CLIENT_IN_PVS();
+	if (!FNullEnt(pentClient) && FVisible(pev, VARS(pentClient)))
+		pentTarget = pentClient;
 
-	if (m_fSequenceFinished)
+	if (!pentTarget)
 	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 34.0f, 34.0f, 34.0f);
-		VecSet(mins, -16.0f, -16.0f, 0.0f);
-		if (edict)
-			EngineSetSize(edict, mins, maxs);
+		edict_t *pentEntity = FIND_ENTITY_IN_SPHERE(pev->origin, TURRET_RANGE);
 
-		m_vecCurAngles[1] = m_flBaseYaw;
-		m_vecCurAngles[0] = 360.0f;
-
-		SetTurretAnim(1);
-		SetThink(&CTurret::ActiveThink);
-	}
-}
-
-//=========================================================
-// RetractThink
-// Tuck the turret back into its housing.
-//=========================================================
-void CTurret::RetractThink(CBaseEntity* pOther)
-{
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + TURRET_THINK_FAST;
-	AdvanceAnimation(TURRET_THINK_FAST);
-
-	if (m_vecGoalAngles[0] != m_vecCurAngles[0])
-	{
-		MoveTurret();
-		return;
-	}
-
-	if (PevInt(pev, PEV_SEQUENCE) != 3)
-	{
-		SetTurretAnim(3);
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineEmitSound(edict, 3, kSndRetract, TURRET_VOL, TURRET_ATTN_NORM);
-	}
-
-	if (m_fSequenceFinished)
-	{
-		SetTurretAnim(0);
-
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 16.0f, 16.0f, 16.0f);
-		VecSet(mins, -16.0f, -16.0f, 0.0f);
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineSetSize(edict, mins, maxs);
-
-		SetThink(&CBaseEntity::SUB_DoNothing);
-	}
-}
-
-//=========================================================
-// MoveTurret
-// Step the two bone controllers toward the goal angles.
-//=========================================================
-void CTurret::MoveTurret()
-{
-	// pitch controller (controller 1): step the current pitch toward the goal
-	if (m_vecGoalAngles[0] != m_vecCurAngles[0])
-	{
-		float flDir = (m_vecGoalAngles[0] > m_vecCurAngles[0]) ? 1.0f : -1.0f;
-		m_vecCurAngles[0] = m_vecCurAngles[0] + TURRET_TURN_STEP * flDir;
-
-		if (flDir == 1.0f)
+		while (!FNullEnt(pentEntity))
 		{
-			if (m_vecCurAngles[0] > m_vecGoalAngles[0])
-				m_vecCurAngles[0] = m_vecGoalAngles[0];
-		}
-		else
-		{
-			if (m_vecCurAngles[0] < m_vecGoalAngles[0])
-				m_vecCurAngles[0] = m_vecGoalAngles[0];
-		}
+			entvars_t *pevEntity = VARS(pentEntity);
 
-		SetBoneController(pev, 1, m_vecCurAngles[0]);
-	}
-
-	// yaw controller (controller 0): step the current yaw toward the goal
-	if (m_vecGoalAngles[1] == m_vecCurAngles[1])
-		return;
-
-	float flDir = (m_vecGoalAngles[1] > m_vecCurAngles[1]) ? 1.0f : -1.0f;
-	if (fabsf(m_vecGoalAngles[1] - m_vecCurAngles[1]) > 180.0f)
-		flDir = -flDir;
-
-	m_vecCurAngles[1] = m_vecCurAngles[1] + flDir * TURRET_TURN_STEP;
-
-	if (*(unsigned int*)&m_vecCurAngles[1] > 0x80000000)
-		m_vecCurAngles[1] = m_vecCurAngles[1] + 360.0f;
-	else if (*(int*)&m_vecCurAngles[1] > 0x43B40000)	// > 360.0
-		m_vecCurAngles[1] = m_vecCurAngles[1] - 360.0f;
-
-	if (fabsf(m_vecCurAngles[1] - m_vecGoalAngles[1]) < 2.25f)
-		m_vecCurAngles[1] = m_vecGoalAngles[1];
-
-	float flValue = m_vecCurAngles[1] - m_flBaseYaw + 360.0f;
-	if (flValue > 360.0f)
-		flValue = flValue - 360.0f;
-
-	SetBoneController(pev, 0, flValue);
-}
-
-//=========================================================
-// FindEnemy
-// Scan a 1024u sphere for a damageable, visible target of a
-// hostile class; the player's own visibility/spawnflag gates.
-//=========================================================
-edict_t* CTurret::FindEnemy()
-{
-	edict_t* pTarget = NULL;
-
-	// prefer a client already in PVS
-	edict_t* pClient = EngineFindClientInPVS();
-	if (pClient && EngineIndexOfEdict(pClient))
-	{
-		entvars_t* pevClient = EngineGetVarsOfEnt(pClient);
-		if (pevClient && FVisible(pev, pevClient))
-			pTarget = pClient;
-	}
-
-	if (!pTarget)
-	{
-		Vector vecOrigin = PevVector(pev, PEV_ORIGIN);
-		edict_t* pEnt = EngineFindEntityInSphere(VecPtr(vecOrigin), TURRET_RANGE);
-
-		while (pEnt && EngineIndexOfEdict(pEnt))
-		{
-			entvars_t* pevEnt = EngineGetVarsOfEnt(pEnt);
-			if (!pevEnt)
-				break;
-
-			// take the first hostile, alive, in-range entity in the chain
-			if ((PevInt(pevEnt, PEV_TAKEDAMAGE) & 0x7FFFFFFF) != 0)
+			if (pevEntity->takedamage != DAMAGE_NO)
 			{
-				CBaseEntity* pEntity = (CBaseEntity*)EngineGetPrivateData(pEnt);
-				int cls = pEntity ? pEntity->Classify() : 0;
+				CBaseEntity *pEntity = CBaseEntity::Instance(pentEntity);
+				int iClass = pEntity ? pEntity->Classify() : CLASS_NONE;
 
-				switch (cls)
+				switch (iClass)
 				{
-				case 1:
-				case 2:
-				case 3:
-				case 4:
-				case 5:
-				case 7:
-				case 8:
+				case CLASS_HUMAN_MILITARY:
+				case CLASS_ALIEN_MILITARY:
+				case CLASS_HOUNDEYE:
+				case CLASS_PLAYER:
+				case CLASS_PLAYER_ALLY:
+				case CLASS_BULLCHICKEN:
+				case CLASS_HEADCRAB:
 				{
+					// the result isn't used
 					TraceResult tr;
-					memset(&tr, 0, sizeof(tr));
-					EngineTraceLine(VecPtr(PevVector(pev, PEV_ORIGIN)), VecPtr(PevVector(pevEnt, PEV_ORIGIN)), 1, EdictFromEntvars(pev), &tr);
+					UTIL_TraceLine(pev->origin, pevEntity->origin, dont_ignore_monsters, ENT(pev), &tr);
 
-					// The binary `cmp [health], 479C4000h; jl accept`
-					// reject health >= 80000.0 (invulnerable/cycler sentinel), not 73728.0.
-					if (PevFloat(pevEnt, PEV_HEALTH) > 0.0f && PevFloat(pevEnt, PEV_HEALTH) < 80000.0f)
+					if (pevEntity->health > 0.0f && pevEntity->health < CYCLER_HEALTH)
 					{
-						pTarget = pEnt;
-						pEnt = NULL;	// accepted -> stop scanning
+						pentTarget = pentEntity;
+						pentEntity = NULL;
 					}
 					break;
 				}
@@ -806,176 +548,239 @@ edict_t* CTurret::FindEnemy()
 				}
 			}
 
-			if (pEnt)
-			{
-				int chainIndex = PevInt(pevEnt, PEV_CHAIN);
-				pEnt = chainIndex ? EnginePEntityOfEntIndex(chainIndex) : NULL;
-			}
+			if (pentEntity)
+				pentEntity = ENT(pevEntity->chain);
 		}
 	}
 
-	if (!pTarget || !EngineIndexOfEdict(pTarget))
+	if (FNullEnt(pentTarget))
 		return NULL;
 
-	entvars_t* pevTarget = EngineGetVarsOfEnt(pTarget);
-	if (!pevTarget)
+	entvars_t *pevTarget = VARS(pentTarget);
+
+	if (!FVisible(pev, pevTarget) || ((int)pevTarget->flags & FL_NOTARGET))
 		return NULL;
 
-	if (!FVisible(pev, pevTarget) || ((int)PevFloat(pevTarget, PEV_FLAGS) & 0x80) != 0)
-		return NULL;
-
-	// SF_MONSTER_TURRET_AUTOACTIVATE style: only activate when the candidate
-	// can itself see the turret (looker = target, viewed = turret).
-	if (((int)PevFloat(pev, PEV_SPAWNFLAGS) & 1) != 0)
+	if ((int)pev->spawnflags & SF_MONSTER_WAIT_TILL_SEEN)
 	{
 		if (!FInViewCone(pevTarget, pev, 0.7f))
 			return NULL;
 	}
 
-	int enemyIndex = EngineIndexOfEdict(pTarget);
-	PevInt(pev, PEV_ENEMY) = enemyIndex;
-	PevInt(pev, PEV_GOALENTINDEX) = enemyIndex;
+	EOFFSET eoffsetTarget = OFFSET(pentTarget);
+	pev->enemy = eoffsetTarget;
+	pev->goalentity = eoffsetTarget;
 
-	m_vecEnemyLKP = PevVector(pevTarget, PEV_ORIGIN);
-	m_flLastEnemySightTime = GlobalTime();
+	m_vecEnemyLKP = pevTarget->origin;
+	m_flLastEnemySightTime = gpGlobals->time;
 
-	return pTarget;
+	return pentTarget;
 }
 
 //=========================================================
-// ActiveThink
-// Deployed and scanning.  Pings periodically and, once an
-// enemy is locked, spins up to fire.
+// DeployThink - raises the gun out of its housing
 //=========================================================
-void CTurret::ActiveThink(CBaseEntity* pOther)
+void CTurret::DeployThink(CBaseEntity *pOther)
 {
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + TURRET_THINK_FAST;
+	SetTurretAnim(TURRET_SEQ_DEPLOY);
+	pev->nextthink = gpGlobals->time + TURRET_THINK_INTERVAL;
+	AdvanceAnimation(TURRET_THINK_INTERVAL);
 
-	float flTime = GlobalTime();
-	if (((*(int*)&m_flStartSpin) & 0x7FFFFFFF) != 0)
+	EMIT_SOUND(ENT(pev), CHAN_ITEM, "turret/tu_deploy.wav", VOL_NORM, ATTN_NORM);
+
+	if (m_fSequenceFinished)
 	{
-		if (flTime >= m_flStartSpin)
+		UTIL_SetSize(pev, Vector(-16.0f, -16.0f, 0.0f), Vector(34.0f, 34.0f, 34.0f));
+
+		m_vecCurAngles[YAW] = m_flBaseYaw;
+		m_vecCurAngles[PITCH] = 360.0f;
+
+		SetTurretAnim(TURRET_SEQ_ACTIVE);
+		SetThink(&CTurret::ActiveThink);
+	}
+}
+
+//=========================================================
+// RetractThink - levels the gun, then pulls it back into
+// its housing
+//=========================================================
+void CTurret::RetractThink(CBaseEntity *pOther)
+{
+	pev->nextthink = gpGlobals->time + TURRET_THINK_INTERVAL;
+	AdvanceAnimation(TURRET_THINK_INTERVAL);
+
+	if (m_vecGoalAngles[PITCH] != m_vecCurAngles[PITCH])
+	{
+		MoveTurret();
+		return;
+	}
+
+	if (pev->sequence != TURRET_SEQ_RETIRE)
+	{
+		SetTurretAnim(TURRET_SEQ_RETIRE);
+		EMIT_SOUND(ENT(pev), CHAN_ITEM, "turret/tu_retract.wav", VOL_NORM, ATTN_NORM);
+	}
+
+	if (m_fSequenceFinished)
+	{
+		SetTurretAnim(TURRET_SEQ_IDLE);
+		UTIL_SetSize(pev, Vector(-16.0f, -16.0f, 0.0f), Vector(16.0f, 16.0f, 16.0f));
+
+		SetThink(&CBaseEntity::SUB_DoNothing);
+	}
+}
+
+//=========================================================
+// MoveTurret - turns the controllers a step towards the
+// goal angles
+//=========================================================
+void CTurret::MoveTurret()
+{
+	if (m_vecGoalAngles[PITCH] != m_vecCurAngles[PITCH])
+	{
+		float flDir = (m_vecGoalAngles[PITCH] > m_vecCurAngles[PITCH]) ? 1.0f : -1.0f;
+		m_vecCurAngles[PITCH] = m_vecCurAngles[PITCH] + TURRET_TURN_STEP * flDir;
+
+		// don't overshoot
+		if (flDir == 1.0f)
 		{
-			m_flStartSpin = 0.0f;
-			edict_t* edict = EdictFromEntvars(pev);
-			if (edict)
-				EngineEmitSound(edict, 3, kSndPing, TURRET_VOL, TURRET_ATTN_PING);
+			if (m_vecCurAngles[PITCH] > m_vecGoalAngles[PITCH])
+				m_vecCurAngles[PITCH] = m_vecGoalAngles[PITCH];
+		}
+		else
+		{
+			if (m_vecCurAngles[PITCH] < m_vecGoalAngles[PITCH])
+				m_vecCurAngles[PITCH] = m_vecGoalAngles[PITCH];
+		}
+
+		SetBoneController(pev, TURRET_CONTROLLER_PITCH, m_vecCurAngles[PITCH]);
+	}
+
+	if (m_vecGoalAngles[YAW] == m_vecCurAngles[YAW])
+		return;
+
+	// turn the short way around
+	float flDir = (m_vecGoalAngles[YAW] > m_vecCurAngles[YAW]) ? 1.0f : -1.0f;
+	if (fabsf(m_vecGoalAngles[YAW] - m_vecCurAngles[YAW]) > 180.0f)
+		flDir = -flDir;
+
+	m_vecCurAngles[YAW] = m_vecCurAngles[YAW] + flDir * TURRET_TURN_STEP;
+
+	if (m_vecCurAngles[YAW] < 0.0f)
+		m_vecCurAngles[YAW] = m_vecCurAngles[YAW] + 360.0f;
+	else if (m_vecCurAngles[YAW] > 360.0f)
+		m_vecCurAngles[YAW] = m_vecCurAngles[YAW] - 360.0f;
+
+	// close enough, snap to the goal
+	if (fabsf(m_vecCurAngles[YAW] - m_vecGoalAngles[YAW]) < TURRET_TURN_STEP / 2)
+		m_vecCurAngles[YAW] = m_vecGoalAngles[YAW];
+
+	float flValue = m_vecCurAngles[YAW] - m_flBaseYaw + 360.0f;
+	if (flValue > 360.0f)
+		flValue = flValue - 360.0f;
+
+	SetBoneController(pev, TURRET_CONTROLLER_YAW, flValue);
+}
+
+//=========================================================
+// ActiveThink - deployed and searching, pings once a
+// second. Spins up when it has an enemy.
+//=========================================================
+void CTurret::ActiveThink(CBaseEntity *pOther)
+{
+	pev->nextthink = gpGlobals->time + TURRET_THINK_INTERVAL;
+
+	float flTime = gpGlobals->time;
+	if (m_flPingTime != 0.0f)
+	{
+		if (flTime >= m_flPingTime)
+		{
+			m_flPingTime = 0.0f;
+			EMIT_SOUND(ENT(pev), CHAN_ITEM, "turret/tu_ping.wav", VOL_NORM, ATTN_IDLE);
 		}
 	}
 	else
 	{
-		m_flStartSpin = flTime + 1.0f;
+		m_flPingTime = flTime + 1.0f;
 	}
 
-	// validate / refresh the enemy (drop it once its health goes negative)
-	int enemyIndex = PevInt(pev, PEV_ENEMY);
-	if (enemyIndex)
-	{
-		edict_t* pEnemyEdict = EnginePEntityOfEntIndex(enemyIndex);
-		entvars_t* pevEnemy = pEnemyEdict ? EngineGetVarsOfEnt(pEnemyEdict) : NULL;
-		if (pevEnemy && *(unsigned int*)&PevFloat(pevEnemy, PEV_HEALTH) > 0x80000000)
-			PevInt(pev, PEV_ENEMY) = 0;
-	}
+	// forget a dead enemy
+	if (!FNullEnt(pev->enemy) && VARS(pev->enemy)->health < 0.0f)
+		pev->enemy = 0;
 
-	if (!PevInt(pev, PEV_ENEMY))
+	if (!pev->enemy)
 		FindEnemy();
 
-	if (PevInt(pev, PEV_ENEMY))
+	if (pev->enemy)
 	{
 		SetThink(&CTurret::SpinUpThink);
-		PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 1.4f;
+		pev->nextthink = gpGlobals->time + TURRET_SPINUP_DELAY;
 
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineEmitSound(edict, 3, kSndSpinUp, TURRET_VOL, TURRET_ATTN_NORM);
+		EMIT_SOUND(ENT(pev), CHAN_ITEM, "turret/tu_spinup.wav", VOL_NORM, ATTN_NORM);
 	}
 }
 
-//=========================================================
-// SpinUpThink
-// One-shot spin-up; hands off to the firing think.
-//=========================================================
-void CTurret::SpinUpThink(CBaseEntity* pOther)
+void CTurret::SpinUpThink(CBaseEntity *pOther)
 {
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + TURRET_THINK_FAST;
+	pev->nextthink = gpGlobals->time + TURRET_THINK_INTERVAL;
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 3, kSndActive, TURRET_VOL, TURRET_ATTN_NORM);
+	EMIT_SOUND(ENT(pev), CHAN_ITEM, "turret/tu_active.wav", VOL_NORM, ATTN_NORM);
 
-	AdvanceAnimation(TURRET_THINK_FAST);
+	AdvanceAnimation(TURRET_THINK_INTERVAL);
 
 	SetThink(&CTurret::FireThink);
 }
 
 //=========================================================
-// FireThink
-// Deployed and tracking.  Aims the two bone controllers at the
-// enemy and runs an inlined two-bullet burst (NOT FireBullets).
-// Spins down when the enemy dies or stays out of sight too long.
+// FireThink - aims at the enemy and fires two bullets a
+// think. Spins down when the enemy is dead or was out of
+// sight for too long.
 //=========================================================
-void CTurret::FireThink(CBaseEntity* pOther)
+void CTurret::FireThink(CBaseEntity *pOther)
 {
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + TURRET_THINK_FAST;
-	AdvanceAnimation(TURRET_THINK_FAST);
+	pev->nextthink = gpGlobals->time + TURRET_THINK_INTERVAL;
+	AdvanceAnimation(TURRET_THINK_INTERVAL);
 
-	edict_t* edict = EdictFromEntvars(pev);
-	void* globals = gpGlobals;
-
-	// no longer on, or no enemy -> spin down
-	if (!m_iOn || !PevInt(pev, PEV_ENEMY))
+	if (!m_iOn || !pev->enemy)
 	{
-		PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 1.0f;
-		if (edict)
-			EngineEmitSound(edict, 3, kSndSpinDown, TURRET_VOL, TURRET_ATTN_NORM);
+		pev->nextthink = gpGlobals->time + 1.0f;
+		EMIT_SOUND(ENT(pev), CHAN_ITEM, "turret/tu_spindown.wav", VOL_NORM, ATTN_NORM);
 		SetThink(&CTurret::ActiveThink);
 		return;
 	}
 
-	edict_t* pEnemyEdict = EnginePEntityOfEntIndex(PevInt(pev, PEV_ENEMY));
-	entvars_t* pevEnemy = pEnemyEdict ? EngineGetVarsOfEnt(pEnemyEdict) : NULL;
+	entvars_t *pevEnemy = VARS(pev->enemy);
+	Vector vecOrigin = pev->origin;
 
-	Vector vecOrigin = PevVector(pev, PEV_ORIGIN);
-
-	// dead (health <= 0) or sentinel health 80000.0 (0x479C4000) -> spin down.
-	// The binary `cmp [pevEnemy+0x108], 479C4000h` (80000 == the
-	// invulnerable/cycler health value), NOT 73728.0.
-	if (!pevEnemy
-		|| *(int*)&PevFloat(pevEnemy, PEV_HEALTH) <= 0
-		|| *(int*)&PevFloat(pevEnemy, PEV_HEALTH) == 0x479C4000)
+	if (pevEnemy->health <= 0.0f || pevEnemy->health == CYCLER_HEALTH)
 	{
-		PevInt(pev, PEV_ENEMY) = 0;
-		PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 1.0f;
-		if (edict)
-			EngineEmitSound(edict, 3, kSndSpinDown, TURRET_VOL, TURRET_ATTN_NORM);
+		pev->enemy = 0;
+		pev->nextthink = gpGlobals->time + 1.0f;
+		EMIT_SOUND(ENT(pev), CHAN_ITEM, "turret/tu_spindown.wav", VOL_NORM, ATTN_NORM);
 		SetThink(&CTurret::ActiveThink);
 		return;
 	}
 
-	Vector vecMid = PevVector(pevEnemy, PEV_ORIGIN);
+	Vector vecMid = pevEnemy->origin;
 
 	BOOL fVisible = FVisible(pev, pevEnemy);
 	if (fVisible)
 	{
-		// reset the out-of-sight grace timer; stash the sight position
 		m_flLastSight = 0.0f;
-		m_vecLastSight[0] = PevVector(pevEnemy, PEV_ORIGIN).x;
-		m_vecLastSight[1] = PevVector(pevEnemy, PEV_ORIGIN).y;
-		m_vecLastSight[2] = PevVector(pevEnemy, PEV_ORIGIN).z;
+		m_vecLastSight = pevEnemy->origin;
 	}
 	else
 	{
-		float flTime = GlobalsTime(globals);
-		if ((*(unsigned int*)&m_flLastSight & 0x7FFFFFFF) != 0)
+		float flTime = gpGlobals->time;
+		if (m_flLastSight != 0.0f)
 		{
 			if (flTime > m_flLastSight)
 			{
-				// lost sight for too long -> spin down
+				// out of sight for too long
 				m_flLastSight = 0.0f;
-				PevInt(pev, PEV_ENEMY) = 0;
-				PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 1.0f;
-				if (edict)
-					EngineEmitSound(edict, 3, kSndSpinDown, TURRET_VOL, TURRET_ATTN_NORM);
+				pev->enemy = 0;
+				pev->nextthink = gpGlobals->time + 1.0f;
+				EMIT_SOUND(ENT(pev), CHAN_ITEM, "turret/tu_spindown.wav", VOL_NORM, ATTN_NORM);
 				SetThink(&CTurret::ActiveThink);
 				return;
 			}
@@ -986,153 +791,100 @@ void CTurret::FireThink(CBaseEntity* pOther)
 		}
 	}
 
-	// raise the muzzle to the model's mid height
-	float midHeightAdj = PevVector(pev, PEV_MAXS).z - PevVector(pev, PEV_MINS).z;
-	if (m_iOrientation == 1)
-		vecOrigin.z = vecOrigin.z + midHeightAdj * -0.5f;
+	// shoot from half the model height
+	float flHeight = pev->maxs.z - pev->mins.z;
+	if (m_iOrientation == TURRET_ORIENT_CEILING)
+		vecOrigin.z = vecOrigin.z + flHeight * -0.5f;
 	else
-		vecOrigin.z = vecOrigin.z + midHeightAdj * 0.5f;
+		vecOrigin.z = vecOrigin.z + flHeight * 0.5f;
 
-	// aim at the enemy's center of mass (players are already eye-centered)
-	const char* enemyClass = EngineStringFromIndex(PevInt(pevEnemy, PEV_CLASSNAME));
-	if (enemyClass && strcmp(enemyClass, "player") != 0)
-		vecMid.z = vecMid.z + (PevVector(pevEnemy, PEV_MAXS).z - PevVector(pevEnemy, PEV_MINS).z) * 0.5f;
+	// aim at the middle of the enemy, at the origin of players
+	if (!FClassnameIs(pevEnemy, "player"))
+		vecMid.z = vecMid.z + (pevEnemy->maxs.z - pevEnemy->mins.z) * 0.5f;
 
-	float vecDirToEnemy[3];
-	vecDirToEnemy[0] = vecMid.x - vecOrigin.x;
-	vecDirToEnemy[1] = vecMid.y - vecOrigin.y;
-	vecDirToEnemy[2] = vecMid.z - vecOrigin.z;
-	float flDist = VecLength(vecDirToEnemy);
+	Vector vecDirToEnemy = vecMid - vecOrigin;
+	float flDist = vecDirToEnemy.Length();
 
-	float vecAngToEnemy[3];
-	EngineVecToAngles(vecDirToEnemy, vecAngToEnemy);
-	float flAimPitch = vecAngToEnemy[0];
-	float flAimYaw = vecAngToEnemy[1];
+	Vector vecAngToEnemy = UTIL_VecToAngles(vecDirToEnemy);
+	float flAimPitch = vecAngToEnemy.x;
+	float flAimYaw = vecAngToEnemy.y;
 
-	float flCurPitch = m_vecCurAngles[0];
-	float flCurYaw = m_vecCurAngles[1];
-	float flCurRoll = m_vecCurAngles[2];
+	float flCurPitch = m_vecCurAngles[PITCH];
+	float flCurYaw = m_vecCurAngles[YAW];
+	float flCurRoll = m_vecCurAngles[ROLL];
 
-	BOOL fShoot = 0;
-	if (fVisible && flDist < 1024.0f)
-		fShoot = 1;
+	BOOL fShoot = FALSE;
+	if (fVisible && flDist < TURRET_RANGE)
+		fShoot = TRUE;
 
-	// when firing (or always-on) build the engine vectors from the barrel angles
-	if (fShoot || m_iSpin)
+	// the bullets go where the barrel points
+	if (fShoot || m_fBerserk)
 	{
-		if (m_iOrientation == 1)
+		if (m_iOrientation == TURRET_ORIENT_CEILING)
 		{
 			flCurYaw = 180.0f - flCurYaw;
 			flCurPitch = -flCurPitch;
 		}
 
-		float vecBarrel[3];
-		vecBarrel[0] = flCurPitch;
-		vecBarrel[1] = flCurYaw;
-		vecBarrel[2] = flCurRoll;
-		EngineMakeVectors(vecBarrel);
+		UTIL_MakeVectors(Vector(flCurPitch, flCurYaw, flCurRoll));
 	}
 
-	// shoot gate: barrel must point within ~5.7 degrees of the enemy
-	if (fShoot)
+	// only shoot when the barrel points at the enemy
+	if (fShoot && DotProduct(gpGlobals->v_forward, vecDirToEnemy.Normalize()) <= 0.995f)
+		fShoot = FALSE;
+
+	if (fShoot || m_fBerserk)
 	{
-		float dir[3];
-		dir[0] = vecDirToEnemy[0];
-		dir[1] = vecDirToEnemy[1];
-		dir[2] = vecDirToEnemy[2];
+		SetTurretAnim(TURRET_SEQ_ACTIVE);
 
-		float len = VecLength(dir);
-		if (len == 0.0f)
-			VecSet(dir, 0.0f, 0.0f, 0.0f);
-		else
-			Vec3Scale(dir, dir, 1.0f / len);
-
-		const float* forward = GlobalsForward(globals);
-		if (forward)
-		{
-			float flDot = forward[0] * dir[0] + forward[1] * dir[1] + forward[2] * dir[2];
-			if (flDot <= 0.995f)
-				fShoot = 0;
-		}
-	}
-
-	if (fShoot || m_iSpin)
-	{
-		const float* forward = GlobalsForward(globals);
-		const float* right = GlobalsRight(globals);
-		const float* up = GlobalsUp(globals);
-
-		SetTurretAnim(1);
-
-		// muzzle source: 10u in front of the barrel, view-offset adjusted z
-		float vecSrc[3];
-		vecSrc[0] = (forward ? forward[0] : 0.0f) * 10.0f + vecOrigin.x;
-		vecSrc[1] = (forward ? forward[1] : 0.0f) * 10.0f + vecOrigin.y;
-		vecSrc[2] = vecOrigin.z - (PevVector(pev, PEV_VIEWOFS).z - 8.0f);
+		Vector vecSrc = gpGlobals->v_forward * 10.0f + vecOrigin;
+		vecSrc.z = vecOrigin.z - (pev->view_ofs.z - 8.0f);
 
 		ClearMultiDamage();
 
-		for (int iShotCount = 0; iShotCount < 2; iShotCount++)
+		for (int iShot = 0; iShot < 2; iShot++)
 		{
-			float flSpreadRight = RandomFloat(-1.0f, 1.0f) * 0.035f;
+			float flSpreadRight = RANDOM_FLOAT(-1.0f, 1.0f) * 0.035f;
+			Vector vecDir = vecDirToEnemy.Normalize();
+			float flSpreadUp = RANDOM_FLOAT(-1.0f, 1.0f) * 0.035f;
 
-			float dir[3];
-			dir[0] = vecDirToEnemy[0];
-			dir[1] = vecDirToEnemy[1];
-			dir[2] = vecDirToEnemy[2];
-			float len = VecLength(dir);
-			if (len == 0.0f)
-				VecSet(dir, 0.0f, 0.0f, 0.0f);
-			else
-				Vec3Scale(dir, dir, 1.0f / len);
-
-			float flSpreadUp = RandomFloat(-1.0f, 1.0f) * 0.035f;
-
-			float vecShot[3];
-			vecShot[0] = dir[0] + (right ? right[0] : 0.0f) * flSpreadRight + (up ? up[0] : 0.0f) * flSpreadUp;
-			vecShot[1] = dir[1] + (right ? right[1] : 0.0f) * flSpreadRight + (up ? up[1] : 0.0f) * flSpreadUp;
-			vecShot[2] = dir[2] + (right ? right[2] : 0.0f) * flSpreadRight + (up ? up[2] : 0.0f) * flSpreadUp;
-
-			float vecEnd[3];
-			vecEnd[0] = vecSrc[0] + vecShot[0] * 1024.0f;
-			vecEnd[1] = vecSrc[1] + vecShot[1] * 1024.0f;
-			vecEnd[2] = vecSrc[2] + vecShot[2] * 1024.0f;
+			Vector vecShot = vecDir + gpGlobals->v_right * flSpreadRight + gpGlobals->v_up * flSpreadUp;
 
 			TraceResult tr;
-			memset(&tr, 0, sizeof(tr));
-			EngineTraceLine(vecSrc, vecEnd, 1, edict, &tr);	// fNoMonsters=1
+			UTIL_TraceLine(vecSrc, vecSrc + vecShot * TURRET_RANGE, dont_ignore_monsters, ENT(pev), &tr);
 
-			int fSkipTracerEffects = 0;
-			m_iMuzzleFlash = (m_iMuzzleFlash + 1) % 4;
-			if (m_iMuzzleFlash == 3)
+			// every fourth bullet draws a tracer and leaves no hole
+			BOOL fTracer = FALSE;
+			m_iTracerCount = (m_iTracerCount + 1) % 4;
+			if (m_iTracerCount == 3)
 			{
-				fSkipTracerEffects = 1;
-				EngineWriteByte(0, TURRET_SVC_TEMPENTITY);
-				EngineWriteByte(0, TURRET_TE_TRACER);
-				EngineWriteCoord(0, vecSrc[0]);
-				EngineWriteCoord(0, vecSrc[1]);
-				EngineWriteCoord(0, vecSrc[2]);
-				EngineWriteCoord(0, tr.vecEndPos[0]);
-				EngineWriteCoord(0, tr.vecEndPos[1]);
-				EngineWriteCoord(0, tr.vecEndPos[2]);
+				fTracer = TRUE;
+
+				WRITE_BYTE(MSG_BROADCAST, SVC_TEMPENTITY);
+				WRITE_BYTE(MSG_BROADCAST, TE_TRACER);
+				WRITE_COORD(MSG_BROADCAST, vecSrc.x);
+				WRITE_COORD(MSG_BROADCAST, vecSrc.y);
+				WRITE_COORD(MSG_BROADCAST, vecSrc.z);
+				WRITE_COORD(MSG_BROADCAST, tr.vecEndPos.x);
+				WRITE_COORD(MSG_BROADCAST, tr.vecEndPos.y);
+				WRITE_COORD(MSG_BROADCAST, tr.vecEndPos.z);
 			}
 
 			if (tr.flFraction != 1.0f)
-				ImpactEffects(pev, 2.0f, fSkipTracerEffects, vecShot, &tr);
+				ImpactEffects(pev, TURRET_BULLET_DAMAGE, fTracer, vecShot, &tr);
 		}
 
 		ApplyMultiDamage(pev);
 
-		if (edict)
-			EngineEmitSound(edict, 1, kSndFire, TURRET_VOL, TURRET_ATTN_NORM);
+		EMIT_SOUND(ENT(pev), CHAN_WEAPON, "turret/tu_fire1.wav", VOL_NORM, ATTN_NORM);
 
-		// scatter the model slightly when in always-on mode, then skip aiming
-		if (m_iSpin)
+		// berserk: shake the gun around instead of aiming
+		if (m_fBerserk)
 		{
-			float flYaw = (float)(255 * rand() / 32767);
-			SetBoneController(pev, 0, flYaw);
-			float flPitch = (float)(85 * rand() / -32767);
-			SetBoneController(pev, 1, flPitch);
+			float flYaw = (float)(255 * rand() / RAND_MAX);
+			SetBoneController(pev, TURRET_CONTROLLER_YAW, flYaw);
+			float flPitch = (float)(85 * rand() / -RAND_MAX);
+			SetBoneController(pev, TURRET_CONTROLLER_PITCH, flPitch);
 
 			MoveTurret();
 			return;
@@ -1141,27 +893,28 @@ void CTurret::FireThink(CBaseEntity* pOther)
 
 	if (fVisible)
 	{
-		// aim the controllers toward where the enemy is
+		// aim at the enemy
 		float flYaw = flAimYaw;
 		float flPitch = flAimPitch;
 
-		if (m_iOrientation == 1)
+		if (m_iOrientation == TURRET_ORIENT_CEILING)
 			flYaw = 180.0f - flYaw;
-		if (*(int*)&flYaw > 0x43B40000)		// > 360.0
+		if (flYaw > 360.0f)
 			flYaw = flYaw - 360.0f;
-		if (*(unsigned int*)&flYaw > 0x80000000)
+		if (flYaw < 0.0f)
 			flYaw = flYaw + 360.0f;
 
-		if (m_iOrientation != 1)
+		if (m_iOrientation != TURRET_ORIENT_CEILING)
 			flPitch = -flPitch;
-		if (*(unsigned int*)&flPitch > 0x80000000)
+		if (flPitch < 0.0f)
 			flPitch = flPitch + 360.0f;
-		if (*(int*)&flPitch > 0x43B40000)	// > 360.0
+		if (flPitch > 360.0f)
 			flPitch = flPitch - 360.0f;
 
-		if (*(int*)&flPitch >= 0x43070000)	// >= 135.0
+		// the gun only pitches between 275 and 360
+		if (flPitch >= 135.0f)
 		{
-			if (*(int*)&flPitch < 0x43898000)	// < 275.0
+			if (flPitch < 275.0f)
 				flPitch = 275.0f;
 		}
 		else
@@ -1169,152 +922,88 @@ void CTurret::FireThink(CBaseEntity* pOther)
 			flPitch = 360.0f;
 		}
 
-		m_vecGoalAngles[1] = flYaw;
-		m_vecGoalAngles[0] = flPitch;
+		m_vecGoalAngles[YAW] = flYaw;
+		m_vecGoalAngles[PITCH] = flPitch;
 	}
 
 	MoveTurret();
 }
 
 //=========================================================
-// Use
-// Toggle the turret between deployed (active) and retracted.
+// Use - switches the turret on (deploy) or off (retract)
 //=========================================================
-void CTurret::Use(CBaseEntity* pOther)
+void CTurret::Use(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
-
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + TURRET_THINK_FAST;
+	pev->nextthink = gpGlobals->time + TURRET_THINK_INTERVAL;
 
 	if (m_iOn)
 	{
-		// turning off -> retract
 		m_iOn = 0;
 		m_flLastSight = 0.0f;
-		PevInt(pev, PEV_ENEMY) = 0;
+		pev->enemy = 0;
 
-		m_vecCurAngles[1] = m_vecGoalAngles[1];
-		m_vecGoalAngles[0] = 360.0f;
+		m_vecCurAngles[YAW] = m_vecGoalAngles[YAW];
+		m_vecGoalAngles[PITCH] = 360.0f;
 
 		SetThink(&CTurret::RetractThink);
 	}
 	else
 	{
-		// turning on -> deploy
 		m_iOn = 1;
-
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineEmitSound(edict, 3, kSndAlert, TURRET_VOL, TURRET_ATTN_NORM);
+		EMIT_SOUND(ENT(pev), CHAN_ITEM, "turret/tu_alert.wav", VOL_NORM, ATTN_NORM);
 
 		SetThink(&CTurret::DeployThink);
-		PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + TURRET_DEPLOY_DELAY;
+		pev->nextthink = gpGlobals->time + TURRET_DEPLOY_DELAY;
 	}
 }
 
-//=========================================================
-// Death - vtable slot 14
-// The turret death is handled in TakeDamage; the virtual death
-// hook simply stops thinking.
-//=========================================================
-void CTurret::Death(int gibType)
+void CTurret::Death(int iDeathType)
 {
-	HL_UNUSED(gibType);
-
 	SetThink(&CBaseEntity::SUB_DoNothing);
 }
 
 //=========================================================
-// TakeDamage
+// TakeDamage - a badly damaged turret may go berserk
 //=========================================================
-int CTurret::TakeDamage(entvars_t* inflictor, entvars_t* attacker, float damage)
+int CTurret::TakeDamage(entvars_t *pevInflictor, entvars_t *pevAttacker, float flDamage)
 {
-	if (!pev)
-		return 0;
+	pev->health = pev->health - flDamage;
 
-	PevFloat(pev, PEV_HEALTH) = PevFloat(pev, PEV_HEALTH) - damage;
-
-	if (PevFloat(pev, PEV_HEALTH) > 0.0f)
+	if (pev->health > 0.0f)
 	{
-		// low on health: chance to kick into always-on fire mode
-		if (PevFloat(pev, PEV_HEALTH) <= 10.0f)
+		if (pev->health <= 10.0f)
 		{
 			if (rand() > 800)
 			{
-				m_iSpin = 1;
-				SetTurretAnim(1);
+				m_fBerserk = 1;
+				SetTurretAnim(TURRET_SEQ_ACTIVE);
 				SetThink(&CTurret::ActiveThink);
 			}
 		}
 
-		HL_UNUSED(inflictor);
 		return 1;
 	}
 
-	// dead -> play a random death sound, clear FL_MONSTER, run the
-	// shared Killed/gib path.
-	float rnd = RandomFloat(0.0f, 1.0f);
-	edict_t* edict = EdictFromEntvars(pev);
+	float flRandom = RANDOM_FLOAT(0.0f, 1.0f);
+	const char *pszSound;
 
-	if (edict)
-	{
-		const char* sound;
-		if (rnd <= 0.33f)
-			sound = kSndDie;
-		else if (rnd <= 0.66f)
-			sound = kSndDie2;
-		else
-			sound = kSndDie3;
+	if (flRandom <= 0.33f)
+		pszSound = "turret/tu_die.wav";
+	else if (flRandom <= 0.66f)
+		pszSound = "turret/tu_die2.wav";
+	else
+		pszSound = "turret/tu_die3.wav";
 
-		EngineEmitSound(edict, 3, sound, TURRET_VOL, TURRET_ATTN_NORM);
-	}
+	EMIT_SOUND(ENT(pev), CHAN_ITEM, pszSound, VOL_NORM, ATTN_NORM);
 
-	SetTurretAnim(0);
+	SetTurretAnim(TURRET_SEQ_IDLE);
 
-	// flags &= ~FL_MONSTER (0x20)
-	{
-		float& flags = PevFloat(pev, PEV_FLAGS);
-		flags = (float)((int)flags & ~0x20);
-	}
+	pev->flags = (float)((int)pev->flags & ~FL_MONSTER);
 
-	// The original tail-calls the shared monster Killed/gib routine
-	// with the attacker's entity index.
-	{
-		edict_t* attackerEdict = EdictFromEntvars(attacker);
-		Killed(EngineIndexOfEdict(attackerEdict));
-	}
+	edict_t *pentAttacker = pevAttacker ? ENT(pevAttacker) : NULL;
+	Killed(OFFSET(pentAttacker));
 
-	HL_UNUSED(inflictor);
 	return 1;
 }
 
-//=========================================================
-// monster_turret (export)
-//=========================================================
-DLLEXPORT void monster_turret(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 420);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 420);
-
-		CTurret* monster = new (privateData) CTurret();
-		monster->pev = entvars;
-		gpGlobals = entvars->pSystemGlobals;
-	}
-}
+LINK_ENTITY_TO_CLASS(monster_turret, CTurret);

@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,355 +12,212 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// Triggers - brush trigger entities (trigger_* family),
-// multi_manager, func_friction and func_ladder.
-//
-// Every class here derives from the shared brush-entity
-// foundation in cbase_toggle.h:
-//   CBaseTrigger : CBaseToggle : CBaseDelay : CBaseEntity
-//
-// InitTrigger, SetMovedir, SUB_UseTargets, LinearMove and the
-// KeyValue chain are reused from the foundation - they are not
-// reimplemented here.
+// Triggers - brush trigger volumes (trigger_*), the
+// multi_manager, func_friction and func_ladder
 //=========================================================
 
-// ChangeLevelTouch copies the destination map / landmark names with strcpy, exactly
-// as the original the binary does (into fixed-size buffers). Silence the CRT C4996
-// deprecation nag rather than diverge from the byte-faithful copy.
-#define _CRT_SECURE_NO_WARNINGS
-#include <new>
-#include <string.h>
-#include <stdlib.h>
-#include "cbase_toggle.h"
-#include "enginefuncs.h"
-#include "hl_exports.h"
-#include "utils.h"
+#define _CRT_SECURE_NO_WARNINGS		// strcpy
 
-//=========================================================
-// pev byte offsets used by the trigger family that are not
-// already named in utils.h.
-//   116 - globals 'other' ent index (toucher), threaded by the
-//         engine before a Touch dispatch (== GLOBALS_OTHER_ENTINDEX)
-//   496 - pev->speed for trigger_push (shares the door dmgtime slot)
-//=========================================================
-enum
-{
-	PEV_PUSH_SPEED		= 496,	// trigger_push glide speed
-	PEV_NOISE			= 480,	// pev->noise (trigger arrival sound; distinct from
-								// pev->noiseMoving at 484 used by the door family)
-};
+#include "extdll.h"
+#include "util.h"
+#include "cbase.h"
+#include "player.h"
 
-enum
-{
-	GLOBALS_OTHER_ENT	= 116,	// index of the entity that touched us
-	GLOBALS_FORWARD		= 240,	// gpGlobals->v_forward (from MakeVectors)
-};
+// spawnflags
+#define SF_TRIGGER_NOTOUCH			1		// trigger_multiple: not fired by touch
+#define SF_COUNTER_NOMESSAGE		1		// trigger_counter: no progress messages
+#define SF_TRIGGER_PUSH_ONCE		1		// trigger_push: removed after the first push
+#define SF_TRIGGER_PUSH_START_OFF	2		// trigger_push: starts turned off
 
-//=========================================================
-// Spawnflag bits.
-//=========================================================
-#define SF_TRIGGER_ALLOWMONSTERS	1	// monsters allowed to fire this trigger
-#define SF_TRIGGER_PUSH_ONCE		1	// trigger_push removes itself after one push
-#define SF_TRIGGER_PUSH_START_OFF	2	// trigger_push starts disabled
+#define MULTI_DEFAULT_WAIT			0.2f	// trigger_multiple: time before it can fire again
+#define HURT_DAMAGE_INTERVAL		0.5f	// trigger_hurt: time between two damages
+#define MONSTERJUMP_SPEED			200.0f	// trigger_monsterjump: toss speed along movedir
+#define MONSTERJUMP_HEIGHT			150.0f	// trigger_monsterjump: upward toss speed
+#define COUNTER_DEFAULT_COUNT		2		// trigger_counter: uses needed to fire
+#define PUSH_DEFAULT_SPEED			1000.0f
+#define PUSH_SPEED_SCALE			10.0f	// trigger_push velocity is speed * 10
+#define LANDMARK_SEARCH_RADIUS		255.0f	// info_landmark search around a trigger_changelevel
 
-//=========================================================
-// SOLID_* / MOVETYPE_* values stored in pev as floats.
-//=========================================================
+#define CDAUDIO_TRACK_STOP			-1		// trigger_cdaudio track that stops the CD
+#define CDAUDIO_MAX_TRACK			12
 
+#define cchMapNameMost				64
+#define MAX_MULTI_TARGETS			16		// maximum number of targets a single multi_manager entity may be assigned.
 
-
-
-
-//=========================================================
-// Vtable Use slot offset (binary CBaseEntity layout): the
-// 8th dword (Spawn,KeyValue,?,Save,Restore,Think,Touch,Use).
-//=========================================================
-#define VTABLE_USE_OFFSET	28
-
-//=========================================================
-// Strings referenced by this module.
-//=========================================================
-static const char kNullSound[]		= "common/null.wav";
-static const char kPlayer[]			= "player";
-static const char kProbeDroid[]		= "monster_probedroid";
-static const char kTriggerSecret[]	= "trigger_secret";
-static const char kInfoLandmark[]	= "info_landmark";
-static const char kClassChangelevel[]	= "trigger_changelevel";
-
-//=========================================================
-// Default tunables (exact bit patterns from the decompiles).
-//   0.2  = 0x3E4CCCCD  - trigger_multiple default re-trigger wait
-//  -1.0  = 0xBF800000  - one-shot wait (fires once)
-//=========================================================
-#define MULTI_DEFAULT_WAIT		0.2f
-#define ONESHOT_WAIT			(-1.0f)
-
-//=========================================================
-// Global activator slot used by target firing.  The binary stashes the firing
-// player's ent index here between multi-trigger firing, CounterUse calls, and
-// rotating-door side tests.
-//=========================================================
+// activator of the last trigger that fired, read by trigger_counter and the rotating doors
 int g_CounterActivatorIndex = 0;
 
-// Destination-map name buffer handed to the engine ChangeLevel (the binary
-// writes it during ChangeLevelTouch and passes it as arg1 to ChangeLevel).
-static char g_szChangeMapName[64];
-
-// Resolve the toucher (gpGlobals->other) into its CBaseEntity*,
-// or NULL.  Mirrors the PEntityOfEntIndex / GetVarsOfEnt pair the
-// touch handlers run before checking the toucher's classname.
 //=========================================================
-static entvars_t* OtherVars(void* globals)
+// TriggerKeyValue - the keys shared by the trigger_*
+// entities. "delay" is whole seconds only.
+//=========================================================
+static void TriggerKeyValue(CBaseTrigger *pTrigger, entvars_t *pev, float &flWait, int &cTriggersLeft, KeyValueData *pkvd)
 {
-	if (!globals)
-		return NULL;
-
-	int otherIndex = *GlobalsInt(globals, GLOBALS_OTHER_ENT);
-	edict_t* pEdict = EnginePEntityOfEntIndex(otherIndex);
-	return pEdict ? EngineGetVarsOfEnt(pEdict) : NULL;
-}
-
-//=========================================================
-// True if the named entity's pev->classname matches sz.
-//=========================================================
-static int ClassNameIs(entvars_t* pev, const char* sz)
-{
-	if (!pev)
-		return 0;
-
-	const char* name = EngineStringFromIndex(PevInt(pev, PEV_CLASSNAME));
-	return name && strcmp(name, sz) == 0;
-}
-
-//=========================================================
-// CBaseTrigger::KeyValue
-//
-// The trigger family adds "wait","damage","count" on top of the
-// CBaseDelay "delay" key.  "damage" is stored as pev->dmg.
-// "delay" is truncated to an int before being stored as a float
-// (matching the binary exactly).
-//=========================================================
-static void TriggerKeyValue(CBaseTrigger* self, entvars_t* pev, float& waitField, int& countField, KeyValueData* pkvd)
-{
-	if (strcmp(pkvd->szKeyName, "wait") == 0)
+	if (FStrEq(pkvd->szKeyName, "wait"))
 	{
-		waitField = (float)atof(pkvd->szValue);
-		pkvd->fHandled = 1;
+		flWait = (float)atof(pkvd->szValue);
+		pkvd->fHandled = TRUE;
 	}
 
-	if (strcmp(pkvd->szKeyName, "damage") == 0)
+	if (FStrEq(pkvd->szKeyName, "damage"))
 	{
-		PevFloat(pev, PEV_DMG) = (float)atof(pkvd->szValue);
-		pkvd->fHandled = 1;
+		pev->dmg = (float)atof(pkvd->szValue);
+		pkvd->fHandled = TRUE;
 	}
-	else if (strcmp(pkvd->szKeyName, "count") == 0)
+	else if (FStrEq(pkvd->szKeyName, "count"))
 	{
-		countField = (int)atof(pkvd->szValue);
-		pkvd->fHandled = 1;
+		cTriggersLeft = (int)atof(pkvd->szValue);
+		pkvd->fHandled = TRUE;
 	}
-	else if (strcmp(pkvd->szKeyName, "delay") == 0)
+	else if (FStrEq(pkvd->szKeyName, "delay"))
 	{
-		// delay is intentionally truncated to a whole second here.
-		float& delayField = *(float*)((unsigned char*)self + 28);
-		delayField = (float)(int)atof(pkvd->szValue);
-		pkvd->fHandled = 1;
+		pTrigger->m_flDelay = (float)(int)atof(pkvd->szValue);
+		pkvd->fHandled = TRUE;
 	}
 }
 
 //=========================================================
-// CBaseTrigger (the bare "trigger" export) - the binary wraps
-// CBaseToggle with the trigger KeyValue handler and no Spawn.
+// trigger - reads the trigger keys but has no behaviour
+// of its own
 //=========================================================
 class CTrigger : public CBaseTrigger
 {
 public:
-	void KeyValue(KeyValueData* pkvd);
+	void KeyValue(KeyValueData *pkvd);
 };
 
-void CTrigger::KeyValue(KeyValueData* pkvd)
+LINK_ENTITY_TO_CLASS(trigger, CTrigger);
+
+void CTrigger::KeyValue(KeyValueData *pkvd)
 {
 	TriggerKeyValue(this, pev, m_flWait, m_cTriggersLeft, pkvd);
 }
 
 //=========================================================
-// CTriggerMultiple - trigger_multiple / trigger_once
-//
-// Spawn precaches the null sound, defaults wait to
-// 0.2s, runs InitTrigger and (unless the allow-monsters flag is
-// set) parks MultiTouch. trigger_once is the same
-// entity with wait forced to -1 so it fires a single time.
+// trigger_multiple - fires its targets when the player
+// touches it, then waits m_flWait seconds before it can
+// fire again
 //=========================================================
 class CTriggerMultiple : public CBaseTrigger
 {
 public:
 	void Spawn();
-	void KeyValue(KeyValueData* pkvd);
+	void KeyValue(KeyValueData *pkvd);
 
-	void MultiTouch(CBaseEntity* pOther);
+	void MultiTouch(CBaseEntity *pOther);
 	void ActivateMultiTrigger();
-	void MultiWaitOver(CBaseEntity* pOther);
-	void MultiClear(CBaseEntity* pOther);
+	void MultiWaitOver(CBaseEntity *pOther);
 };
 
-void CTriggerMultiple::KeyValue(KeyValueData* pkvd)
+LINK_ENTITY_TO_CLASS(trigger_multiple, CTriggerMultiple);
+
+void CTriggerMultiple::KeyValue(KeyValueData *pkvd)
 {
 	TriggerKeyValue(this, pev, m_flWait, m_cTriggersLeft, pkvd);
 }
 
 //=========================================================
-// CTriggerMultiple::ActivateMultiTrigger
-//
-// Fire the trigger's targets, optionally announcing a found
-// secret, then either disable until the wait expires (MultiWaitOver)
-// or remove ourselves (one-shot path).
+// ActivateMultiTrigger - counts a found secret, fires the
+// targets, then waits m_flWait seconds or, without a wait,
+// removes the trigger
 //=========================================================
 void CTriggerMultiple::ActivateMultiTrigger()
 {
-	void* globals = gpGlobals;
+	if (gpGlobals->time < pev->nextthink)
+		return;		// still waiting for reactivation
 
-	// only fire once we have passed the re-trigger time stored in
-	// pev->nextthink
-	if (GlobalsTime(globals) < PevFloat(pev, PEV_NEXTTHINK))
-		return;
-
-	// secret-found bookkeeping
-	if (ClassNameIs(pev, kTriggerSecret))
+	if (FClassnameIs(pev, "trigger_secret"))
 	{
-		int enemyIndex = PevInt(pev, PEV_ENEMY);
-		edict_t* pEdict = EnginePEntityOfEntIndex(enemyIndex);
-		entvars_t* pevEnemy = pEdict ? EngineGetVarsOfEnt(pEdict) : NULL;
-		if (!ClassNameIs(pevEnemy, kPlayer))
+		if (!FClassnameIs(VARS(pev->enemy), "player"))
 			return;
 
-		// gpGlobals->found_secrets++ (globals + 168)
-		float& foundSecrets = *(float*)((unsigned char*)globals + 168);
-		foundSecrets = foundSecrets + 1.0f;
-
-		// MESSAGE_BEGIN-style note that a secret was found
-		EngineWriteByte(2, 28);
+		gpGlobals->found_secrets++;
+		WRITE_BYTE(MSG_ALL, SVC_FOUNDSECRET);
 	}
 
-	// play the noise/arrival sound if one was bound
-	int noise = PevInt(pev, PEV_NOISE);
-	if (noise)
+	if (pev->noise)
 	{
-		edict_t* edict = EdictFromEntvars(pev);
-		const char* sample = EngineStringFromIndex(noise);
-		EngineEmitSound(edict, 2, sample, 1.0f, 0.8f);
+		edict_t *pent = ENT(pev);
+		EMIT_SOUND(pent, CHAN_VOICE, STRING(pev->noise), VOL_NORM, ATTN_NORM);
 	}
 
-	// remember the activator for SUB_UseTargets to thread through
-	g_CounterActivatorIndex = PevInt(pev, PEV_ENEMY);
+	g_CounterActivatorIndex = pev->enemy;
 
 	SUB_UseTargets();
 
 	if (m_flWait <= 0.0f)
 	{
-		// one-shot: hand off to RemoveEntity on the next think
+		// this is a touch function: remove the trigger on the next think
 		SetTouch(NULL);
-		PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
+		pev->nextthink = gpGlobals->time + 0.1f;
 		SetThink(&CBaseEntity::SUB_Remove);
 	}
 	else
 	{
-		// re-arm after m_flWait seconds
 		SetThink(&CTriggerMultiple::MultiWaitOver);
-		PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + m_flWait;
+		pev->nextthink = gpGlobals->time + m_flWait;
 	}
 }
 
-//=========================================================
-// CTriggerMultiple::MultiWaitOver
-//
-// Clear the think callback so the trigger can fire again.
-//=========================================================
-void CTriggerMultiple::MultiWaitOver(CBaseEntity* pOther)
+void CTriggerMultiple::MultiWaitOver(CBaseEntity *pOther)
 {
 	SetThink(NULL);
 }
 
 //=========================================================
-// CTriggerMultiple::MultiClear
-//
-// One-shot tear-down: remove the trigger entity.
+// MultiTouch - only the player fires it. With a movedir,
+// the player must also be facing that way.
 //=========================================================
-void CTriggerMultiple::MultiClear(CBaseEntity* pOther)
+void CTriggerMultiple::MultiTouch(CBaseEntity *pOther)
 {
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineRemoveEntity(edict);
-}
+	entvars_t *pevOther = VARS(gpGlobals->other);
 
-//=========================================================
-// CTriggerMultiple::MultiTouch
-//
-// Only players (and probe droids) trip the trigger.  If the
-// trigger has a movedir the toucher must be facing roughly the
-// same way (DotProduct(movedir, toucher v_forward) >= 0) before
-// it fires.
-//=========================================================
-void CTriggerMultiple::MultiTouch(CBaseEntity* pOther)
-{
-	HL_UNUSED(pOther);
-
-	entvars_t* pevOther = OtherVars(gpGlobals);
-	if (!ClassNameIs(pevOther, kPlayer))
+	if (!FClassnameIs(pevOther, "player"))
 		return;
 
-	if (!ClassNameIs(pevOther, kPlayer) && !ClassNameIs(pevOther, kProbeDroid))
+	// monster_probedroid is already turned away above
+	if (!FClassnameIs(pevOther, "player") && !FClassnameIs(pevOther, "monster_probedroid"))
 		return;
 
-	Vector& movedir = PevVector(pev, PEV_MOVEDIR);
-	int hasDir = 0;
-	if (movedir.x != 0.0f || movedir.y != 0.0f || movedir.z != 0.0f)
-		hasDir = 1;
+	const Vector &vecMoveDir = pev->movedir;
+	BOOL fFire = FALSE;
 
-	int fire = 0;
-	if (!hasDir)
+	if (vecMoveDir == g_vecZero)
 	{
-		fire = 1;
+		fFire = TRUE;
 	}
 	else
 	{
-		// MakeVectors(toucher->angles) -> gpGlobals->v_forward
-		Vector& otherAngles = PevVector(pevOther, PEV_ANGLES);
-		EngineMakeVectors(VecPtr(otherAngles));
-
-		const float* forward = GlobalsForward(gpGlobals);
-		float dot = movedir.x * forward[0] + movedir.y * forward[1] + movedir.z * forward[2];
-		if (dot >= 0.0f)
-			fire = 1;
+		UTIL_MakeVectors(pevOther->angles);
+		if (DotProduct(vecMoveDir, gpGlobals->v_forward) >= 0.0f)
+			fFire = TRUE;
 	}
 
-	if (fire)
+	if (fFire)
 	{
-		// record the toucher as the trigger's enemy/activator
-		PevInt(pev, PEV_ENEMY) = *GlobalsInt(gpGlobals, GLOBALS_OTHER_ENT);
+		pev->enemy = gpGlobals->other;
 		ActivateMultiTrigger();
 	}
 }
 
-//=========================================================
-// CTriggerMultiple::Spawn
-//=========================================================
 void CTriggerMultiple::Spawn()
 {
-	EnginePrecacheSound(kNullSound);
-	PevInt(pev, PEV_NOISE) = EngineAllocString(kNullSound);
+	PRECACHE_SOUND("common/null.wav");
+	pev->noise = ALLOC_STRING("common/null.wav");
 
-	if (((*(int*)&m_flWait) & 0x7FFFFFFF) == 0)
+	if (m_flWait == 0.0f)
 		m_flWait = MULTI_DEFAULT_WAIT;
 
 	InitTrigger();
 
-	if (((int)PevFloat(pev, PEV_SPAWNFLAGS) & SF_TRIGGER_ALLOWMONSTERS) == 0)
+	if (!((int)pev->spawnflags & SF_TRIGGER_NOTOUCH))
 		SetTouch(&CTriggerMultiple::MultiTouch);
 }
 
 //=========================================================
-// trigger_once shares CTriggerMultiple but forces wait to -1.
+// trigger_once - a trigger_multiple that removes itself
+// after firing
 //=========================================================
 class CTriggerOnce : public CTriggerMultiple
 {
@@ -368,189 +225,123 @@ public:
 	void Spawn();
 };
 
+LINK_ENTITY_TO_CLASS(trigger_once, CTriggerOnce);
+
 void CTriggerOnce::Spawn()
 {
-	m_flWait = ONESHOT_WAIT;
+	m_flWait = -1.0f;
 	CTriggerMultiple::Spawn();
 }
 
 //=========================================================
-// CTriggerHurt - trigger_hurt (Spawn @)
-//
-// A trigger that damages whatever touches it.  When it has a
-// targetname it can be toggled on/off through ToggleUse; otherwise
-// its Use slot is empty (the binary installs an empty stub).
+// trigger_hurt - damages whatever touches it. A named
+// trigger_hurt is switched on and off by its Use.
 //=========================================================
 class CTriggerHurt : public CBaseTrigger
 {
 public:
 	void Spawn();
-	void KeyValue(KeyValueData* pkvd);
+	void KeyValue(KeyValueData *pkvd);
 
-	void HurtTouch(CBaseEntity* pOther);
-	void ToggleUse(CBaseEntity* pOther);
+	void HurtTouch(CBaseEntity *pOther);
+	void ToggleUse(CBaseEntity *pOther);
 };
 
-void CTriggerHurt::KeyValue(KeyValueData* pkvd)
+LINK_ENTITY_TO_CLASS(trigger_hurt, CTriggerHurt);
+
+void CTriggerHurt::KeyValue(KeyValueData *pkvd)
 {
 	TriggerKeyValue(this, pev, m_flWait, m_cTriggersLeft, pkvd);
 }
 
 //=========================================================
-// CTriggerHurt::HurtTouch
-//
-// Damage the toucher (if it can take damage) at most twice a
-// second.  The re-arm time lives in the object's offset-28 slot,
-// the same slot the "delay" key writes.
+// HurtTouch - m_flDelay holds the time of the next damage
 //=========================================================
-void CTriggerHurt::HurtTouch(CBaseEntity* pOther)
+void CTriggerHurt::HurtTouch(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
+	entvars_t *pevOther = VARS(gpGlobals->other);
 
-	entvars_t* pevOther = OtherVars(gpGlobals);
-	if (!pevOther)
+	if (pevOther->takedamage == DAMAGE_NO)
 		return;
 
-	// only damage things that take damage
-	if (((*(int*)&PevFloat(pevOther, PEV_TAKEDAMAGE)) & 0x7FFFFFFF) == 0)
+	if (m_flDelay > gpGlobals->time)
 		return;
 
-	// throttle: re-arm time stored at object offset 28
-	float& flNextDmgTime = *(float*)((unsigned char*)this + 28);
-	if (flNextDmgTime > GlobalsTime(gpGlobals))
-		return;
+	CBaseEntity *pEntity = CBaseEntity::Instance(pevOther);
+	if (pEntity)
+		pEntity->TakeDamage(pev, pev, pev->dmg);
 
-	edict_t* pOtherEdict = EdictFromEntvars(pevOther);
-	void* priv = pOtherEdict ? EngineGetPrivateData(pOtherEdict) : NULL;
-	if (priv)
-	{
-		CBaseEntity* pEntity = (CBaseEntity*)priv;
-		pEntity->TakeDamage(pev, pev, PevFloat(pev, PEV_DMG));
-	}
-
-	// advance the re-arm time by half a second (the binary adds to the
-	// existing value, it does not reset it from the current game time).
-	flNextDmgTime = flNextDmgTime + 0.5f;
+	m_flDelay += HURT_DAMAGE_INTERVAL;
 }
 
-//=========================================================
-// CTriggerHurt::ToggleUse
-//
-// Flip the brush between SOLID_TRIGGER and SOLID_NOT so a named
-// trigger_hurt can be switched on and off.
-//=========================================================
-void CTriggerHurt::ToggleUse(CBaseEntity* pOther)
+void CTriggerHurt::ToggleUse(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
-
-	float& solid = PevFloat(pev, PEV_SOLID);
-	if (((*(int*)&solid) & 0x7FFFFFFF) == 0)
-		solid = SOLID_TRIGGER;
+	if (pev->solid == SOLID_NOT)
+		pev->solid = SOLID_TRIGGER;
 	else
-		solid = SOLID_NOT;
+		pev->solid = SOLID_NOT;
 }
 
-//=========================================================
-// CTriggerHurt::Spawn
-//
-// A named trigger_hurt gets ToggleUse so it can be switched on
-// and off; an un-named one gets an empty Use, reached here by
-// installing a NULL use callback.
-//=========================================================
 void CTriggerHurt::Spawn()
 {
 	InitTrigger();
-
 	SetTouch(&CTriggerHurt::HurtTouch);
 
-	if (PevInt(pev, PEV_TARGETNAME) != 0)
+	if (!FStringNull(pev->targetname))
 		SetUse(&CTriggerHurt::ToggleUse);
 	else
 		SetUse(&CBaseEntity::SUB_DoNothing);
 }
 
 //=========================================================
-// CTriggerMonsterJump - trigger_monsterjump
-//
-// A trigger zone that launches monsters into a fixed jump.  The
-// touch handler does the launch; the use handler toggles the
-// brush solid (so a named jump pad can be switched on/off).
+// trigger_monsterjump - tosses the monsters that touch it
+// along movedir
 //=========================================================
 class CTriggerMonsterJump : public CBaseTrigger
 {
 public:
 	void Spawn();
-	void KeyValue(KeyValueData* pkvd);
+	void KeyValue(KeyValueData *pkvd);
 
-	void JumpTouch(CBaseEntity* pOther);
-	void ToggleUse(CBaseEntity* pOther);
+	void JumpTouch(CBaseEntity *pOther);
+	void ToggleUse(CBaseEntity *pOther);
 };
 
-void CTriggerMonsterJump::KeyValue(KeyValueData* pkvd)
+LINK_ENTITY_TO_CLASS(trigger_monsterjump, CTriggerMonsterJump);
+
+void CTriggerMonsterJump::KeyValue(KeyValueData *pkvd)
 {
 	TriggerKeyValue(this, pev, m_flWait, m_cTriggersLeft, pkvd);
 }
 
-//=========================================================
-// CTriggerMonsterJump::JumpTouch
-//
-// If the toucher is on the ground, launch it: bump its jump
-// count, clear the onground flag, and set velocity to
-// movedir*speed with the configured upward height added in.
-//=========================================================
-void CTriggerMonsterJump::JumpTouch(CBaseEntity* pOther)
+void CTriggerMonsterJump::JumpTouch(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
+	entvars_t *pevOther = VARS(gpGlobals->other);
 
-	entvars_t* pevOther = OtherVars(gpGlobals);
-	if (!pevOther)
-		return;
+	if (!((int)pevOther->flags & FL_MONSTER))
+		return;		// touched by a non-monster
 
-	// FL_ONGROUND (bit 0x20) on pev->flags (offset 380 = float index 95)
-	float& flags = PevFloat(pevOther, PEV_FLAGS);
-	if (((int)flags & 0x20) == 0)
-		return;
+	// lift it off the ground
+	pevOther->origin.z += 1.0f;
 
-	// bump the toucher's "jumped" counter (other + 48 = float index 12)
-	float& jumpCount = *(float*)((unsigned char*)pevOther + 48);
-	jumpCount = jumpCount + 1.0f;
+	if ((int)pevOther->flags & FL_ONGROUND)
+		pevOther->flags -= FL_ONGROUND;
 
-	// clear FL_ONGROUND (bit 0x200) if it was set
-	if (((int)flags & 0x200) != 0)
-		flags = flags - 512.0f;
+	// toss the monster
+	pevOther->velocity = pev->movedir * pev->speed;
+	pevOther->velocity.z += m_flHeight;
 
-	float speed = PevFloat(pev, PEV_PUSH_SPEED);	// monsterjump launch speed
-	Vector& movedir = PevVector(pev, PEV_MOVEDIR);
-	Vector& otherVel = PevVector(pevOther, PEV_VELOCITY);
-	otherVel.x = movedir.x * speed;
-	otherVel.y = movedir.y * speed;
-	otherVel.z = movedir.z * speed + m_flHeight;
-
-	PevFloat(pev, PEV_SOLID) = SOLID_NOT;
+	pev->solid = SOLID_NOT;
 }
 
-//=========================================================
-// CTriggerMonsterJump::ToggleUse
-//
-// Flip the brush between SOLID_TRIGGER and SOLID_NOT.
-//=========================================================
-void CTriggerMonsterJump::ToggleUse(CBaseEntity* pOther)
+void CTriggerMonsterJump::ToggleUse(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
-
-	float& solid = PevFloat(pev, PEV_SOLID);
-	if (((*(int*)&solid) & 0x7FFFFFFF) == 0)
-		solid = SOLID_TRIGGER;
+	if (pev->solid == SOLID_NOT)
+		pev->solid = SOLID_TRIGGER;
 	else
-		solid = SOLID_NOT;
+		pev->solid = SOLID_NOT;
 }
 
-//=========================================================
-// CTriggerMonsterJump::Spawn
-//
-// Derive movedir, set the default launch speed (200) and height
-// (150), and disable the trigger if it starts named/off.
-//=========================================================
 void CTriggerMonsterJump::Spawn()
 {
 	SetMovedir(pev);
@@ -559,41 +350,37 @@ void CTriggerMonsterJump::Spawn()
 	SetUse(&CTriggerMonsterJump::ToggleUse);
 	SetTouch(&CTriggerMonsterJump::JumpTouch);
 
-	PevFloat(pev, PEV_PUSH_SPEED) = 200.0f;	// launch speed
-	m_flHeight = 150.0f;
+	pev->speed = MONSTERJUMP_SPEED;
+	m_flHeight = MONSTERJUMP_HEIGHT;
 
-	if (PevInt(pev, PEV_TARGETNAME) != 0)
-		PevFloat(pev, PEV_SOLID) = SOLID_NOT;
+	// a named trigger starts off
+	if (!FStringNull(pev->targetname))
+		pev->solid = SOLID_NOT;
 }
 
 //=========================================================
-// CTriggerCDAudio - trigger_cdaudio
-//
-// A touch zone that drives the CD player; the track is taken from
-// pev->health.
+// trigger_cdaudio - plays the CD track in pev->health when
+// the player touches it
 //=========================================================
 class CTriggerCDAudio : public CBaseTrigger
 {
 public:
 	void Spawn();
-	void KeyValue(KeyValueData* pkvd);
+	void KeyValue(KeyValueData *pkvd);
 
-	void CDAudioTouch(CBaseEntity* pOther);
-	void CDAudioNullTouch(CBaseEntity* pOther);
-	void CDAudioRemove(CBaseEntity* pOther);
+	void CDAudioTouch(CBaseEntity *pOther);
 };
 
-void CTriggerCDAudio::KeyValue(KeyValueData* pkvd)
+LINK_ENTITY_TO_CLASS(trigger_cdaudio, CTriggerCDAudio);
+
+void CTriggerCDAudio::KeyValue(KeyValueData *pkvd)
 {
 	TriggerKeyValue(this, pev, m_flWait, m_cTriggersLeft, pkvd);
 }
 
-//=========================================================
-// CDAudio track command table (track -1 stops the CD).
-//=========================================================
-static const char* const kCDPlayCommands[] =
+static const char *const g_szCDPlayCommands[CDAUDIO_MAX_TRACK] =
 {
-	"cd play 1\n",		// track 1
+	"cd play 1\n",
 	"cd play 2\n",
 	"cd play 3\n",
 	"cd play 4\n",
@@ -604,71 +391,31 @@ static const char* const kCDPlayCommands[] =
 	"cd play 9\n",
 	"cd play 10\n",
 	"cd play 11\n",
-	"cd play 12\n",		// track 12
+	"cd play 12\n",
 };
 
-//=========================================================
-// CTriggerCDAudio::CDAudioNullTouch
-//
-// Empty touch; installed after the command is issued so the
-// entity stops responding to further touches.
-//=========================================================
-void CTriggerCDAudio::CDAudioNullTouch(CBaseEntity* pOther)
+void CTriggerCDAudio::CDAudioTouch(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
-}
-
-//=========================================================
-// CTriggerCDAudio::CDAudioRemove
-//
-// Removes the entity on the scheduled think.
-//=========================================================
-void CTriggerCDAudio::CDAudioRemove(CBaseEntity* pOther)
-{
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineRemoveEntity(edict);
-}
-
-//=========================================================
-// CTriggerCDAudio::CDAudioTouch
-//
-// Only players trip it.  Issue the CD command matching pev->health,
-// then go quiet and schedule a one-shot remove.
-//=========================================================
-void CTriggerCDAudio::CDAudioTouch(CBaseEntity* pOther)
-{
-	HL_UNUSED(pOther);
-
-	entvars_t* pevOther = OtherVars(gpGlobals);
-	if (!ClassNameIs(pevOther, kPlayer))
+	entvars_t *pevOther = VARS(gpGlobals->other);
+	if (!FClassnameIs(pevOther, "player"))
 		return;
 
-	edict_t* pPlayer = EdictFromEntvars(pevOther);
-	int track = (int)PevFloat(pev, PEV_HEALTH);
+	edict_t *pentPlayer = ENT(pevOther);
+	int iTrack = (int)pev->health;
 
-	if (track == -1)
-	{
-		EngineClientCommand(pPlayer, "cd stop\n");
-	}
-	else if (track >= 1 && track <= 12)
-	{
-		EngineClientCommand(pPlayer, kCDPlayCommands[track - 1]);
-	}
+	if (iTrack == CDAUDIO_TRACK_STOP)
+		CLIENT_COMMAND(pentPlayer, "cd stop\n");
+	else if (iTrack >= 1 && iTrack <= CDAUDIO_MAX_TRACK)
+		CLIENT_COMMAND(pentPlayer, g_szCDPlayCommands[iTrack - 1]);
 	else
-	{
-		EngineAlertMessage(1, "Unknown Track!\n");
-	}
+		ALERT(at_console, "Unknown Track!\n");
 
-	// go dormant, then remove on the next think
+	// plays only once
 	SetTouch(&CBaseEntity::SUB_DoNothing);
 	SetThink(&CBaseEntity::SUB_Remove);
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(gpGlobals) + 0.1f;
+	pev->nextthink = gpGlobals->time + 0.1f;
 }
 
-//=========================================================
-// CTriggerCDAudio::Spawn
-//=========================================================
 void CTriggerCDAudio::Spawn()
 {
 	InitTrigger();
@@ -676,881 +423,472 @@ void CTriggerCDAudio::Spawn()
 }
 
 //=========================================================
-// CTriggerCounter - trigger_counter
-//
-// Counts down player activations; fires its target once the count
-// reaches zero, announcing the remaining tally each step.
+// trigger_counter - fires its targets once it has been
+// used m_cTriggersLeft times
 //=========================================================
 class CTriggerCounter : public CBaseTrigger
 {
 public:
 	void Spawn();
-	void KeyValue(KeyValueData* pkvd);
+	void KeyValue(KeyValueData *pkvd);
 
-	void CounterUse(CBaseEntity* pOther);
+	void CounterUse(CBaseEntity *pOther);
 	void ActivateMultiTrigger();
-	void CounterWaitOver(CBaseEntity* pOther);
-	void CounterRemoveThink(CBaseEntity* pOther);
+	void CounterWaitOver(CBaseEntity *pOther);
+	void CounterRemoveThink(CBaseEntity *pOther);
 };
 
-void CTriggerCounter::KeyValue(KeyValueData* pkvd)
+LINK_ENTITY_TO_CLASS(trigger_counter, CTriggerCounter);
+
+void CTriggerCounter::KeyValue(KeyValueData *pkvd)
 {
 	TriggerKeyValue(this, pev, m_flWait, m_cTriggersLeft, pkvd);
 }
 
 //=========================================================
-// CTriggerCounter::ActivateMultiTrigger (shared)
-//
-// The counter reaches its target through the same firing helper
-// the multiples use.  trigger_counter has no wait, so this takes
-// the one-shot path.
+// ActivateMultiTrigger - the trigger_multiple firing, with
+// the counter's own think functions
 //=========================================================
 void CTriggerCounter::ActivateMultiTrigger()
 {
-	void* globals = gpGlobals;
+	if (gpGlobals->time < pev->nextthink)
+		return;		// still waiting for reactivation
 
-	if (GlobalsTime(globals) < PevFloat(pev, PEV_NEXTTHINK))
-		return;
-
-	if (ClassNameIs(pev, kTriggerSecret))
+	if (FClassnameIs(pev, "trigger_secret"))
 	{
-		int enemyIndex = PevInt(pev, PEV_ENEMY);
-		edict_t* pEdict = EnginePEntityOfEntIndex(enemyIndex);
-		entvars_t* pevEnemy = pEdict ? EngineGetVarsOfEnt(pEdict) : NULL;
-		if (!ClassNameIs(pevEnemy, kPlayer))
+		if (!FClassnameIs(VARS(pev->enemy), "player"))
 			return;
 
-		float& foundSecrets = *(float*)((unsigned char*)globals + 168);
-		foundSecrets = foundSecrets + 1.0f;
-		EngineWriteByte(2, 28);
+		gpGlobals->found_secrets++;
+		WRITE_BYTE(MSG_ALL, SVC_FOUNDSECRET);
 	}
 
-	int noise = PevInt(pev, PEV_NOISE);
-	if (noise)
+	if (pev->noise)
 	{
-		edict_t* edict = EdictFromEntvars(pev);
-		const char* sample = EngineStringFromIndex(noise);
-		EngineEmitSound(edict, 2, sample, 1.0f, 0.8f);
+		edict_t *pent = ENT(pev);
+		EMIT_SOUND(pent, CHAN_VOICE, STRING(pev->noise), VOL_NORM, ATTN_NORM);
 	}
 
-	g_CounterActivatorIndex = PevInt(pev, PEV_ENEMY);
+	g_CounterActivatorIndex = pev->enemy;
 	SUB_UseTargets();
 
 	if (m_flWait <= 0.0f)
 	{
 		SetTouch(NULL);
-		PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + 0.1f;
+		pev->nextthink = gpGlobals->time + 0.1f;
 		SetThink(&CTriggerCounter::CounterRemoveThink);
 	}
 	else
 	{
 		SetThink(&CTriggerCounter::CounterWaitOver);
-		PevFloat(pev, PEV_NEXTTHINK) = GlobalsTime(globals) + m_flWait;
+		pev->nextthink = gpGlobals->time + m_flWait;
 	}
 }
 
 //=========================================================
-// CTriggerCounter::CounterUse
-//
-// Decrement the remaining count and report progress to the
-// player.  When the count hits zero, route the firing player's
-// index back into pev->enemy and fire the target.
+// CounterUse - tells the player how many are left, and
+// fires the targets on the last use
 //=========================================================
-void CTriggerCounter::CounterUse(CBaseEntity* pOther)
+void CTriggerCounter::CounterUse(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
-
-	int remaining = m_cTriggersLeft - 1;
-	m_cTriggersLeft = remaining;
-	if (remaining < 0)
+	m_cTriggersLeft--;
+	if (m_cTriggersLeft < 0)
 		return;
 
-	// only announce progress to a player activator on an un-flagged trigger
-	edict_t* pEdict = EnginePEntityOfEntIndex(g_CounterActivatorIndex);
-	entvars_t* pevActivator = pEdict ? EngineGetVarsOfEnt(pEdict) : NULL;
-
-	int announce = 1;
-	if (!ClassNameIs(pevActivator, kPlayer) || ((int)PevFloat(pev, PEV_SPAWNFLAGS) & 1) != 0)
-		announce = 0;
+	BOOL fTellActivator = TRUE;
+	if (!FClassnameIs(VARS(g_CounterActivatorIndex), "player") || ((int)pev->spawnflags & SF_COUNTER_NOMESSAGE))
+		fTellActivator = FALSE;
 
 	if (m_cTriggersLeft != 0)
 	{
-		if (announce)
+		if (fTellActivator)
 		{
 			switch (m_cTriggersLeft)
 			{
-			case 1:
-				EngineAlertMessage(1, "Only 1 more to go...");
-				break;
-			case 2:
-				EngineAlertMessage(1, "Only 2 more to go...");
-				break;
-			case 3:
-				EngineAlertMessage(1, "Only 3 more to go...");
-				break;
-			default:
-				EngineAlertMessage(1, "There are more to go...");
-				break;
+			case 1:		ALERT(at_console, "Only 1 more to go...");		break;
+			case 2:		ALERT(at_console, "Only 2 more to go...");		break;
+			case 3:		ALERT(at_console, "Only 3 more to go...");		break;
+			default:	ALERT(at_console, "There are more to go...");	break;
 			}
 		}
 	}
 	else
 	{
-		if (announce)
-			EngineAlertMessage(1, "Sequence completed!");
+		if (fTellActivator)
+			ALERT(at_console, "Sequence completed!");
 
-		PevInt(pev, PEV_ENEMY) = g_CounterActivatorIndex;
+		pev->enemy = g_CounterActivatorIndex;
 		ActivateMultiTrigger();
 	}
 }
 
-//=========================================================
-// CTriggerCounter::CounterWaitOver (shared)
-//
-// Positive-wait counters use the same wait-over callback as
-// trigger_multiple: clear the think slot when the wait expires.
-//=========================================================
-void CTriggerCounter::CounterWaitOver(CBaseEntity* pOther)
+void CTriggerCounter::CounterWaitOver(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
 	SetThink(NULL);
 }
 
-//=========================================================
-// CTriggerCounter::CounterRemoveThink - one-shot tear-down used
-// by the shared firing helper.
-//=========================================================
-void CTriggerCounter::CounterRemoveThink(CBaseEntity* pOther)
+void CTriggerCounter::CounterRemoveThink(CBaseEntity *pOther)
 {
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineRemoveEntity(edict);
+	REMOVE_ENTITY(ENT(pev));
 }
 
-//=========================================================
-// CTriggerCounter::Spawn
-//
-// Defaults wait to -1 (one-shot) and the count to 2, then parks
-// CounterUse.
-//=========================================================
 void CTriggerCounter::Spawn()
 {
-	m_flWait = ONESHOT_WAIT;
+	// the counter disappears after it has fired
+	m_flWait = -1.0f;
 
 	if (m_cTriggersLeft == 0)
-		m_cTriggersLeft = 2;
+		m_cTriggersLeft = COUNTER_DEFAULT_COUNT;
 
 	SetUse(&CTriggerCounter::CounterUse);
 }
 
 //=========================================================
-// CTriggerChangeLevel - trigger_changelevel (Spawn @)
-//
-// Transitions the player to another map.  The "map" key names the
-// destination; the touch handler builds the level list around the
-// matching info_landmark and asks the engine to change level.
+// trigger_changelevel - moves the player to the level
+// named by the "map" key
 //=========================================================
 class CTriggerChangeLevel : public CBaseTrigger
 {
 public:
 	void Spawn();
-	void KeyValue(KeyValueData* pkvd);
+	void KeyValue(KeyValueData *pkvd);
 
-	void ChangeLevelTouch(CBaseEntity* pOther);
+	void ChangeLevelTouch(CBaseEntity *pOther);
 
-	// The "map" key is stored as a 64-byte string at object offset
-	// 128 (where a brush's model string would otherwise sit; a
-	// changelevel carries no model).  Accessed through MapName().
-	char* MapName() { return (char*)((unsigned char*)this + 128); }
+	char		m_szMapName[cchMapNameMost];	// next map
 };
 
-//=========================================================
-// CTriggerChangeLevel::KeyValue
-//
-// Stores the "map" key into the map-name buffer at offset 128.
-//=========================================================
-void CTriggerChangeLevel::KeyValue(KeyValueData* pkvd)
+LINK_ENTITY_TO_CLASS(trigger_changelevel, CTriggerChangeLevel);
+
+// the map name handed to the engine
+static char st_szNextMap[cchMapNameMost];
+
+void CTriggerChangeLevel::KeyValue(KeyValueData *pkvd)
 {
-	if (strcmp(pkvd->szKeyName, "map") == 0)
+	if (FStrEq(pkvd->szKeyName, "map"))
 	{
-		size_t len = strlen(pkvd->szValue) + 1;
-		memcpy((unsigned char*)this + 128, pkvd->szValue, len);
-		pkvd->fHandled = 1;
+		memcpy(m_szMapName, pkvd->szValue, strlen(pkvd->szValue) + 1);
+		pkvd->fHandled = TRUE;
 	}
 }
 
 //=========================================================
-// CTriggerChangeLevel::ChangeLevelTouch
-//
-// Only the player triggers the transition.  Build a one-entry
-// level list keyed on the matching info_landmark, then hand off to
-// the engine's ChangeLevel.  The level-list bookkeeping mirrors the binary.
+// ChangeLevelTouch - changes the level. The player keeps
+// his position relative to an info_landmark near the
+// trigger, saved here in the spawn parms.
 //=========================================================
-// LEVELLIST entry stashed at gpGlobals+176 (the engine's level-transition slot).
-// The binary mallocs 120 bytes, stores the pointer at globals+176, clears the
-// found flag, and -- if an info_landmark is within 255u -- records the landmark
-// name and the player's landmark-relative state. Field labels are cosmetic; the
-// byte offsets are taken directly from the decompile and are authoritative.
-struct LEVELLIST
+void CTriggerChangeLevel::ChangeLevelTouch(CBaseEntity *pOther)
 {
-	char  pad0[48];          // 0..47
-	int   foundLandmark;     // 48      ([v10+12] = 0, then 1 when found)
-	char  landmarkName[20];  // 52..71  (strcpy of landmark pev+436)
-	float deltaOrigin[3];    // 72/76/80   (player origin - landmark origin)
-	int   velocity[3];       // 84/88/92   (player pev+64)
-	int   angles[3];         // 96/100/104 (player pev+76; [104] zeroed)
-	int   view[3];           // 108/112/116(player pev+352; [116] zeroed)
-};
-
-void CTriggerChangeLevel::ChangeLevelTouch(CBaseEntity* pOther)
-{
-	HL_UNUSED(pOther);
-
-	// The binary: only the player triggers the transition.
-	entvars_t* pevPlayer = OtherVars(gpGlobals);
-	if (!ClassNameIs(pevPlayer, kPlayer))
+	entvars_t *pevPlayer = VARS(gpGlobals->other);
+	if (!FClassnameIs(pevPlayer, "player"))
 		return;
 
-	// The binary: disable so we only fire once.
+	// fire only once
 	SetTouch(NULL);
-	PevFloat(pev, PEV_SOLID) = SOLID_NOT;
+	pev->solid = SOLID_NOT;
 
-	// The binary: malloc(120) level list -> gpGlobals+176; clear found flag.
-	LEVELLIST* pLevelList = (LEVELLIST*)malloc(sizeof(LEVELLIST));
-	*(void**)((unsigned char*)gpGlobals + 176) = pLevelList;
-	if (pLevelList)
-		pLevelList->foundLandmark = 0;
+	SPAWNPARMS *pSpawnParms = (SPAWNPARMS *)malloc(sizeof(SPAWNPARMS));
+	gpGlobals->pSpawnParms = pSpawnParms;
+	if (pSpawnParms)
+		pSpawnParms->fLandmark = FALSE;
 
-	// The binary: copy the destination map name into the engine dest-map global.
-	strcpy(g_szChangeMapName, MapName());
+	strcpy(st_szNextMap, m_szMapName);
 
-	// The binary: fire pev->target / killtarget before the transition.
 	SUB_UseTargets();
 
-	// The binary: search for the info_landmark within 255u of the trigger's
-	// bbox center (: pev+4 absmin + 0.5*pev->size) and, if found, record its
-	// name plus the player's landmark-relative origin/velocity/angles into the level list.
-	if (pLevelList)
+	if (pSpawnParms)
 	{
-		const float* absmin = (const float*)((const unsigned char*)pev + 4);
-		const float* size = VecPtr(PevVector(pev, PEV_SIZE));
-		float center[3];
-		center[0] = absmin[0] + size[0] * 0.5f;
-		center[1] = absmin[1] + size[1] * 0.5f;
-		center[2] = absmin[2] + size[2] * 0.5f;
+		Vector vecCenter = pev->absmin + pev->size * 0.5f;
 
-		edict_t* pEnt = EngineFindEntityInSphere(center, 255.0f);
-		while (pEnt)
+		// the search ends at the world
+		edict_t *pent = FIND_ENTITY_IN_SPHERE(vecCenter, LANDMARK_SEARCH_RADIUS);
+		while (!FNullEnt(pent))
 		{
-			if (EngineIndexOfEdict(pEnt) == 0)	// : IndexOfEdict==0 -> stop
-				break;
+			entvars_t *pevEnt = VARS(pent);
 
-			entvars_t* pevEnt = EngineGetVarsOfEnt(pEnt);
-			if (!pevEnt)
-				break;
-
-			if (ClassNameIs(pevEnt, kInfoLandmark))
+			// the landmark's target names the landmark in the next level
+			if (FClassnameIs(pevEnt, "info_landmark"))
 			{
-				pLevelList->foundLandmark = 1;
-
-				const char* name = EngineStringFromIndex(PevInt(pevEnt, PEV_TARGET));	// landmark name = pev+436
-				strcpy(pLevelList->landmarkName, name ? name : "");
-
-				const float* pOrigin = VecPtr(PevVector(pevPlayer, PEV_ORIGIN));
-				const float* lOrigin = VecPtr(PevVector(pevEnt, PEV_ORIGIN));
-				pLevelList->deltaOrigin[0] = pOrigin[0] - lOrigin[0];
-				pLevelList->deltaOrigin[1] = pOrigin[1] - lOrigin[1];
-				pLevelList->deltaOrigin[2] = pOrigin[2] - lOrigin[2];
-
-				pLevelList->velocity[0] = PevInt(pevPlayer, 64);
-				pLevelList->velocity[1] = PevInt(pevPlayer, 68);
-				pLevelList->velocity[2] = PevInt(pevPlayer, 72);
-
-				pLevelList->angles[0] = PevInt(pevPlayer, 76);
-				pLevelList->angles[1] = PevInt(pevPlayer, 80);
-				pLevelList->angles[2] = 0;	// : [104] zeroed
-
-				pLevelList->view[0] = PevInt(pevPlayer, 352);
-				pLevelList->view[1] = PevInt(pevPlayer, 356);
-				pLevelList->view[2] = 0;	// : [116] zeroed
+				pSpawnParms->fLandmark = TRUE;
+				strcpy(pSpawnParms->szLandmarkName, STRING(pevEnt->target));
+				pSpawnParms->vecLandmarkOffset = pevPlayer->origin - pevEnt->origin;
+				pSpawnParms->velocity = pevPlayer->velocity;
+				pSpawnParms->angles = Vector(pevPlayer->angles.x, pevPlayer->angles.y, 0.0f);
+				pSpawnParms->v_angle = Vector(pevPlayer->v_angle.x, pevPlayer->v_angle.y, 0.0f);
 			}
 
-			// advance to the next sphere result via pev->chain (pev+320).
-			pEnt = EnginePEntityOfEntIndex(PevInt(pevEnt, PEV_CHAIN));
+			pent = ENT(pevEnt->chain);
 		}
 	}
 
-	// The binary: hand off to the engine ChangeLevel (table byte offset 0x14).
-	// Landmark arg is "" (the binary passes, a single NUL).
-	EngineChangeLevel(g_szChangeMapName, "");
+	CHANGE_LEVEL(st_szNextMap, "");
 }
 
-//=========================================================
-// CTriggerChangeLevel::Spawn
-//
-// Warns if no map was set, then runs InitTrigger and parks the
-// transition touch handler.
-//=========================================================
 void CTriggerChangeLevel::Spawn()
 {
-	if (MapName()[0] == '\0')
-		EngineAlertMessage(1, "a trigger_changelevel doesn't have a map");
+	if (!m_szMapName[0])
+		ALERT(at_console, "a trigger_changelevel doesn't have a map");
 
 	InitTrigger();
 	SetTouch(&CTriggerChangeLevel::ChangeLevelTouch);
 }
 
 //=========================================================
-// CTriggerPush - trigger_push (Spawn @)
-//
-// A zone that continuously pushes entities along movedir while
-// they remain inside it.
+// trigger_push - pushes whatever touches it along movedir
 //=========================================================
 class CTriggerPush : public CBaseTrigger
 {
 public:
 	void Spawn();
-
-	// trigger_push overrides the Touch (vtable slot 6) and Use (slot 7)
-	// virtuals directly - the binary installs PushTouch/PushUse into the
-	// vtable, not through SetTouch/SetUse.  Its KeyValue slot is empty
-	// so it deliberately ignores every brush key.
-	void KeyValue(KeyValueData* pkvd);
-	void Touch(CBaseEntity* pOther);
-	void Use(CBaseEntity* pOther);
+	void KeyValue(KeyValueData *pkvd);
+	void Touch(CBaseEntity *pOther);
+	void Use(CBaseEntity *pOther);
 };
 
-//=========================================================
-// CTriggerPush::KeyValue - empty; trigger_push ignores
-// all keys.
-//=========================================================
-void CTriggerPush::KeyValue(KeyValueData* pkvd)
+LINK_ENTITY_TO_CLASS(trigger_push, CTriggerPush);
+
+// trigger_push takes no keys
+void CTriggerPush::KeyValue(KeyValueData *pkvd)
 {
-	HL_UNUSED(pkvd);
 }
 
-//=========================================================
-// CTriggerPush::Touch (vtable slot 6)
-//
-// Push entities that have health (movers/monsters) by setting their
-// velocity to movedir*speed*10; if the once flag is set, remove the
-// trigger after this push.
-//=========================================================
-void CTriggerPush::Touch(CBaseEntity* pOther)
+void CTriggerPush::Touch(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
+	entvars_t *pevOther = VARS(gpGlobals->other);
 
-	entvars_t* pevOther = OtherVars(gpGlobals);
-	if (!pevOther)
-		return;
+	// only living things are pushed
+	if (pevOther->health > 0.0f)
+		pevOther->velocity = pev->movedir * pev->speed * PUSH_SPEED_SCALE;
 
-	// the binary tests the raw bit pattern of pev->health as a signed
-	// int ( > 0 ), not the truncated float value.
-	if (*(int*)&PevFloat(pevOther, PEV_HEALTH) > 0)
-	{
-		Vector& movedir = PevVector(pev, PEV_MOVEDIR);
-		float speed = PevFloat(pev, PEV_PUSH_SPEED);
-		Vector& otherVel = PevVector(pevOther, PEV_VELOCITY);
-		otherVel.x = movedir.x * speed * 10.0f;
-		otherVel.y = movedir.y * speed * 10.0f;
-		otherVel.z = movedir.z * speed * 10.0f;
-	}
-
-	if (((int)PevFloat(pev, PEV_SPAWNFLAGS) & SF_TRIGGER_PUSH_ONCE) != 0)
-	{
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineRemoveEntity(edict);
-	}
+	if ((int)pev->spawnflags & SF_TRIGGER_PUSH_ONCE)
+		REMOVE_ENTITY(ENT(pev));
 }
 
-//=========================================================
-// CTriggerPush::Use (vtable slot 7)
-//
-// Toggle the brush solid state (SOLID_TRIGGER <-> SOLID_NOT).
-//=========================================================
-void CTriggerPush::Use(CBaseEntity* pOther)
+void CTriggerPush::Use(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
-
-	float& solid = PevFloat(pev, PEV_SOLID);
-	solid = (float)((*(int*)&solid) != 0x3F800000);
+	if (pev->solid == SOLID_TRIGGER)
+		pev->solid = SOLID_NOT;
+	else
+		pev->solid = SOLID_TRIGGER;
 }
 
-//=========================================================
-// CTriggerPush::Spawn
-//
-// Default the push direction to yaw 360 (treated as "up" via
-// SetMovedir), run InitTrigger, default the speed to 1000, and
-// start disabled if the start-off flag (bit 1) is set.
-//=========================================================
 void CTriggerPush::Spawn()
 {
-	Vector& angles = PevVector(pev, PEV_ANGLES);
-	if (angles.x == 0.0f && angles.y == 0.0f && angles.z == 0.0f)
-		angles.y = 360.0f;
+	// InitTrigger sets movedir only for non-zero angles
+	if (pev->angles == g_vecZero)
+		pev->angles.y = 360.0f;
 
 	InitTrigger();
 
-	if (((*(int*)&PevFloat(pev, PEV_PUSH_SPEED)) & 0x7FFFFFFF) == 0)
-		PevFloat(pev, PEV_PUSH_SPEED) = 1000.0f;
+	if (pev->speed == 0.0f)
+		pev->speed = PUSH_DEFAULT_SPEED;
 
-	if (((int)PevFloat(pev, PEV_SPAWNFLAGS) & SF_TRIGGER_PUSH_START_OFF) != 0)
-		PevFloat(pev, PEV_SOLID) = SOLID_NOT;
-
-	// Touch/Use are vtable overrides (the binary's Spawn installs no
-	// SetTouch/SetUse here); KeyValue is empty.
+	if ((int)pev->spawnflags & SF_TRIGGER_PUSH_START_OFF)
+		pev->solid = SOLID_NOT;
 }
 
 //=========================================================
-// CLadder - func_ladder
-//
-// A simple touch zone that flags the player as "on a ladder".
+// func_ladder - an invisible brush that puts the touching
+// player on the ladder
 //=========================================================
 class CLadder : public CBaseTrigger
 {
 public:
 	void Spawn();
-
-	// func_ladder overrides the Touch virtual (vtable slot 6) directly;
-	// its KeyValue slot is empty.
-	void KeyValue(KeyValueData* pkvd);
-	void Touch(CBaseEntity* pOther);
+	void KeyValue(KeyValueData *pkvd);
+	void Touch(CBaseEntity *pOther);
 };
 
-//=========================================================
-// CLadder::KeyValue - empty; func_ladder ignores all keys.
-//=========================================================
-void CLadder::KeyValue(KeyValueData* pkvd)
+LINK_ENTITY_TO_CLASS(func_ladder, CLadder);
+
+// func_ladder takes no keys
+void CLadder::KeyValue(KeyValueData *pkvd)
 {
-	HL_UNUSED(pkvd);
 }
 
-//=========================================================
-// CLadder::Touch (vtable slot 6)
-//
-// While a player is inside, set the player's on-ladder flag
-// (bit 0 of the field at offset 372 in the player's private data).
-//=========================================================
-void CLadder::Touch(CBaseEntity* pOther)
+void CLadder::Touch(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
-
-	entvars_t* pevOther = OtherVars(gpGlobals);
-	if (!ClassNameIs(pevOther, kPlayer))
+	entvars_t *pevOther = VARS(gpGlobals->other);
+	if (!FClassnameIs(pevOther, "player"))
 		return;
 
-	edict_t* pPlayer = EdictFromEntvars(pevOther);
-	void* priv = pPlayer ? EngineGetPrivateData(pPlayer) : NULL;
-	if (!priv)
-		return;
-
-	// set the on-ladder flag (player private data + 372, bit 0)
-	int* flags = (int*)((unsigned char*)priv + 372);
-	*flags |= 1;
+	CBasePlayer *pPlayer = (CBasePlayer *)CBaseEntity::Instance(pevOther);
+	if (pPlayer)
+		pPlayer->m_afPhysicsFlags |= PFLAG_ONLADDER;
 }
 
-//=========================================================
-// CLadder::Spawn
-//
-// Bind the brush model but keep it solid (SOLID_BSP) so it blocks /
-// is climbable, make it MOVETYPE_PUSH and invisible.
-//=========================================================
 void CLadder::Spawn()
 {
-	PevFloat(pev, PEV_SOLID) = SOLID_TRIGGER;
-	PevFloat(pev, PEV_SOLID) = SOLID_BSP;
+	pev->solid = SOLID_TRIGGER;
+	pev->solid = SOLID_BSP;
 
-	edict_t* edict = EdictFromEntvars(pev);
-	EngineSetModel(edict, EngineStringFromIndex(PevInt(pev, PEV_MODEL)));
+	edict_t *pent = ENT(pev);
+	SET_MODEL(pent, STRING(pev->model));
 
-	PevFloat(pev, PEV_MOVETYPE) = MOVETYPE_PUSH;
-	PevFloat(pev, PEV_RENDERMODE) = 1.0f;	// kRenderTransColor
-	PevInt(pev, PEV_RENDERMODE + 4) = 0;	// renderamt = 0 (invisible)
-
-	// Touch is a vtable override; the binary's Spawn installs no SetTouch.
+	pev->movetype = MOVETYPE_PUSH;
+	pev->rendermode = kRenderTransColor;
+	pev->renderamt = 0.0f;
 }
 
 //=========================================================
-// CFriction - func_friction (Spawn @)
-//
-// A touch zone that scales the toucher's friction.  Unlike the
-// trigger_* family it only needs Touch + KeyValue, so it derives
-// straight from CBaseEntity (private data is just 32 bytes).
+// func_friction - sets the friction of whatever touches it
 //=========================================================
 class CFriction : public CBaseEntity
 {
 public:
 	void Spawn();
-	void KeyValue(KeyValueData* pkvd);
+	void KeyValue(KeyValueData *pkvd);
 
-	void FrictionTouch(CBaseEntity* pOther);
+	void FrictionTouch(CBaseEntity *pOther);
 
-	// [28] friction modifier (0..1), parsed from the "modifier" key.
-	float m_frictionFraction;	// [28]
+	float		m_frictionFraction;		// the friction of the touching entity, 0..1
 };
 
-//=========================================================
-// CFriction::KeyValue
-//
-// "modifier" is a percentage stored as a 0..1 fraction.
-//=========================================================
-void CFriction::KeyValue(KeyValueData* pkvd)
+LINK_ENTITY_TO_CLASS(func_friction, CFriction);
+
+void CFriction::KeyValue(KeyValueData *pkvd)
 {
-	if (strcmp(pkvd->szKeyName, "modifier") == 0)
+	if (FStrEq(pkvd->szKeyName, "modifier"))
 	{
+		// a percentage
 		m_frictionFraction = (float)(atof(pkvd->szValue) * 0.01);
-		pkvd->fHandled = 1;
+		pkvd->fHandled = TRUE;
 	}
 }
 
-//=========================================================
-// CFriction::FrictionTouch
-//
-// Copy our friction fraction into the toucher's friction field.
-//=========================================================
-void CFriction::FrictionTouch(CBaseEntity* pOther)
+void CFriction::FrictionTouch(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
-
-	entvars_t* pevOther = OtherVars(gpGlobals);
-	if (!pevOther)
-		return;
-
-	// pev->friction (offset 148 = float index 37) on the toucher
-	PevFloat(pevOther, 148) = m_frictionFraction;
+	entvars_t *pevOther = VARS(gpGlobals->other);
+	pevOther->friction = m_frictionFraction;
 }
 
-//=========================================================
-// CFriction::Spawn
-//
-// Make the brush a SOLID_TRIGGER, bind its model, drop movetype,
-// then park the friction touch handler.
-//=========================================================
 void CFriction::Spawn()
 {
-	PevFloat(pev, PEV_SOLID) = SOLID_TRIGGER;
+	pev->solid = SOLID_TRIGGER;
 
-	edict_t* edict = EdictFromEntvars(pev);
-	EngineSetModel(edict, EngineStringFromIndex(PevInt(pev, PEV_MODEL)));
+	edict_t *pent = ENT(pev);
+	SET_MODEL(pent, STRING(pev->model));
 
-	PevFloat(pev, PEV_MOVETYPE) = SOLID_NOT;	// MOVETYPE_NONE (0)
+	pev->movetype = MOVETYPE_NONE;
 	SetTouch(&CFriction::FrictionTouch);
 }
 
 //=========================================================
-// CMultiManager - multi_manager (Spawn @)
-//
-// Fires a fixed set of named targets, each after its own delay.
-// Private-data layout (size 392):
-//   [128] m_cTargets               number of targets
-//   [132] m_index                  number fired in the current cycle
-//   [136] m_iTargetName[16]        target name string indices
-//   [200] m_startTime[16]          per-target "fired" markers
-//   [264] m_flTargetDelay[16]      per-target delays (KeyValue order)
-//   [328] m_flTargetFire[16]       absolute fire times (computed on Use)
+// multi_manager - fires each of its targets after its own
+// delay. Every key other than "wait" names a target, the
+// value is the delay.
 //=========================================================
-#define MAX_MULTI_TARGETS	16
-
-//=========================================================
-// The multi_manager target arrays overlap the CBaseToggle sound
-// bytes at offset 128 (a manager never uses those), so the fields
-// are reached by byte offset rather than as members.  Offsets are
-// taken verbatim from the decompiles:
-//   [128] count   [132] index   [136] names[16]
-//   [200] fired[16]   [264] delay[16]   [328] fireTime[16]
-//=========================================================
-enum
-{
-	MM_COUNT_OFFSET		= 128,
-	MM_INDEX_OFFSET		= 132,
-	MM_NAMES_OFFSET		= 136,
-	MM_FIRED_OFFSET		= 200,
-	MM_DELAY_OFFSET		= 264,
-	MM_FIRETIME_OFFSET	= 328,
-};
-
 class CMultiManager : public CBaseToggle
 {
 public:
 	void Spawn();
-	void KeyValue(KeyValueData* pkvd);
+	void KeyValue(KeyValueData *pkvd);
 
-	void ManagerUse(CBaseEntity* pOther);
-	void ManagerThink(CBaseEntity* pOther);
+	void ManagerUse(CBaseEntity *pOther);
+	void ManagerThink(CBaseEntity *pOther);
 
-	int& Count()				{ return *(int*)((unsigned char*)this + MM_COUNT_OFFSET); }
-	int& Index()				{ return *(int*)((unsigned char*)this + MM_INDEX_OFFSET); }
-	int& TargetName(int i)		{ return *(int*)((unsigned char*)this + MM_NAMES_OFFSET + 4 * i); }
-	int& Fired(int i)			{ return *(int*)((unsigned char*)this + MM_FIRED_OFFSET + 4 * i); }
-	float& Delay(int i)			{ return *(float*)((unsigned char*)this + MM_DELAY_OFFSET + 4 * i); }
-	float& FireTime(int i)		{ return *(float*)((unsigned char*)this + MM_FIRETIME_OFFSET + 4 * i); }
+	int			m_cTargets;								// the total number of targets in this manager's fire list.
+	int			m_index;								// number of targets fired in this cycle
+	string_t	m_iTargetName[MAX_MULTI_TARGETS];		// list of target names
+	BOOL		m_fTargetFired[MAX_MULTI_TARGETS];		// target fired in this cycle
+	float		m_flTargetDelay[MAX_MULTI_TARGETS];		// delay (in seconds) from time of manager fire to target fire
+	float		m_flTargetFireTime[MAX_MULTI_TARGETS];	// time to fire each target
 };
 
-//=========================================================
-// CMultiManager::KeyValue
-//
-// "wait" sets m_flWait; any other key is taken as "<target> <delay>"
-// and appended to the target list (up to 16).
-//=========================================================
-void CMultiManager::KeyValue(KeyValueData* pkvd)
+LINK_ENTITY_TO_CLASS(multi_manager, CMultiManager);
+
+void CMultiManager::KeyValue(KeyValueData *pkvd)
 {
-	if (strcmp(pkvd->szKeyName, "wait") == 0)
+	if (FStrEq(pkvd->szKeyName, "wait"))
 	{
 		m_flWait = (float)atof(pkvd->szValue);
-		pkvd->fHandled = 1;
+		pkvd->fHandled = TRUE;
 	}
-	else
+	else // add this field to the target list
 	{
-		int i = Count();
-		if (i < MAX_MULTI_TARGETS)
+		int iTarget = m_cTargets;
+		if (iTarget < MAX_MULTI_TARGETS)
 		{
-			TargetName(i) = EngineAllocString(pkvd->szKeyName);
-			Delay(i) = (float)atof(pkvd->szValue);
-			Fired(i) = 0;
-			Count() = i + 1;
-			pkvd->fHandled = 1;
+			m_iTargetName[iTarget] = ALLOC_STRING(pkvd->szKeyName);
+			m_flTargetDelay[iTarget] = (float)atof(pkvd->szValue);
+			m_fTargetFired[iTarget] = FALSE;
+			m_cTargets = iTarget + 1;
+			pkvd->fHandled = TRUE;
 		}
 	}
 }
 
 //=========================================================
-// CMultiManager::ManagerThink
-//
-// Walk the target list, firing any whose scheduled time has
-// arrived and that has not yet fired this cycle.  Once every
-// target has fired, reset the cycle and return to waiting for Use.
+// ManagerThink - fires the targets whose time has come.
+// Once all have fired, waits to be used again.
 //=========================================================
-void CMultiManager::ManagerThink(CBaseEntity* pOther)
+void CMultiManager::ManagerThink(CBaseEntity *pOther)
 {
-	float time = GlobalsTime(gpGlobals);
+	float flTime = gpGlobals->time;
 
-	PevFloat(pev, PEV_NEXTTHINK) = time + 0.1f;
+	pev->nextthink = flTime + 0.1f;
 
 	int i;
-	for (i = 0; i < Count(); ++i)
+	for (i = 0; i < m_cTargets; i++)
 	{
-		if (time >= FireTime(i) && Fired(i) == 0)
+		if (flTime >= m_flTargetFireTime[i] && !m_fTargetFired[i])
 		{
-			const char* pszName = EngineStringFromIndex(TargetName(i));
-			edict_t* pTarget = EngineFindEntityByString(NULL, "targetname", pszName);
+			const char *pszTarget = STRING(m_iTargetName[i]);
+			edict_t *pentTarget = FIND_ENTITY_BY_STRING(NULL, "targetname", pszTarget);
 
-			if (pTarget && EngineIndexOfEdict(pTarget) != 0)
+			if (!FNullEnt(pentTarget))
 			{
-				for (; pTarget != NULL; pTarget = EngineFindEntityByString(pTarget, "targetname", pszName))
+				// the search ends at the world
+				while (!FNullEnt(pentTarget))
 				{
-					if (EngineIndexOfEdict(pTarget) == 0)
-						break;
+					CBaseEntity *pTarget = GetClassPtr((CBaseEntity *)VARS(pentTarget));
+					pTarget->Use(NULL);
 
-					entvars_t* pevTarget = EngineGetVarsOfEnt(pTarget);
-					if (!pevTarget)
-					{
-						edict_t* created = EngineCreateEntity();
-						pevTarget = created ? EngineGetVarsOfEnt(created) : NULL;
-						if (!pevTarget)
-							break;
-						pTarget = EdictFromEntvars(pevTarget);
-					}
-
-					void* priv = EngineGetPrivateData(pTarget);
-					CBaseEntity* pEntity;
-					if (priv)
-					{
-						pEntity = (CBaseEntity*)priv;
-					}
-					else
-					{
-						priv = EngineAllocPrivateData(pTarget, sizeof(CBaseEntity));
-						if (!priv)
-							break;
-						pEntity = new (priv) CBaseEntity();
-						pEntity->pev = pevTarget;
-					}
-
-					pEntity->Use(NULL);
+					pentTarget = FIND_ENTITY_BY_STRING(pentTarget, "targetname", pszTarget);
 				}
 
-				Fired(i) = 1;
-				++Index();
+				m_fTargetFired[i] = TRUE;
+				m_index++;
 			}
 			else
 			{
-				EngineAlertMessage(1, "Manager cannot find target:%s\n", pszName);
+				ALERT(at_console, "Manager cannot find target:%s\n", pszTarget);
 			}
 		}
 	}
 
-	// every target fired -> reset the cycle and go dormant
-	if (Index() == Count())
+	// all fired, wait to be used again
+	if (m_index == m_cTargets)
 	{
-		Index() = 0;
-		for (i = 0; i < Count(); ++i)
-			Fired(i) = 0;
+		m_index = 0;
+		for (i = 0; i < m_cTargets; i++)
+			m_fTargetFired[i] = FALSE;
 
-		SetThink(&CBaseEntity::SUB_DoNothing);			// SUB_DoNothing
+		SetThink(&CBaseEntity::SUB_DoNothing);
 		SetUse(&CMultiManager::ManagerUse);
 	}
 }
 
 //=========================================================
-// CMultiManager::ManagerUse
-//
-// Begin a firing cycle: schedule each target's absolute fire time
-// (now + its delay) and switch over to ManagerThink.
+// ManagerUse - starts a firing cycle
 //=========================================================
-void CMultiManager::ManagerUse(CBaseEntity* pOther)
+void CMultiManager::ManagerUse(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
+	float flTime = gpGlobals->time;
 
-	float time = GlobalsTime(gpGlobals);
+	for (int i = 0; i < m_cTargets; i++)
+		m_flTargetFireTime[i] = flTime + m_flTargetDelay[i];
 
-	int i;
-	for (i = 0; i < Count(); ++i)
-		FireTime(i) = time + Delay(i);
-
-	SetUse(&CBaseEntity::SUB_DoNothing);			// SUB_DoNothing
+	SetUse(&CBaseEntity::SUB_DoNothing);
 	SetThink(&CMultiManager::ManagerThink);
-	PevFloat(pev, PEV_NEXTTHINK) = time;
+	pev->nextthink = flTime;
 }
 
-//=========================================================
-// CMultiManager::Spawn
-//
-// Make the manager non-solid and park Use/Think.
-//=========================================================
 void CMultiManager::Spawn()
 {
-	PevFloat(pev, PEV_SOLID) = SOLID_NOT;
+	pev->solid = SOLID_NOT;
 	SetUse(&CMultiManager::ManagerUse);
-	// The binary installs ManagerThink here; nextthink
-	// stays 0 so it only runs once ManagerUse schedules a fire cycle.
+
+	// thinks only once ManagerUse sets nextthink
 	SetThink(&CMultiManager::ManagerThink);
-}
-
-//=========================================================
-// DLLEXPORT construction wrappers
-//
-// The trigger_* classes share the 132-byte CBaseToggle layout but
-// only ever allocate 128 bytes of private data (they never touch
-// the sound bytes at [128..130]).  The size asserts bound each
-// class against its natural CBaseToggle layout (132); the wrappers
-// allocate the smaller entmap size (128) to match the binary.
-// trigger_changelevel allocates 180 (room for the map name buffer
-// at offset 128), multi_manager 392, func_friction 32.
-//=========================================================
-
-HL_COMPILE_TIME_ASSERT(sizeof(CTrigger) <= 132, CTrigger_size);
-HL_COMPILE_TIME_ASSERT(sizeof(CTriggerMultiple) <= 132, CTriggerMultiple_size);
-HL_COMPILE_TIME_ASSERT(sizeof(CTriggerOnce) <= 132, CTriggerOnce_size);
-HL_COMPILE_TIME_ASSERT(sizeof(CTriggerHurt) <= 132, CTriggerHurt_size);
-HL_COMPILE_TIME_ASSERT(sizeof(CTriggerMonsterJump) <= 132, CTriggerMonsterJump_size);
-HL_COMPILE_TIME_ASSERT(sizeof(CTriggerCDAudio) <= 132, CTriggerCDAudio_size);
-HL_COMPILE_TIME_ASSERT(sizeof(CTriggerCounter) <= 132, CTriggerCounter_size);
-HL_COMPILE_TIME_ASSERT(sizeof(CTriggerChangeLevel) <= 180, CTriggerChangeLevel_size);
-HL_COMPILE_TIME_ASSERT(sizeof(CTriggerPush) <= 132, CTriggerPush_size);
-HL_COMPILE_TIME_ASSERT(sizeof(CLadder) <= 132, CLadder_size);
-HL_COMPILE_TIME_ASSERT(sizeof(CFriction) <= 32, CFriction_size);
-HL_COMPILE_TIME_ASSERT(sizeof(CMultiManager) <= 392, CMultiManager_size);
-
-//=========================================================
-// Shared construction helper - placement-new a T into the
-// edict's private data and wire pev / gpGlobals.
-//=========================================================
-template <typename T>
-static void ConstructEntity(entvars_t* pev, int size)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		// The recompiled C++ layout can be larger than the original export's
-		// private-data size (e.g. the trigger bases pad to 132 where the original
-		// allocated 128). Under-allocating makes the placement-new constructor
-		// write past the heap block -> delayed heap corruption. Allocate enough
-		// for the actual object, while preserving any intentionally larger size
-		// the caller passes (e.g. trigger_changelevel's 180).
-		int allocSize = (int)sizeof(T) > size ? (int)sizeof(T) : size;
-		privateData = EngineAllocPrivateData(edict, allocSize);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, allocSize);
-
-		T* self = new (privateData) T();
-		self->pev = entvars;
-		gpGlobals = entvars->pSystemGlobals;
-	}
-}
-
-//=========================================================
-// Exports
-//=========================================================
-DLLEXPORT void trigger(entvars_t* pev)
-{
-	ConstructEntity<CTrigger>(pev, 128);
-}
-
-DLLEXPORT void trigger_multiple(entvars_t* pev)
-{
-	ConstructEntity<CTriggerMultiple>(pev, 128);
-}
-
-DLLEXPORT void trigger_once(entvars_t* pev)
-{
-	ConstructEntity<CTriggerOnce>(pev, 128);
-}
-
-DLLEXPORT void trigger_hurt(entvars_t* pev)
-{
-	ConstructEntity<CTriggerHurt>(pev, 128);
-}
-
-DLLEXPORT void trigger_push(entvars_t* pev)
-{
-	ConstructEntity<CTriggerPush>(pev, 128);
-}
-
-DLLEXPORT void trigger_monsterjump(entvars_t* pev)
-{
-	ConstructEntity<CTriggerMonsterJump>(pev, 128);
-}
-
-DLLEXPORT void trigger_counter(entvars_t* pev)
-{
-	ConstructEntity<CTriggerCounter>(pev, 128);
-}
-
-DLLEXPORT void trigger_changelevel(entvars_t* pev)
-{
-	ConstructEntity<CTriggerChangeLevel>(pev, 180);
-}
-
-DLLEXPORT void trigger_cdaudio(entvars_t* pev)
-{
-	ConstructEntity<CTriggerCDAudio>(pev, 128);
-}
-
-DLLEXPORT void multi_manager(entvars_t* pev)
-{
-	ConstructEntity<CMultiManager>(pev, 392);
-}
-
-DLLEXPORT void func_friction(entvars_t* pev)
-{
-	ConstructEntity<CFriction>(pev, 32);
-}
-
-DLLEXPORT void func_ladder(entvars_t* pev)
-{
-	ConstructEntity<CLadder>(pev, 128);
 }

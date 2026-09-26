@@ -1,10 +1,10 @@
 /***
 *
-*Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
 *
-*This product contains software technology licensed from Id
-*Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
-*All Rights Reserved.
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
 *
 *   This source code contains proprietary and confidential information of
 *   Valve LLC and its suppliers.  Access to this code is restricted to
@@ -12,71 +12,84 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
 //=========================================================
-// Agrunt - Dominant, warlike alien grunt monster
-//=========================================================
-
-#include <new>
-#include <string.h>
-#include "basemonster.h"
-#include "enginefuncs.h"
-#include "hl_exports.h"
-#include "utils.h"
-
-//=========================================================
-// Monster-specific constants
+// Alien grunt - dominant, warlike alien that fires homing hornets
 //=========================================================
 
-static const char kAGruntModel[] = "models/agrunt.mdl";
-static const char kHornetModel[] = "models/hornet.mdl";
+#include "extdll.h"
+#include "util.h"
+#include "cbase.h"
+#include "monsters.h"
 
 #define AGRUNT_THINK_INTERVAL		0.1f
-
+#define AGRUNT_MIN_HEALTH			70.0f
+#define AGRUNT_EXTRA_HEALTH			30.0f	// random extra health, up to this much
+#define AGRUNT_YAW_SPEED			8.0f
+#define AGRUNT_CHASE_DIST			512.0f	// chases an enemy that is further away
 #define AGRUNT_MELEE_DIST			64.0f
 #define AGRUNT_RANGE_DIST			1024.0f
+#define AGRUNT_MIN_HORNETS			4
+#define AGRUNT_MAX_HORNETS			6
 
-#define AGRUNT_VOL					1.0f
-#define AGRUNT_ATTN_IDLE			2.0f	// 0x40000000
-#define AGRUNT_ATTN_COMBAT			0.8f	// 0x3F4CCCCD
+#define HORNET_HEALTH				1.0f
+#define HORNET_DAMAGE				10.0f
+#define HORNET_LAUNCH_SPEED			150.0f
+#define HORNET_SPEED				300.0f	// flying straight at the enemy
+#define HORNET_HOMING_DELAY			0.6f	// flies straight this long before homing in
+#define HORNET_BUZZ_VOLUME			0.6f
+#define HORNET_BLOOD_COLOR			54
 
-#define HORNET_DAMAGE				10.0f	// 0x41200000
-#define HORNET_SPEED				300.0f
-#define HORNET_VOL					0.6f	// 0x3F19999A
+// GetAnimationEventFlags() bits: any of the event types 1 to 4 launches a hornet
+#define AGRUNT_AE_HORNET			((1<<1) | (1<<2) | (1<<3) | (1<<4))
 
-//=========================================================
-// Sound Table
-//=========================================================
+// agrunt.mdl sequences, named by what SetActivity uses them for
+enum
+{
+	AGRUNT_SEQ_IDLE = 0,			// also MONSTERSTATE_IDLE2 and MONSTERSTATE_COMBAT
+	AGRUNT_SEQ_IDLE3,
+	AGRUNT_SEQ_UNUSED1,				// accepted by SetActivity, but no state plays it
+	AGRUNT_SEQ_WALK,
+	AGRUNT_SEQ_RUN,					// MONSTERSTATE_CHASE
+	AGRUNT_SEQ_UNUSED2 = 7,			// accepted by SetActivity, but no state plays it
+	AGRUNT_SEQ_MELEE_ATTACK = 10,
+	AGRUNT_SEQ_DIE1 = 12,
+	AGRUNT_SEQ_DIE3,
+	AGRUNT_SEQ_RANGE_ATTACK,		// fires the hornets
+	AGRUNT_SEQ_SPAWN,				// matches no state, so the first SetActivity always switches
+};
 
-static const char* pHornetBuzzSounds[] =
+static const char szAGruntModel[] = "models/agrunt.mdl";
+static const char szHornetModel[] = "models/hornet.mdl";
+
+static const char *pHornetBuzzSounds[] =
 {
 	"hornet/ag_buzz1.wav",
 	"hornet/ag_buzz2.wav",
 	"hornet/ag_buzz3.wav",
 };
 
-static const char* pAlertSounds[] =
+static const char *pAlertSounds[] =
 {
 	"agrunt/ag_alert1.wav",
 	"agrunt/ag_alert2.wav",
 	"agrunt/ag_alert3.wav",
 };
 
-static const char* pFireSounds[] =
+static const char *pFireSounds[] =
 {
 	"agrunt/ag_fire1.wav",
 	"agrunt/ag_fire2.wav",
 	"agrunt/ag_fire3.wav",
 };
 
-static const char* pDieSounds[] =
+static const char *pDieSounds[] =
 {
 	"agrunt/ag_die1.wav",
 	"agrunt/ag_die2.wav",
 	"agrunt/ag_die3.wav",
 };
 
-static const char* pIdleSounds[] =
+static const char *pIdleSounds[] =
 {
 	"agrunt/ag_idle1.wav",
 	"agrunt/ag_idle2.wav",
@@ -87,7 +100,7 @@ static const char* pIdleSounds[] =
 	"agrunt/ag_idle7.wav",
 };
 
-static const char* pPainSounds[] =
+static const char *pPainSounds[] =
 {
 	"agrunt/ag_pain1.wav",
 	"agrunt/ag_pain2.wav",
@@ -97,285 +110,214 @@ static const char* pPainSounds[] =
 };
 
 //=========================================================
-// CHornet - alien grunt hornet projectile
+// NormalizeVector - scales vec to unit length. Returns FALSE,
+// leaving vec alone, when it has no length.
 //=========================================================
+static BOOL NormalizeVector(Vector &vec)
+{
+	float flLength = vec.Length();
+	if (flLength <= 0.0f)
+		return FALSE;
 
+	vec = vec * (1.0f / flLength);
+	return TRUE;
+}
+
+//=========================================================
+// Hornet - homing projectile of the alien grunt
+//=========================================================
 class CHornet : public CBaseMonster
 {
 public:
-	void Init(entvars_t* pevOwner);
-	void Touch(CBaseEntity* pOther);	// vtable slot 6
+	void Init(entvars_t *pevOwner);
+	void Touch(CBaseEntity *pOther);
+	void HornetThink(CBaseEntity *pOther);
+	void Death(int iDeathType);
 
-private:
-	void HornetThink(CBaseEntity* pOther);	// m_pfnThink
-	void Death(int gibType);				// vtable slot 14
+	unsigned char	m_bBloodColor;		// set on launch, never read
+	int				m_iUnused;			// cleared on launch, never read
+	float			m_flLaunchTime;		// never read
 };
 
-HL_COMPILE_TIME_ASSERT(sizeof(CHornet) <= 344, CHornet_private_data_size);
-
 //=========================================================
-// Init
+// Init - launches the hornet from pevOwner at its enemy
 //=========================================================
-void CHornet::Init(entvars_t* pevOwner)
+void CHornet::Init(entvars_t *pevOwner)
 {
-	if (!pev || !pevOwner)
-		return;
+	UTIL_MakeVectors(pevOwner->angles);
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (!edict)
-		return;
+	pev->movetype = MOVETYPE_FLYMISSILE;
+	pev->solid = SOLID_BBOX;
+	pev->health = HORNET_HEALTH;
+	pev->takedamage = DAMAGE_AIM;
 
-	EngineMakeVectors((const float*)&PevVector(pevOwner, PEV_ANGLES));
+	SET_MODEL(ENT(pev), szHornetModel);
+	UTIL_SetSize(pev, Vector(-6.0f, -6.0f, -6.0f), Vector(6.0f, 6.0f, 6.0f));
 
-	PevFloat(pev, PEV_MOVETYPE) = 9.0f;			// 0x41100000
-	PevFloat(pev, PEV_SOLID) = 2.0f;			// 0x40000000
-	PevFloat(pev, PEV_HEALTH) = 1.0f;			// 0x3F800000
-	PevFloat(pev, PEV_TAKEDAMAGE) = 2.0f;		// 0x40000000
+	pev->owner = OFFSET(pevOwner);
 
-	EngineSetModel(edict, kHornetModel);
+	// start in front of the owner, off to its right
+	pev->origin = Vector(pevOwner->origin.x, pevOwner->origin.y, pevOwner->origin.z + 48.0f)
+		+ gpGlobals->v_forward * 64.0f + gpGlobals->v_right * 24.0f;
 
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 6.0f, 6.0f, 6.0f);
-		VecSet(mins, -6.0f, -6.0f, -6.0f);
-		EngineSetSize(edict, mins, maxs);
-	}
+	float flSpread = RANDOM_FLOAT(-0.5f, 0.5f);
+	pev->velocity = (gpGlobals->v_right * flSpread + gpGlobals->v_forward) * HORNET_LAUNCH_SPEED;
+	pev->angles = UTIL_VecToAngles(pev->velocity);
 
-	PevInt(pev, PEV_OWNER_ENTINDEX) = EngineIndexOfEdict(EdictFromEntvars(pevOwner));
+	pev->enemy = pevOwner->enemy;
 
-	void* globals = gpGlobals;
-	const float* forward = GlobalsForward(globals);
-	const float* right = GlobalsRight(globals);
-
-	const float* ownerOrigin = (const float*)&PevVector(pevOwner, PEV_ORIGIN);
-
-	// The original writes pev->origin directly (not via SetOrigin).
-	float* origin = (float*)&PevVector(pev, PEV_ORIGIN);
-	origin[0] = forward[0] * 64.0f + ownerOrigin[0] + right[0] * 24.0f;
-	origin[1] = forward[1] * 64.0f + ownerOrigin[1] + right[1] * 24.0f;
-	origin[2] = ownerOrigin[2] + 48.0f + forward[2] * 64.0f + right[2] * 24.0f;
-
-	float spread = RandomFloat(-0.5f, 0.5f);	// -0.5 (0xBF000000) .. 0.5 (0x3F000000)
-	float* velocity = (float*)&PevVector(pev, PEV_VELOCITY);
-	velocity[0] = (right[0] * spread + forward[0]) * 150.0f;
-	velocity[1] = (right[1] * spread + forward[1]) * 150.0f;
-	velocity[2] = (spread * right[2] + forward[2]) * 150.0f;
-
-	{
-		float angles[3];
-		EngineVecToAngles(velocity, angles);
-		VecCopy((float*)&PevVector(pev, PEV_ANGLES), angles);
-	}
-
-	PevInt(pev, PEV_ENEMY) = PevInt(pevOwner, PEV_ENEMY);
-
-	// Hornet blood color (single byte at this+296 in the 344-byte private data).
-	*((unsigned char*)this + 296) = 54;
-
-	// Lifetime tracking fields the original stamps at this+336/this+340.
-	*(int*)((unsigned char*)this + 336) = 0;
-	*(float*)((unsigned char*)this + 340) = GlobalTime();
+	m_bBloodColor = HORNET_BLOOD_COLOR;
+	m_iUnused = 0;
+	m_flLaunchTime = gpGlobals->time;
 
 	SetTouch(&CHornet::Touch);
 	SetThink(&CHornet::HornetThink);
 
 	{
-		const char* sample;
-		int n = rand() % 3;
-		if (n == 1)
-			sample = pFireSounds[1];
-		else if (n == 2)
-			sample = pFireSounds[2];
+		const char *pszSample;
+		int iSound = RANDOM_LONG(0, 2);
+		if (iSound == 1)
+			pszSample = pFireSounds[1];
+		else if (iSound == 2)
+			pszSample = pFireSounds[2];
 		else
-			sample = pFireSounds[0];
+			pszSample = pFireSounds[0];
 
-		EngineEmitSound(edict, 2, sample, AGRUNT_VOL, AGRUNT_ATTN_COMBAT);
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSample, VOL_NORM, ATTN_NORM);
 	}
 
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 0.6f;
+	pev->nextthink = gpGlobals->time + HORNET_HOMING_DELAY;
 }
 
 //=========================================================
 // Death
 //=========================================================
-void CHornet::Death(int gibType)
+void CHornet::Death(int iDeathType)
 {
-	HL_UNUSED(gibType);
-
-	if (!pev)
-		return;
-
 	SetThink(&CBaseEntity::SUB_Remove);
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime();
+	pev->nextthink = gpGlobals->time;
 }
 
 //=========================================================
-// Touch
+// Touch - stings whatever it hits, then disappears
 //=========================================================
-void CHornet::Touch(CBaseEntity* pOther)
+void CHornet::Touch(CBaseEntity *pOther)
 {
-	HL_UNUSED(pOther);
+	EOFFSET eoffsetOther = gpGlobals->other;
+	edict_t *pentOther = ENT(eoffsetOther);
+	entvars_t *pevOther = VARS(pentOther);
 
-	if (!pev)
+	// don't sting the agrunt that fired us
+	if (eoffsetOther == pev->owner)
 		return;
 
-	void* globals = gpGlobals;
-	if (!globals)
+	// don't sting another hornet
+	if (pevOther->modelindex == pev->modelindex)
 		return;
 
-	int otherIndex = *GlobalsInt(globals, GLOBALS_OTHER_ENTINDEX);
-	edict_t* otherEdict = EnginePEntityOfEntIndex(otherIndex);
-	entvars_t* pevOther = otherEdict ? EngineGetVarsOfEnt(otherEdict) : NULL;
-
-	// Don't strike the agrunt that fired us.
-	if (otherIndex == PevInt(pev, PEV_OWNER_ENTINDEX))
-		return;
-
-	// Don't strike another hornet (same model index).
-	if (pevOther && PevInt(pevOther, PEV_MODELINDEX) == PevInt(pev, PEV_MODELINDEX))
-		return;
-
-	if (pevOther && (PevInt(pevOther, PEV_TAKEDAMAGE) & 0x7FFFFFFF) != 0)
+	if (pevOther->takedamage != DAMAGE_NO)
 	{
-		const char* sample;
-		int n = rand() % 3;
-		if (n == 1)
-			sample = pHornetBuzzSounds[1];
-		else if (n == 2)
-			sample = pHornetBuzzSounds[2];
+		const char *pszSample;
+		int iSound = RANDOM_LONG(0, 2);
+		if (iSound == 1)
+			pszSample = pHornetBuzzSounds[1];
+		else if (iSound == 2)
+			pszSample = pHornetBuzzSounds[2];
 		else
-			sample = pHornetBuzzSounds[0];
+			pszSample = pHornetBuzzSounds[0];
 
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineEmitSound(edict, 2, sample, HORNET_VOL, AGRUNT_ATTN_COMBAT);
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSample, HORNET_BUZZ_VOLUME, ATTN_NORM);
 
-		CBaseEntity* pHit = (CBaseEntity*)EngineGetPrivateData(otherEdict);
+		CBaseEntity *pHit = CBaseEntity::Instance(pentOther);
 		if (pHit)
 			pHit->TakeDamage(pev, pev, HORNET_DAMAGE);
 	}
 
-	PevInt(pev, PEV_MODELINDEX) = 0;
-	PevFloat(pev, PEV_SOLID) = 0.0f;
+	pev->modelindex = 0;
+	pev->solid = SOLID_NOT;
 
 	SetThink(&CBaseEntity::SUB_Remove);
-	SetNextThink(AGRUNT_THINK_INTERVAL);
+	pev->nextthink = gpGlobals->time + AGRUNT_THINK_INTERVAL;
 }
 
 //=========================================================
-// HornetThink
+// HornetThink - steers towards the enemy
 //=========================================================
-void CHornet::HornetThink(CBaseEntity* pOther)
+void CHornet::HornetThink(CBaseEntity *pOther)
 {
-	if (!pev)
-		return;
+	entvars_t *pevEnemy = VARS(pev->enemy);
 
-	edict_t* enemyEdict = EnginePEntityOfEntIndex(PevInt(pev, PEV_ENEMY));
-	entvars_t* enemyVars = enemyEdict ? EngineGetVarsOfEnt(enemyEdict) : NULL;
-
-	if (!enemyVars || PevFloat(enemyVars, PEV_HEALTH) <= 0.0f)
+	// the enemy is dead, go away soon
+	if (pevEnemy->health <= 0.0f)
 	{
 		SetThink(&CBaseEntity::SUB_Remove);
-		PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 0.1f;
-		if (!enemyVars)
-			return;
+		pev->nextthink = gpGlobals->time + AGRUNT_THINK_INTERVAL;
 	}
 
-	const float* origin = (const float*)&PevVector(pev, PEV_ORIGIN);
-	const float* enemyOrigin = (const float*)&PevVector(enemyVars, PEV_ORIGIN);
+	Vector vecDirToEnemy = pevEnemy->origin - pev->origin;
+	NormalizeVector(vecDirToEnemy);
 
-	float desired[3];
-	desired[0] = enemyOrigin[0] - origin[0];
-	desired[1] = enemyOrigin[1] - origin[1];
-	desired[2] = enemyOrigin[2] - origin[2];
-	VecNormalize(desired);
+	Vector vecFlightDir = pev->velocity;
+	NormalizeVector(vecFlightDir);
 
-	float* velocity = (float*)&PevVector(pev, PEV_VELOCITY);
-	float velDir[3];
-	VecCopy(velDir, velocity);
-	VecNormalize(velDir);
-
-	float dot = VecDot(desired, velDir);
-	if (dot < 0.5f)	// flt double == 0.5
+	// buzz when turning by more than 60 degrees
+	float flDot = DotProduct(vecDirToEnemy, vecFlightDir);
+	if (flDot < 0.5f)
 	{
-		const char* sample;
-		int n = rand() % 3;
-		if (n == 1)
-			sample = pHornetBuzzSounds[1];
-		else if (n == 2)
-			sample = pHornetBuzzSounds[2];
+		const char *pszSample;
+		int iSound = RANDOM_LONG(0, 2);
+		if (iSound == 1)
+			pszSample = pHornetBuzzSounds[1];
+		else if (iSound == 2)
+			pszSample = pHornetBuzzSounds[2];
 		else
-			sample = pHornetBuzzSounds[0];
+			pszSample = pHornetBuzzSounds[0];
 
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineEmitSound(edict, 2, sample, HORNET_VOL, AGRUNT_ATTN_COMBAT);
+		EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSample, HORNET_BUZZ_VOLUME, ATTN_NORM);
 	}
 
-	if (dot <= 0.0f)
-		dot = 0.25f;
+	// slow down in turns, to a quarter of the speed when the enemy is behind
+	if (flDot <= 0.0f)
+		flDot = 0.25f;
 
-	float newDir[3];
-	newDir[0] = desired[0] + velDir[0];
-	newDir[1] = desired[1] + velDir[1];
-	newDir[2] = desired[2] + velDir[2];
-	if (!VecNormalize(newDir))
-		VecSet(newDir, 0.0f, 0.0f, 0.0f);
+	Vector vecNewDir = vecDirToEnemy + vecFlightDir;
+	if (!NormalizeVector(vecNewDir))
+		vecNewDir = g_vecZero;
 
-	velocity[0] = newDir[0];
-	velocity[1] = newDir[1];
-	velocity[2] = newDir[2];
+	pev->velocity = vecNewDir;
+	pev->velocity.x += RANDOM_FLOAT(-0.1f, 0.1f);
+	pev->velocity.y += RANDOM_FLOAT(-0.1f, 0.1f);
+	pev->velocity.z += RANDOM_FLOAT(-0.1f, 0.1f);
 
-	velocity[0] += RandomFloat(-0.1f, 0.1f);
-	velocity[1] += RandomFloat(-0.1f, 0.1f);
-	velocity[2] += RandomFloat(-0.1f, 0.1f);
-
-	{
-		float speed = dot * HORNET_SPEED;
-		velocity[0] = velocity[0] * speed;
-		velocity[1] = velocity[1] * speed;
-		velocity[2] = velocity[2] * speed;
-	}
-
-	{
-		float angles[3];
-		EngineVecToAngles(velocity, angles);
-		VecCopy((float*)&PevVector(pev, PEV_ANGLES), angles);
-	}
+	pev->velocity = pev->velocity * (flDot * HORNET_SPEED);
+	pev->angles = UTIL_VecToAngles(pev->velocity);
 
 	AdvanceAnimation(AGRUNT_THINK_INTERVAL);
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 0.1f;
+	pev->nextthink = gpGlobals->time + AGRUNT_THINK_INTERVAL;
 }
 
 //=========================================================
-// CAGrunt
+// Alien grunt
 //=========================================================
-
 class CAGrunt : public CBaseMonster
 {
 public:
 	void Spawn();
 	int Classify();
+	void SetActivity(int activity);
+	void IdleSound();
+	void AlertSound();
+	int CheckAttacks(entvars_t *pevEnemy, float flDist);
+	void Pain(float flDamage);
+	void Death(int iDeathType);
 
-private:
-	void SetActivity(int activity);	// slot 10
-	void IdleSound();				// slot 15
-	void AlertSound();				// slot 12
-	int CheckAttacks(entvars_t* pevEnemy, float flDist);	// slot 16
+	void MeleeAttack(CBaseEntity *pOther);
+	void HornetAttack(CBaseEntity *pOther);
 
-	void Pain(float flDamage);		// slot 13
-	void Death(int gibType);		// slot 14
+	CHornet *CreateHornet();
 
-	void MeleeAttack(CBaseEntity* pOther);				// m_pfnThink
-	void HornetAttack(CBaseEntity* pOther);			// m_pfnThink
-
-	CHornet* CreateHornet();
-
-	int m_iHornetCount;
+	int		m_iHornetCount;			// set for each volley, never read
 };
-
-HL_COMPILE_TIME_ASSERT(sizeof(CAGrunt) <= 336, CAGrunt_private_data_size);
 
 //=========================================================
 // Spawn
@@ -384,64 +326,47 @@ void CAGrunt::Spawn()
 {
 	int i;
 
-	EnginePrecacheModel(kAGruntModel);
-	EnginePrecacheModel(kHornetModel);
+	PRECACHE_MODEL(szAGruntModel);
+	PRECACHE_MODEL(szHornetModel);
 
-	for (i = 0; i < (int)ARRAYSIZE(pHornetBuzzSounds); ++i)
-		EnginePrecacheSound(pHornetBuzzSounds[i]);
+	for (i = 0; i < ARRAYSIZE(pHornetBuzzSounds); i++)
+		PRECACHE_SOUND(pHornetBuzzSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pAlertSounds); ++i)
-		EnginePrecacheSound(pAlertSounds[i]);
+	for (i = 0; i < ARRAYSIZE(pAlertSounds); i++)
+		PRECACHE_SOUND(pAlertSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pFireSounds); ++i)
-		EnginePrecacheSound(pFireSounds[i]);
+	for (i = 0; i < ARRAYSIZE(pFireSounds); i++)
+		PRECACHE_SOUND(pFireSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pDieSounds); ++i)
-		EnginePrecacheSound(pDieSounds[i]);
+	for (i = 0; i < ARRAYSIZE(pDieSounds); i++)
+		PRECACHE_SOUND(pDieSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pIdleSounds); ++i)
-		EnginePrecacheSound(pIdleSounds[i]);
+	for (i = 0; i < ARRAYSIZE(pIdleSounds); i++)
+		PRECACHE_SOUND(pIdleSounds[i]);
 
-	for (i = 0; i < (int)ARRAYSIZE(pPainSounds); ++i)
-		EnginePrecacheSound(pPainSounds[i]);
+	for (i = 0; i < ARRAYSIZE(pPainSounds); i++)
+		PRECACHE_SOUND(pPainSounds[i]);
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineSetModel(edict, kAGruntModel);
+	SET_MODEL(ENT(pev), szAGruntModel);
+	UTIL_SetSize(pev, Vector(-32.0f, -32.0f, 0.0f), Vector(32.0f, 32.0f, 64.0f));
 
-	{
-		float mins[3];
-		float maxs[3];
-		VecSet(maxs, 32.0f, 32.0f, 64.0f);
-		VecSet(mins, -32.0f, -32.0f, 0.0f);
-		if (edict)
-			EngineSetSize(edict, mins, maxs);
-	}
+	pev->solid = SOLID_SLIDEBOX;
+	pev->movetype = MOVETYPE_STEP;
+	pev->effects = 0;
+	pev->health = RANDOM_FLOAT(0.0f, AGRUNT_EXTRA_HEALTH) + AGRUNT_MIN_HEALTH;
+	pev->yaw_speed = AGRUNT_YAW_SPEED;
+	pev->sequence = AGRUNT_SEQ_SPAWN;
 
-	PevFloat(pev, PEV_SOLID) = 3.0f;			// 0x40400000
-	PevFloat(pev, PEV_MOVETYPE) = 4.0f;			// 0x40800000
-	PevFloat(pev, PEV_STUCK) = 0.0f;
-	PevFloat(pev, PEV_HEALTH) = RandomFloat(0.0f, 30.0f) + 70.0f;	// 30.0 = 0x41F00000
-	PevFloat(pev, PEV_YAWSPEED) = 8.0f;			// 0x41000000
-	PevInt(pev, PEV_SEQUENCE) = 15;
-
-	// The binary writes 512.0 to object offset 256 = m_flDistTooFar, the
-	// chase/run distance threshold the SHARED CBaseMonster::MonsterThink reads
-	// (monsters.cpp). Storing it elsewhere left m_flDistTooFar at 0, so the grunt
-	// always treated the enemy as "too far" and picked the wrong activity.
-	m_flDistTooFar = 512.0f;					// 0x44000000  (this+256)
-	m_bloodColor = -61;
+	m_flDistTooFar = AGRUNT_CHASE_DIST;
+	m_bloodColor = (signed char)BLOOD_COLOR_YELLOW;	// sign-extended, only its low byte is used
 
 	SetThink(&CBaseMonster::WalkMonsterStart);
-	PevFloat(pev, PEV_NEXTTHINK) = RandomFloat(0.0f, 0.5f) + PevFloat(pev, PEV_NEXTTHINK) + 0.5f;
+	pev->nextthink = RANDOM_FLOAT(0.0f, 0.5f) + pev->nextthink + 0.5f;
 }
 
-//=========================================================
-// Classify
-//=========================================================
 int CAGrunt::Classify()
 {
-	return 2;
+	return CLASS_ALIEN_MILITARY;
 }
 
 //=========================================================
@@ -453,63 +378,60 @@ void CAGrunt::SetActivity(int activity)
 
 	switch (activity)
 	{
-	case 1:
-	case 2:
-	case 7:
-		sequence = 0;
+	case MONSTERSTATE_IDLE:
+	case MONSTERSTATE_IDLE2:
+	case MONSTERSTATE_COMBAT:
+		sequence = AGRUNT_SEQ_IDLE;
 		break;
-	case 3:
-		sequence = 1;
+	case MONSTERSTATE_IDLE3:
+		sequence = AGRUNT_SEQ_IDLE3;
 		break;
-	case 4:
-		sequence = 3;
+	case MONSTERSTATE_WALK:
+		sequence = AGRUNT_SEQ_WALK;
 		break;
-	case 8:
-		sequence = 4;
+	case MONSTERSTATE_CHASE:
+		sequence = AGRUNT_SEQ_RUN;
 		break;
-	case 29:
-		sequence = 10;
+	case MONSTERSTATE_MELEE_ATTACK:
+		sequence = AGRUNT_SEQ_MELEE_ATTACK;
 		break;
-	case 30:
-		sequence = 14;
+	case MONSTERSTATE_RANGE_ATTACK:
+		sequence = AGRUNT_SEQ_RANGE_ATTACK;
 		break;
-	case 35:
-		sequence = 12;
+	case MONSTERSTATE_DIE1:
+		sequence = AGRUNT_SEQ_DIE1;
 		break;
-	case 37:
-		sequence = 13;
+	case MONSTERSTATE_DIE3:
+		sequence = AGRUNT_SEQ_DIE3;
 		break;
 	default:
-		EngineAlertMessage(1, "AGrunt's monster state is bogus: %d", activity);
+		ALERT(at_console, "AGrunt's monster state is bogus: %d", activity);
 		return;
 	}
 
-	if (PevInt(pev, PEV_SEQUENCE) == sequence)
+	if (pev->sequence == sequence)
 		return;
 
-	PevInt(pev, PEV_SEQUENCE) = sequence;
-	PevFloat(pev, PEV_FRAME) = 0.0f;
+	pev->sequence = sequence;
+	pev->frame = 0;
 	ResetSequenceInfo(AGRUNT_THINK_INTERVAL);
 
-	// The binary validates the resolved sequence after rebuilding sequence
-	// info. The activity switch above does not produce the rejected values, but
-	// keep the alert path for parity with the binary.
 	switch (sequence)
 	{
-	case 0:
-	case 1:
-	case 2:
-	case 3:
-	case 4:
-	case 7:
-	case 10:
-	case 12:
-	case 13:
-	case 14:
+	case AGRUNT_SEQ_IDLE:
+	case AGRUNT_SEQ_IDLE3:
+	case AGRUNT_SEQ_UNUSED1:
+	case AGRUNT_SEQ_WALK:
+	case AGRUNT_SEQ_RUN:
+	case AGRUNT_SEQ_UNUSED2:
+	case AGRUNT_SEQ_MELEE_ATTACK:
+	case AGRUNT_SEQ_DIE1:
+	case AGRUNT_SEQ_DIE3:
+	case AGRUNT_SEQ_RANGE_ATTACK:
 		break;
 
 	default:
-		EngineAlertMessage(1, "Bogus AGrunt anim: %d", sequence);
+		ALERT(at_console, "Bogus AGrunt anim: %d", sequence);
 		m_flFrameRate = 0.0f;
 		m_flGroundSpeed = 0.0f;
 		break;
@@ -521,43 +443,38 @@ void CAGrunt::SetActivity(int activity)
 //=========================================================
 void CAGrunt::IdleSound()
 {
-	if (!pev)
-		return;
-
-	const char* sample;
-	switch (rand() % 7)
+	const char *pszSample;
+	switch (RANDOM_LONG(0, 6))
 	{
 	case 1:
-		sample = pIdleSounds[1];
+		pszSample = pIdleSounds[1];
 		break;
 	case 2:
-		sample = pIdleSounds[2];
+		pszSample = pIdleSounds[2];
 		break;
 	case 3:
-		sample = pIdleSounds[3];
+		pszSample = pIdleSounds[3];
 		break;
 	case 4:
-		sample = pIdleSounds[4];
+		pszSample = pIdleSounds[4];
 		break;
 	case 5:
-		sample = pIdleSounds[5];
+		pszSample = pIdleSounds[5];
 		break;
 	case 6:
-		sample = pIdleSounds[6];
+		pszSample = pIdleSounds[6];
 		break;
 	default:
-		sample = pIdleSounds[0];
+		pszSample = pIdleSounds[0];
 		break;
 	}
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, sample, AGRUNT_VOL, AGRUNT_ATTN_IDLE);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSample, VOL_NORM, ATTN_IDLE);
 
-	if ((rand() % 7) >= 4)
-		m_flNextSoundTime = GlobalTime() + 5.0f;
+	if (RANDOM_LONG(0, 6) >= 4)
+		m_flNextSoundTime = gpGlobals->time + 5.0f;
 	else
-		m_flNextSoundTime = GlobalTime() + 1.0f;
+		m_flNextSoundTime = gpGlobals->time + 1.0f;
 }
 
 //=========================================================
@@ -565,276 +482,174 @@ void CAGrunt::IdleSound()
 //=========================================================
 void CAGrunt::AlertSound()
 {
-	if (!pev)
-		return;
+	m_MonsterState = MONSTERSTATE_CHASE;
 
-	m_MonsterState = 8;
-
-	const char* sample;
-	int n = rand() % 3;
-	if (n == 1)
-		sample = pAlertSounds[1];
-	else if (n == 2)
-		sample = pAlertSounds[2];
+	const char *pszSample;
+	int iSound = RANDOM_LONG(0, 2);
+	if (iSound == 1)
+		pszSample = pAlertSounds[1];
+	else if (iSound == 2)
+		pszSample = pAlertSounds[2];
 	else
-		sample = pAlertSounds[0];
+		pszSample = pAlertSounds[0];
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, sample, AGRUNT_VOL, AGRUNT_ATTN_COMBAT);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSample, VOL_NORM, ATTN_NORM);
 
-	m_flNextAttack = GlobalTime() + 1.0f;
+	m_flNextAttack = gpGlobals->time + 1.0f;
 }
 
 //=========================================================
-// Pain - vtable slot 13
+// Pain
 //=========================================================
 void CAGrunt::Pain(float flDamage)
 {
-	HL_UNUSED(flDamage);
-
-	if (!pev)
-		return;
-
-	const char* sample;
-	switch (rand() % 5)
+	const char *pszSample;
+	switch (RANDOM_LONG(0, 4))
 	{
 	case 1:
-		sample = pPainSounds[1];
+		pszSample = pPainSounds[1];
 		break;
 	case 2:
-		sample = pPainSounds[2];
+		pszSample = pPainSounds[2];
 		break;
 	case 3:
-		sample = pPainSounds[3];
+		pszSample = pPainSounds[3];
 		break;
 	case 4:
-		sample = pPainSounds[4];
+		pszSample = pPainSounds[4];
 		break;
 	default:
-		sample = pPainSounds[0];
+		pszSample = pPainSounds[0];
 		break;
 	}
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, sample, AGRUNT_VOL, AGRUNT_ATTN_COMBAT);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSample, VOL_NORM, ATTN_NORM);
 
-	PevFloat(pev, PEV_PAIN_FINISHED) = GlobalTime() + 1.0f;
+	pev->pain_finished = gpGlobals->time + 1.0f;
 
-	// Original calls vtable slot 12 (AlertSound) when idling/walking.
-	if (m_MonsterState == 1 || m_MonsterState == 4)
+	if (m_MonsterState == MONSTERSTATE_IDLE || m_MonsterState == MONSTERSTATE_WALK)
 		AlertSound();
 }
 
 //=========================================================
-// Death - vtable slot 14
+// Death
 //=========================================================
-void CAGrunt::Death(int gibType)
+void CAGrunt::Death(int iDeathType)
 {
-	HL_UNUSED(gibType);
-
-	if (!pev)
-		return;
-
-	const char* sample;
-	int n = rand() % 3;
-	if (n == 1)
-		sample = pDieSounds[1];
-	else if (n == 2)
-		sample = pDieSounds[2];
+	const char *pszSample;
+	int iSound = RANDOM_LONG(0, 2);
+	if (iSound == 1)
+		pszSample = pDieSounds[1];
+	else if (iSound == 2)
+		pszSample = pDieSounds[2];
 	else
-		sample = pDieSounds[0];
+		pszSample = pDieSounds[0];
 
-	edict_t* edict = EdictFromEntvars(pev);
-	if (edict)
-		EngineEmitSound(edict, 2, sample, AGRUNT_VOL, AGRUNT_ATTN_COMBAT);
+	EMIT_SOUND(ENT(pev), CHAN_VOICE, pszSample, VOL_NORM, ATTN_NORM);
 
-	// SetDeathState(0) - die forwards.
-	m_MonsterState = 35;
-	PevFloat(pev, PEV_IDEAL_YAW) = PevVector(pev, PEV_ANGLES).y;
+	// same as SetDeathActivity(DEATH_NORMAL)
+	m_MonsterState = MONSTERSTATE_DIE1;
+	pev->ideal_yaw = pev->angles.y;
 	SetActivity(m_MonsterState);
 	SetThink(&CBaseMonster::MonsterThink);
-	SetNextThink(AGRUNT_THINK_INTERVAL);
+	pev->nextthink = gpGlobals->time + AGRUNT_THINK_INTERVAL;
 }
-
-//=========================================================
-// TakeDamage routes through the shared CBaseMonster::TakeDamage
-// (vtable slot 17), which raises Pain / Death.
-//=========================================================
 
 //=========================================================
 // CheckAttacks
 //=========================================================
-int CAGrunt::CheckAttacks(entvars_t* pevEnemy, float flDist)
+int CAGrunt::CheckAttacks(entvars_t *pevEnemy, float flDist)
 {
 	if (flDist <= AGRUNT_MELEE_DIST && CheckMeleeAttack(pevEnemy))
 	{
-		m_IdealMonsterState = 7;
+		m_IdealMonsterState = MONSTERSTATE_COMBAT;
 		SetThink(&CAGrunt::MeleeAttack);
-		return 1;
+		return TRUE;
 	}
 
 	if (CheckRangeAttack(pevEnemy) && flDist <= AGRUNT_RANGE_DIST)
 	{
-		m_IdealMonsterState = 7;
-		m_iHornetCount = RandomLong(4, 6);
+		m_IdealMonsterState = MONSTERSTATE_COMBAT;
+		m_iHornetCount = RANDOM_LONG(AGRUNT_MIN_HORNETS, AGRUNT_MAX_HORNETS);
 		SetThink(&CAGrunt::HornetAttack);
-		return 1;
+		return TRUE;
 	}
 
-	return 0;
+	return FALSE;
 }
 
 //=========================================================
-// MeleeAttack
+// MeleeAttack - plays the melee animation, it does no damage
 //=========================================================
-void CAGrunt::MeleeAttack(CBaseEntity* pOther)
+void CAGrunt::MeleeAttack(CBaseEntity *pOther)
 {
-	if (!pev)
-		return;
+	pev->nextthink = gpGlobals->time + AGRUNT_THINK_INTERVAL;
 
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 0.1f;
-
-	if (m_MonsterState != 29)
+	if (m_MonsterState != MONSTERSTATE_MELEE_ATTACK)
 	{
-		m_MonsterState = 29;
-		SetActivity(29);
-		m_flNextAttack = GlobalTime() + 2.0f;
+		m_MonsterState = MONSTERSTATE_MELEE_ATTACK;
+		SetActivity(MONSTERSTATE_MELEE_ATTACK);
+		m_flNextAttack = gpGlobals->time + 2.0f;
 	}
 
 	AdvanceAnimation(AGRUNT_THINK_INTERVAL);
 
-	{
-		entvars_t* pevEnemy = NULL;
-		edict_t* pEnemyEdict = EnginePEntityOfEntIndex(PevInt(pev, PEV_ENEMY));
-		pevEnemy = pEnemyEdict ? EngineGetVarsOfEnt(pEnemyEdict) : NULL;
-		if (pevEnemy)
-			UpdateEnemyInfo(pevEnemy);
-	}
+	UpdateEnemyInfo(VARS(pev->enemy));
+	CHANGE_YAW(ENT(pev));
 
-	{
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineChangeYaw(edict);
-	}
-
-	if (PevFloat(pev, PEV_FRAME) >= 255.0f)	// 0x437F0000
+	// the animation has played through
+	if (pev->frame >= 255.0f)
 	{
 		SetThink(&CBaseMonster::MonsterThink);
 		m_MonsterState = m_IdealMonsterState;
-		m_flNextAttack = GlobalTime() + 1.0f;
+		m_flNextAttack = gpGlobals->time + 1.0f;
 	}
 }
 
 //=========================================================
-// CreateHornet (inline allocation)
+// CreateHornet
 //=========================================================
-CHornet* CAGrunt::CreateHornet()
+CHornet *CAGrunt::CreateHornet()
 {
-	edict_t* created = EngineCreateEntity();
-	entvars_t* hornetVars = created ? EngineGetVarsOfEnt(created) : NULL;
-	if (!created || !hornetVars)
-		return NULL;
-
-	void* privateData = EngineGetPrivateData(created);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(created, 344);
-		if (!privateData)
-			return NULL;
-
-		memset(privateData, 0, 344);
-
-		CHornet* hornet = new (privateData) CHornet();
-		hornet->pev = hornetVars;
-		return hornet;
-	}
-
-	CHornet* hornet = (CHornet*)privateData;
-	hornet->pev = hornetVars;
-	return hornet;
+	return GetClassPtr((CHornet *)NULL);
 }
 
 //=========================================================
-// HornetAttack
+// HornetAttack - launches a hornet whenever the animation
+// reaches a launch event
 //=========================================================
-void CAGrunt::HornetAttack(CBaseEntity* pOther)
+void CAGrunt::HornetAttack(CBaseEntity *pOther)
 {
-	if (!pev)
-		return;
+	pev->nextthink = gpGlobals->time + AGRUNT_THINK_INTERVAL;
 
-	PevFloat(pev, PEV_NEXTTHINK) = GlobalTime() + 0.1f;
-
-	if (m_MonsterState != 30)
+	if (m_MonsterState != MONSTERSTATE_RANGE_ATTACK)
 	{
-		float next = GlobalTime() + 2.0f;
-		m_MonsterState = 30;
-		m_flNextAttack = next;
-		SetActivity(30);
+		float flNextAttack = gpGlobals->time + 2.0f;
+		m_MonsterState = MONSTERSTATE_RANGE_ATTACK;
+		m_flNextAttack = flNextAttack;
+		SetActivity(MONSTERSTATE_RANGE_ATTACK);
 	}
 
-	{
-		entvars_t* pevEnemy = NULL;
-		edict_t* pEnemyEdict = EnginePEntityOfEntIndex(PevInt(pev, PEV_ENEMY));
-		pevEnemy = pEnemyEdict ? EngineGetVarsOfEnt(pEnemyEdict) : NULL;
-		if (pevEnemy)
-			UpdateEnemyInfo(pevEnemy);
-	}
+	UpdateEnemyInfo(VARS(pev->enemy));
+	CHANGE_YAW(ENT(pev));
 
-	{
-		edict_t* edict = EdictFromEntvars(pev);
-		if (edict)
-			EngineChangeYaw(edict);
-	}
-
-	int events = GetAnimationEventFlags(AGRUNT_THINK_INTERVAL);
+	int iEvents = GetAnimationEventFlags(AGRUNT_THINK_INTERVAL);
 	AdvanceAnimation(AGRUNT_THINK_INTERVAL);
 
-	if ((events & 0x1E) != 0)
+	if (iEvents & AGRUNT_AE_HORNET)
 	{
-		PevFloat(pev, PEV_STUCK) = 2.0f;	// 0x40000000 (pev+140)
+		pev->effects = EF_MUZZLEFLASH;
 
-		CHornet* hornet = CreateHornet();
-		if (hornet)
-			hornet->Init(pev);
+		CHornet *pHornet = CreateHornet();
+		pHornet->Init(pev);
 	}
 
 	if (m_fSequenceFinished)
 	{
 		m_MonsterState = m_IdealMonsterState;
-		m_flNextAttack = RandomFloat(0.0f, 2.0f) + GlobalTime() + 1.0f;
+		m_flNextAttack = RANDOM_FLOAT(0.0f, 2.0f) + gpGlobals->time + 1.0f;
 		SetThink(&CBaseMonster::MonsterThink);
 	}
 }
 
-//=========================================================
-// monster_alien_grunt (export)
-//=========================================================
-DLLEXPORT void monster_alien_grunt(entvars_t* pev)
-{
-	entvars_t* entvars = pev;
-	if (!entvars)
-	{
-		edict_t* created = EngineCreateEntity();
-		entvars = created ? EngineGetVarsOfEnt(created) : NULL;
-	}
-
-	edict_t* edict = EdictFromEntvars(entvars);
-	if (!edict)
-		return;
-
-	void* privateData = EngineGetPrivateData(edict);
-	if (!privateData)
-	{
-		privateData = EngineAllocPrivateData(edict, 336);
-		if (!privateData)
-			return;
-
-		memset(privateData, 0, 336);
-
-		CAGrunt* monster = new (privateData) CAGrunt();
-		monster->pev = entvars;
-		gpGlobals = entvars->pSystemGlobals;
-	}
-}
+LINK_ENTITY_TO_CLASS(monster_alien_grunt, CAGrunt);

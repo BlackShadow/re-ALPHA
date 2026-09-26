@@ -57,9 +57,10 @@ enum
 	MONSTERSTATE_DEAD = 42,				// death animation finished
 };
 
-// SetDeathActivity types
+// SetDeathActivity types, each plays MONSTERSTATE_DIE1 + type
 #define DEATH_NORMAL		0
 #define DEATH_VIOLENT		1			// health driven below GIB_HEALTH
+#define NUM_DEATH_TYPES		5
 
 #define GIB_HEALTH			-30.0f		// health below which a monster is blown apart
 
@@ -68,7 +69,12 @@ enum
 #define ENEMY_VISIBLE		(1<<1)
 #define ENEMY_SEEN			(1<<2)		// m_vecEnemyLKP was updated from a sighting
 
+// spawnflags
+#define SF_MONSTER_WAIT_TILL_SEEN	1	// only notice the player when the player looks at us
+
 #define MONSTER_ROUTE_SIZE	5
+
+#define MONSTER_THINK_INTERVAL	0.1f
 
 //
 // generic Monster
@@ -114,7 +120,6 @@ public:
 	virtual void	IdleSound();
 	virtual int		CheckAttacks(entvars_t *pevEnemy, float flDist);
 	virtual int		TakeDamage(entvars_t *pevInflictor, entvars_t *pevAttacker, float flDamage);
-	virtual void	MonsterSlot18();		// transitional: removed with the layout placeholders
 
 	void WalkMonsterStart(CBaseEntity *pOther);
 	void MonsterThink(CBaseEntity *pOther);
