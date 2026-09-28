@@ -36,6 +36,8 @@
 #define IDD_DIALOG1			108		// the startup splash dialog
 
 #define MAX_TIMER_FREQ		2000000.0	// timer counts are scaled down to about 1 microsecond
+#define TIMER_WRAP_LIMIT	0x10000000	// a larger step back is taken as the counter wrapping
+#define SAMETIME_LIMIT		100000
 #define ERROR_WAIT_TIME		60.0		// seconds a dedicated server waits for Enter after an error
 
 #define ERROR_SEPARATOR		"********************************\n"
@@ -178,14 +180,14 @@ double Sys_FloatTime(void)
 		last_perf_count = temp;
 		first_time = 0;
 	}
-	else if (temp > last_perf_count || last_perf_count - temp >= 0x10000000)
+	else if (temp > last_perf_count || last_perf_count - temp >= TIMER_WRAP_LIMIT)
 	{
 		t2 = temp - last_perf_count;
 		last_perf_count = temp;
 		time = (double)t2 * perf_scale;
 		sys_curtime += time;
 
-		if (++time_overflow > 100000)
+		if (++time_overflow > SAMETIME_LIMIT)
 			time_overflow = 0;
 
 		sys_oldtime = sys_curtime;
