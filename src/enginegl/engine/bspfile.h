@@ -274,12 +274,19 @@ typedef struct
 
 typedef struct
 {
+	int			type;
+} daliasskintype_t;
+
+typedef struct
+{
 	float		interval;
 } daliasinterval_t;
 
 // =============================================================================
 // Sprite Model structures
 // =============================================================================
+
+#define SPRITE_VERSION	1
 
 typedef struct
 {

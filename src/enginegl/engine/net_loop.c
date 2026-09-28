@@ -13,18 +13,29 @@
 *
 ****/
 
+// net_loop.c -- loopback network driver
+
 #include "quakedef.h"
-#include "net_loop.h"
 
-qboolean    localconnectpending = false;
-qsocket_t   *loop_client = NULL;
-qsocket_t   *loop_server = NULL;
+qboolean	localconnectpending = false;
+qsocket_t	*loop_client = NULL;
+qsocket_t	*loop_server = NULL;
 
+/*
+================
+Loop_Init
+================
+*/
 int Loop_Init(void)
 {
 	return 1;
 }
 
+/*
+================
+Loop_Close
+================
+*/
 void Loop_Close(qsocket_t *sock)
 {
 	qsocket_t *other;
@@ -43,6 +54,11 @@ void Loop_Close(qsocket_t *sock)
 		loop_server = NULL;
 }
 
+/*
+================
+Loop_SearchForHosts
+================
+*/
 void Loop_SearchForHosts(qboolean xmit)
 {
 	if (!sv.active)
@@ -62,6 +78,11 @@ void Loop_SearchForHosts(qboolean xmit)
 	Q_strcpy(hostcache[0].cname, "local");
 }
 
+/*
+================
+Loop_Connect
+================
+*/
 qsocket_t *Loop_Connect(char *host)
 {
 	if (Q_strcmp(host, "local") != 0)
@@ -104,6 +125,11 @@ qsocket_t *Loop_Connect(char *host)
 	return loop_client;
 }
 
+/*
+================
+Loop_CheckNewConnections
+================
+*/
 qsocket_t *Loop_CheckNewConnections(void)
 {
 	if (!localconnectpending)
@@ -122,22 +148,32 @@ qsocket_t *Loop_CheckNewConnections(void)
 	return loop_server;
 }
 
+/*
+================
+IntAlign
+================
+*/
 static int IntAlign(int value)
 {
 	return (value + (sizeof(int) - 1)) & (~(sizeof(int) - 1));
 }
 
+/*
+================
+Loop_GetMessage
+================
+*/
 int Loop_GetMessage(qsocket_t *sock)
 {
-	int     ret;
-	int     length;
+	int		ret;
+	int		length;
 
 	if (sock->receiveMessageLength == 0)
 		return 0;
 
 	ret = sock->receiveMessage[0];
 	length = sock->receiveMessage[1] + (sock->receiveMessage[2] << 8);
-
+	// alignment byte skipped here
 	SZ_Clear(&net_message);
 	SZ_Write(&net_message, &sock->receiveMessage[4], length);
 
@@ -153,10 +189,15 @@ int Loop_GetMessage(qsocket_t *sock)
 	return ret;
 }
 
+/*
+================
+Loop_SendMessage
+================
+*/
 int Loop_SendMessage(qsocket_t *sock, sizebuf_t *data)
 {
-	byte    *buffer;
-	int     *bufferLength;
+	byte	*buffer;
+	int		*bufferLength;
 
 	if (!sock->driverdata)
 		return -1;
@@ -168,13 +209,17 @@ int Loop_SendMessage(qsocket_t *sock, sizebuf_t *data)
 
 	buffer = ((qsocket_t *)sock->driverdata)->receiveMessage + *bufferLength;
 
+	// message type
 	*buffer++ = 1;
 
+	// length
 	*buffer++ = data->cursize & 0xff;
 	*buffer++ = data->cursize >> 8;
 
+	// align
 	buffer++;
 
+	// message
 	Q_memcpy(buffer, data->data, data->cursize);
 	*bufferLength = IntAlign(*bufferLength + data->cursize + 4);
 
@@ -182,10 +227,15 @@ int Loop_SendMessage(qsocket_t *sock, sizebuf_t *data)
 	return 1;
 }
 
+/*
+================
+Loop_SendUnreliableMessage
+================
+*/
 int Loop_SendUnreliableMessage(qsocket_t *sock, sizebuf_t *data)
 {
-	byte    *buffer;
-	int     *bufferLength;
+	byte	*buffer;
+	int		*bufferLength;
 
 	if (!sock->driverdata)
 		return -1;
@@ -197,19 +247,28 @@ int Loop_SendUnreliableMessage(qsocket_t *sock, sizebuf_t *data)
 
 	buffer = ((qsocket_t *)sock->driverdata)->receiveMessage + *bufferLength;
 
+	// message type
 	*buffer++ = 2;
 
+	// length
 	*buffer++ = data->cursize & 0xff;
 	*buffer++ = data->cursize >> 8;
 
+	// align
 	buffer++;
 
+	// message
 	Q_memcpy(buffer, data->data, data->cursize);
 	*bufferLength = IntAlign(*bufferLength + data->cursize + 4);
 
 	return 1;
 }
 
+/*
+================
+Loop_CanSendMessage
+================
+*/
 qboolean Loop_CanSendMessage(qsocket_t *sock)
 {
 	if (!sock->driverdata)
@@ -217,15 +276,30 @@ qboolean Loop_CanSendMessage(qsocket_t *sock)
 	return sock->canSend;
 }
 
+/*
+================
+Loop_CanSendUnreliableMessage
+================
+*/
 qboolean Loop_CanSendUnreliableMessage(qsocket_t *sock)
 {
 	return true;
 }
 
+/*
+================
+Loop_Shutdown
+================
+*/
 void Loop_Shutdown(void)
 {
 }
 
+/*
+================
+Loop_Listen
+================
+*/
 void Loop_Listen(qboolean state)
 {
 }

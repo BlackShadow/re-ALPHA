@@ -12,147 +12,144 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
+// sv_user.c -- server code for moving users
 
 #include "quakedef.h"
+#include "pmove.h"
 
-#define MAX_FORWARD 6
+#define MAX_FORWARD		6
+#define ON_EPSILON		0.1f
 
+// floor samples for the ideal pitch, starting 3 * 12 units in front of the player
+#define PITCH_SAMPLE_START	3
+#define PITCH_SAMPLE_STEP	12
+#define PITCH_SAMPLE_DEPTH	160
+
+float V_CalcRoll(vec3_t angles, vec3_t velocity);
+
+static usercmd_t	cmd;
+
+/*
+===============
+SV_SetIdealPitch
+===============
+*/
 void SV_SetIdealPitch(void)
 {
-	float angle_radians;
-	float sin_yaw;
-	float cos_yaw;
-	trace_t trace;
-	vec3_t top;
-	vec3_t bottom;
-	float z[MAX_FORWARD];
-	int i;
-	int j;
-	int step;
-	int dir;
-	int steps;
+	float	angleval, sinval, cosval;
+	trace_t	tr;
+	vec3_t	top, bottom;
+	float	z[MAX_FORWARD];
+	int		i, j;
+	int		step, dir, steps;
 
 	if (!((int)sv_player->v.flags & FL_ONGROUND))
 		return;
 
-	angle_radians = sv_player->v.angles[YAW] * (float)(6.283185307179586 / 360.0);
-	sin_yaw = (float)sin(angle_radians);
-	cos_yaw = (float)cos(angle_radians);
+	angleval = sv_player->v.angles[YAW] * (float)(M_PI * 2 / 360);
+	sinval = sin(angleval);
+	cosval = cos(angleval);
 
-	for (i = 0; i < MAX_FORWARD; ++i)
+	for (i = 0; i < MAX_FORWARD; i++)
 	{
-		top[0] = sv_player->v.origin[0] + cos_yaw * (float)(i + 3) * 12.0f;
-		top[1] = sv_player->v.origin[1] + sin_yaw * (float)(i + 3) * 12.0f;
+		top[0] = sv_player->v.origin[0] + cosval * (i + PITCH_SAMPLE_START) * PITCH_SAMPLE_STEP;
+		top[1] = sv_player->v.origin[1] + sinval * (i + PITCH_SAMPLE_START) * PITCH_SAMPLE_STEP;
 		top[2] = sv_player->v.origin[2] + sv_player->v.view_ofs[2];
 
 		bottom[0] = top[0];
 		bottom[1] = top[1];
-		bottom[2] = top[2] - 160.0f;
+		bottom[2] = top[2] - PITCH_SAMPLE_DEPTH;
 
-		trace = SV_Move(top, vec3_origin, vec3_origin, bottom, MOVE_NOMONSTERS, sv_player);
-		if (trace.allsolid)
-			return;
-		if (trace.fraction == 1.0f)
-			return;
+		tr = SV_Move(top, vec3_origin, vec3_origin, bottom, MOVE_NOMONSTERS, sv_player);
+		if (tr.allsolid)
+			return;	// looking at a wall, leave ideal the way is was
 
-		z[i] = top[2] + trace.fraction * (bottom[2] - top[2]);
+		if (tr.fraction == 1)
+			return;	// near a dropoff
+
+		z[i] = top[2] + tr.fraction * (bottom[2] - top[2]);
 	}
 
 	dir = 0;
 	steps = 0;
-	for (j = 1; j < i; ++j)
+	for (j = 1; j < i; j++)
 	{
-		step = (int)(z[j] - z[j - 1]);
-		if (step > -0.1f && step < 0.1f)
+		step = z[j] - z[j - 1];
+		if (step > -ON_EPSILON && step < ON_EPSILON)
 			continue;
 
-		if (dir && ((step - dir) > 0.1f || (step - dir) < -0.1f))
-			return;
+		if (dir && (step - dir > ON_EPSILON || step - dir < -ON_EPSILON))
+			return;	// mixed changes
 
-		++steps;
+		steps++;
 		dir = step;
 	}
 
 	if (!dir)
 	{
-		sv_player->v.idealpitch = 0.0f;
+		sv_player->v.idealpitch = 0;
 		return;
 	}
 
 	if (steps < 2)
 		return;
 
-	sv_player->v.idealpitch = (float)(-dir) * sv_idealpitchscale.value;
+	sv_player->v.idealpitch = -dir * sv_idealpitchscale.value;
 }
 
-extern edict_t		*g_pmove;
-extern vec3_t		*g_velocity;
-extern vec3_t		*g_origin;
-extern int			g_onground;
-extern float		g_forwardmove;
-extern float		g_sidemove;
-extern float		g_upmove;
+/*
+===================
+SV_ClientThink
 
-extern void			PM_PreventMegaBunnyJumping(void);
-extern int			PM_WalkMove(void);
-extern void			PM_AirMove(void);
-extern void PM_WaterMove(void);
-
-extern float V_CalcRoll(vec3_t angles, vec3_t velocity);
-
-static usercmd_t sv_client_cmd;
-
+the move fields specify an intended velocity in pix/sec
+the angle fields specify an exact angular motion in degrees
+===================
+*/
 void SV_ClientThink(void)
 {
-	byte *pmove;
-	int flags;
-	float cmd_x;
-	float cmd_y;
+	edict_t	*ent;
+	vec3_t	v_angle;
 
-	g_pmove = sv_player;
-	pmove = (byte *)g_pmove;
+	ent = g_pmove = sv_player;
 
-	if (*(float *)(pmove + 152) == 0.0f)
+	if (ent->v.movetype == MOVETYPE_NONE)
 		return;
 
-	g_velocity = (vec3_t *)(pmove + 184);
-	g_origin = (vec3_t *)(pmove + 160);
+	g_velocity = &ent->v.velocity;
+	g_origin = &ent->v.origin;
+	g_onground = (int)ent->v.flags & FL_ONGROUND;
 
-	flags = (int)*(float *)(pmove + 500);
-	g_onground = flags & FL_ONGROUND;
+	PM_DropPunchAngle();
 
-	PM_PreventMegaBunnyJumping();
-
-	if (*(float *)(pmove + 384) <= 0.0f)
+	// if dead, behave differently
+	if (ent->v.health <= 0)
 		return;
 
-	memcpy(&sv_client_cmd, &host_client->cmd, sizeof(sv_client_cmd));
-	g_forwardmove = sv_client_cmd.forwardmove;
-	g_sidemove = sv_client_cmd.sidemove;
-	g_upmove = sv_client_cmd.upmove;
+	cmd = host_client->cmd;
+	g_forwardmove = cmd.forwardmove;
+	g_sidemove = cmd.sidemove;
+	g_upmove = cmd.upmove;
 
-	cmd_x = *(float *)(pmove + 472) + *(float *)(pmove + 232);
-	cmd_y = *(float *)(pmove + 476) + *(float *)(pmove + 236);
-
-	*(float *)(pmove + 204) = V_CalcRoll((float *)(pmove + 196), (float *)(pmove + 184)) * 4.0f;
-
-	if (*(float *)(pmove + 468) == 0.0f)
+	// show 1/3 the pitch angle and all the roll angle
+	VectorAdd(ent->v.v_angle, ent->v.punchangle, v_angle);
+	ent->v.angles[ROLL] = V_CalcRoll(ent->v.angles, ent->v.velocity) * 4;
+	if (!ent->v.fixangle)
 	{
-		float *p = (float *)(pmove + 196);
-		p[1] = cmd_y;
-		p[0] = cmd_x / -3.0f;
+		ent->v.angles[YAW] = v_angle[YAW];
+		ent->v.angles[PITCH] = v_angle[PITCH] / -3;
 	}
 
-	if (((int)*(float *)(pmove + 500) & 0x800) != 0)
+	if ((int)ent->v.flags & FL_WATERJUMP)
 	{
-		PM_WalkMove();
+		PM_WaterJump();
 		return;
 	}
 
-	if (*(float *)(pmove + 528) < 2.0f || *(float *)(pmove + 152) == 8.0f)
+	// walk
+	if (ent->v.waterlevel < 2 || ent->v.movetype == MOVETYPE_NOCLIP)
 	{
 		PM_AirMove();
-		*(int *)(pmove + 268) = 0x3F800000;
+		ent->v.friction = 1;
 		return;
 	}
 

@@ -12,8 +12,17 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
+// snd_mem.c: sound caching
 
 #include "quakedef.h"
+
+/*
+===============================================================================
+
+WAV loading
+
+===============================================================================
+*/
 
 static byte		*data_p;
 static byte		*iff_end;
@@ -21,37 +30,21 @@ static byte		*last_chunk;
 static byte		*iff_data;
 static int		iff_chunk_len;
 
-extern int		com_filesize;
-extern short (*LittleShort)(short l);
-extern cvar_t	loadas8bit;
-
-typedef struct wavinfo_s
-{
-	int rate;
-	int width;
-	int channels;
-	int loopstart;
-	int samples;
-	int dataofs;
-} wavinfo_t;
-
 short GetLittleShort(void)
 {
-	short val;
+	short	val;
 
 	val = (short)(data_p[0] + (data_p[1] << 8));
 	data_p += 2;
-
 	return val;
 }
 
 int GetLittleLong(void)
 {
-	int val;
+	int		val;
 
 	val = data_p[0] + (data_p[1] << 8) + (data_p[2] << 16) + (data_p[3] << 24);
 	data_p += 4;
-
 	return val;
 }
 
@@ -60,7 +53,7 @@ void FindNextChunk(char *name)
 	while (1)
 	{
 		if (last_chunk >= iff_end)
-			break;
+			break;		// didn't find the chunk
 
 		data_p = last_chunk + 4;
 		iff_chunk_len = GetLittleLong();
@@ -69,7 +62,6 @@ void FindNextChunk(char *name)
 
 		data_p -= 8;
 		last_chunk = data_p + 8 + ((iff_chunk_len + 1) & ~1);
-
 		if (!strncmp((char *)data_p, name, 4))
 			return;
 	}
@@ -89,7 +81,6 @@ void DumpChunks(void)
 
 	str[4] = 0;
 	data_p = iff_data;
-
 	do
 	{
 		memcpy(str, data_p, 4);
@@ -101,6 +92,11 @@ void DumpChunks(void)
 	while (data_p < iff_end);
 }
 
+/*
+============
+GetWavinfo
+============
+*/
 wavinfo_t GetWavinfo(char *name, byte *wav, int wavlength)
 {
 	wavinfo_t	info;
@@ -115,6 +111,7 @@ wavinfo_t GetWavinfo(char *name, byte *wav, int wavlength)
 	iff_data = wav;
 	iff_end = wav + wavlength;
 
+// find "RIFF" chunk
 	FindChunk("RIFF");
 	if (!data_p || strncmp((char *)data_p + 8, "WAVE", 4))
 	{
@@ -122,6 +119,7 @@ wavinfo_t GetWavinfo(char *name, byte *wav, int wavlength)
 		return info;
 	}
 
+// get "fmt " chunk
 	iff_data = data_p + 12;
 
 	FindChunk("fmt ");
@@ -130,10 +128,9 @@ wavinfo_t GetWavinfo(char *name, byte *wav, int wavlength)
 		Con_Printf("Missing fmt chunk\n");
 		return info;
 	}
-
 	data_p += 8;
 	format = GetLittleShort();
-	if (format != 1)
+	if (format != WAVE_FORMAT_PCM)
 	{
 		Con_Printf("Microsoft PCM format only\n");
 		return info;
@@ -141,21 +138,23 @@ wavinfo_t GetWavinfo(char *name, byte *wav, int wavlength)
 
 	info.channels = GetLittleShort();
 	info.rate = GetLittleLong();
-	data_p += 6;
+	data_p += 4 + 2;	// skip the byte rate and block align
 	info.width = GetLittleShort() / 8;
 
+// get cue chunk
 	FindChunk("cue ");
 	if (data_p)
 	{
 		data_p += 32;
 		info.loopstart = GetLittleLong();
 
+	// if the next chunk is a LIST chunk, look for a cue length marker
 		FindNextChunk("LIST");
 		if (data_p && !strncmp((char *)data_p + 28, "mark", 4))
 		{
-
+			// this is not a proper parse, but it works with cooledit...
 			data_p += 24;
-			info.samples = GetLittleLong() + info.loopstart;
+			info.samples = GetLittleLong() + info.loopstart;	// samples in loop
 		}
 	}
 	else
@@ -163,6 +162,7 @@ wavinfo_t GetWavinfo(char *name, byte *wav, int wavlength)
 		info.loopstart = -1;
 	}
 
+// find data chunk
 	FindChunk("data");
 	if (!data_p)
 	{
@@ -172,6 +172,7 @@ wavinfo_t GetWavinfo(char *name, byte *wav, int wavlength)
 
 	data_p += 4;
 	samples = GetLittleLong() / info.width;
+
 	if (info.samples)
 	{
 		if (samples < info.samples)
@@ -187,6 +188,13 @@ wavinfo_t GetWavinfo(char *name, byte *wav, int wavlength)
 	return info;
 }
 
+//=============================================================================
+
+/*
+================
+ResampleSfx
+================
+*/
 void ResampleSfx(sfx_t *sfx, int inrate, int inwidth, byte *data)
 {
 	int			outcount;
@@ -200,44 +208,40 @@ void ResampleSfx(sfx_t *sfx, int inrate, int inwidth, byte *data)
 	if (!sc)
 		return;
 
-	stepscale = (float)inrate / (float)shm->speed;
+	stepscale = (float)inrate / (float)shm->speed;	// this is usually 0.5, 1, or 2
+
 	outcount = (int)((float)sc->length / stepscale);
 	sc->length = outcount;
-
 	if (sc->loopstart != -1)
 		sc->loopstart = (int)((float)sc->loopstart / stepscale);
 
 	sc->speed = shm->speed;
-
 	if (loadas8bit.value)
 		sc->width = 1;
 	else
 		sc->width = inwidth;
-
 	sc->stereo = 0;
 
+// resample / decimate to the current source rate
 	if (stepscale == 1.0f && inwidth == 1 && sc->width == 1)
 	{
-
+	// fast special case
 		for (i = 0; i < outcount; i++)
 			((signed char *)sc->data)[i] = (int)((unsigned char)(data[i])) - 128;
 	}
 	else
 	{
-
+	// general case
 		samplefrac = 0;
 		fracstep = (int)(stepscale * 256.0f);
-
 		for (i = 0; i < outcount; i++)
 		{
 			srcsample = samplefrac >> 8;
 			samplefrac += fracstep;
-
 			if (inwidth == 2)
 				sample = LittleShort(((short *)data)[srcsample]);
 			else
 				sample = (int)((unsigned char)(data[srcsample]) - 128) << 8;
-
 			if (sc->width == 2)
 				((short *)sc->data)[i] = sample;
 			else
@@ -246,6 +250,11 @@ void ResampleSfx(sfx_t *sfx, int inrate, int inwidth, byte *data)
 	}
 }
 
+/*
+==============
+S_LoadSound
+==============
+*/
 sfxcache_t *S_LoadSound(sfx_t *s)
 {
 	char		namebuffer[256];
@@ -253,14 +262,15 @@ sfxcache_t *S_LoadSound(sfx_t *s)
 	wavinfo_t	info;
 	int			len;
 	float		stepscale;
-	float		sample_count_f;
 	sfxcache_t	*sc;
-	byte		stackbuf[1024];
+	byte		stackbuf[1*1024];		// avoid dirtying the cache heap
 
+// see if still in memory
 	sc = (sfxcache_t *)Cache_Check(&s->cache);
 	if (sc)
 		return sc;
 
+// load it in
 	strcpy(namebuffer, "sound/");
 	strcat(namebuffer, s->name);
 
@@ -273,7 +283,6 @@ sfxcache_t *S_LoadSound(sfx_t *s)
 	}
 
 	info = GetWavinfo(s->name, data, com_filesize);
-
 	if (info.channels != 1)
 	{
 		Con_Printf("%s is a stereo sample\n", s->name);
@@ -281,10 +290,11 @@ sfxcache_t *S_LoadSound(sfx_t *s)
 	}
 
 	stepscale = (float)info.rate / (float)shm->speed;
-	sample_count_f = (float)info.samples;
-	len = info.width * (int)(sample_count_f / stepscale) + 24;
+	len = (int)((float)info.samples / stepscale);
 
-	sc = (sfxcache_t *)Cache_Alloc(&s->cache, len, s->name);
+	len = len * info.width;
+
+	sc = (sfxcache_t *)Cache_Alloc(&s->cache, len + sizeof(sfxcache_t), s->name);
 	if (!sc)
 		return NULL;
 

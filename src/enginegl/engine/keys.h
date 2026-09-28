@@ -13,24 +13,27 @@
 *
 ****/
 
+// keys.h -- keyboard input, key bindings and the console command line
+
 #ifndef KEYS_H
 #define KEYS_H
 
-// =============================================================================
-// Key button state structure (for input handling)
-// =============================================================================
-
-
-// Key constants
+//
+// these are the key numbers that should be passed to Key_Event
+//
 #define K_TAB			9
 #define K_ENTER			13
 #define K_ESCAPE		27
 #define K_SPACE			32
+
+// normal keys should be passed as lowercased ascii
+
 #define K_BACKSPACE		127
 #define K_UPARROW		128
 #define K_DOWNARROW		129
 #define K_LEFTARROW		130
 #define K_RIGHTARROW	131
+
 #define K_ALT			132
 #define K_CTRL			133
 #define K_SHIFT			134
@@ -52,79 +55,97 @@
 #define K_PGUP			150
 #define K_HOME			151
 #define K_END			152
+
 #define K_PAUSE			255
 
-// Mouse buttons
+//
+// mouse buttons generate virtual keys
+//
 #define K_MOUSE1		200
 #define K_MOUSE2		201
 #define K_MOUSE3		202
-#define K_MWHEELUP      239
-#define K_MWHEELDOWN    240
 
-// Joystick buttons (Quake-style key range)
-#define K_JOY1          203
-#define K_JOY2          204
-#define K_JOY3          205
-#define K_JOY4          206
+//
+// joystick buttons
+//
+#define K_JOY1			203
+#define K_JOY2			204
+#define K_JOY3			205
+#define K_JOY4			206
 
-// Auxiliary keys (Quake-style key range)
-#define K_AUX1          207
-#define K_AUX2          208
-#define K_AUX3          209
-#define K_AUX4          210
-#define K_AUX5          211
-#define K_AUX6          212
-#define K_AUX7          213
-#define K_AUX8          214
-#define K_AUX9          215
-#define K_AUX10         216
-#define K_AUX11         217
-#define K_AUX12         218
-#define K_AUX13         219
-#define K_AUX14         220
-#define K_AUX15         221
-#define K_AUX16         222
-#define K_AUX17         223
-#define K_AUX18         224
-#define K_AUX19         225
-#define K_AUX20         226
-#define K_AUX21         227
-#define K_AUX22         228
-#define K_AUX23         229
-#define K_AUX24         230
-#define K_AUX25         231
-#define K_AUX26         232
-#define K_AUX27         233
-#define K_AUX28         234
-#define K_AUX29         235
-#define K_AUX30         236
-#define K_AUX31         237
-#define K_AUX32         238
+//
+// aux keys are for multi-buttoned joysticks to generate so they can use
+// the normal binding process
+//
+#define K_AUX1			207
+#define K_AUX2			208
+#define K_AUX3			209
+#define K_AUX4			210
+#define K_AUX5			211
+#define K_AUX6			212
+#define K_AUX7			213
+#define K_AUX8			214
+#define K_AUX9			215
+#define K_AUX10			216
+#define K_AUX11			217
+#define K_AUX12			218
+#define K_AUX13			219
+#define K_AUX14			220
+#define K_AUX15			221
+#define K_AUX16			222
+#define K_AUX17			223
+#define K_AUX18			224
+#define K_AUX19			225
+#define K_AUX20			226
+#define K_AUX21			227
+#define K_AUX22			228
+#define K_AUX23			229
+#define K_AUX24			230
+#define K_AUX25			231
+#define K_AUX26			232
+#define K_AUX27			233
+#define K_AUX28			234
+#define K_AUX29			235
+#define K_AUX30			236
+#define K_AUX31			237
+#define K_AUX32			238
 
-// Key types
-typedef enum {
+#define K_MWHEELUP		239
+#define K_MWHEELDOWN	240
+
+typedef enum
+{
 	key_game,
 	key_console,
 	key_message,
 	key_menu
 } keydest_t;
 
-extern keydest_t key_dest;
-extern char *keybindings[256];
-extern int key_repeats[256];
-extern qboolean keydown[256];
-extern int key_count;
-extern int key_lastpress;
+extern keydest_t	key_dest;
+extern char			*keybindings[256];
+extern int			key_repeats[256];
+extern qboolean		keydown[256];
+extern int			key_count;	// incremented every key event
+extern int			key_lastpress;
+
+// console command line and its history
+#define MAXCMDLINE		256
+#define CMDLINES		32
+
+extern char			key_lines[CMDLINES][MAXCMDLINE];
+extern int			key_linepos;
+extern int			edit_line;
+
+// messagemode input line
+extern char			chat_buffer[32];
+extern int			chat_bufferlen;
+extern qboolean		team_message;
 
 typedef struct kbutton_s
 {
-	int down[2]; // key numbers holding it down
-	int state; // bit 0 = held, bit 1 = down this frame, bit 2 = up this frame
+	int		down[2];	// key nums holding it down
+	int		state;		// 1 = held, 2 = went down this frame, 4 = went up this frame
 } kbutton_t;
-
-// =============================================================================
-// Key functions
-// =============================================================================
 
 void Key_Init(void);
 void Key_Event(int key, qboolean down);

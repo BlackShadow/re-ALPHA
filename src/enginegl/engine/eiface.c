@@ -12,88 +12,19 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
+// eiface.c -- loading the game DLLs and the engine functions handed to them
+
 #include <windows.h>
-#include <stdio.h>
-#include <stdarg.h>
-#include <string.h>
 #include <io.h>
 
 #include "quakedef.h"
 #include "eiface.h"
 
-#define MAX_GAME_DLLS 50
+#define GAME_DLL_DIR	"valve\\dlls"
 
-extern void *g_rgextdll[MAX_GAME_DLLS];
-extern int g_iextdllcount;
-extern char Buffer[1024];
-
-
-extern int			PF_precache_model_internal(const char *model);
-extern void			PF_precache_sound_internal(const char *sound);
-extern void			PF_setmodel_I(edict_t *e, const char *m);
-extern int			PF_modelindex(const char *m);
-extern void			PF_setsize_I(edict_t *e, float *min, float *max);
-extern int			SV_EntityChangeLevelCallback(const char *level, const char *startspot);
-extern int			PF_setspawnparms(edict_t *ent);
-extern int			ED_EntVarsToCl(edict_t *ent);
-extern float		VectorToYaw(float *value1);
-extern void			VectorAngles(float *forward, float *angles);
-extern int			SV_MoveToGoal_step(edict_t *ent, float dist);
-extern float		SV_MoveToGoal_internal(edict_t *self, float *goalPos, float dist, int chase);
-extern void			SV_ChangeYaw(edict_t *ent);
-extern void			SV_ChangePitch(edict_t *ent);
-extern edict_t		*FindEntityByString(edict_t *pEdictStartSearchAfter, const char *pszField, const char *pszValue);
-extern int			GetEntityIllum(edict_t *pEnt);
-extern edict_t		*FindEntityInSphere(vec3_t org, float rad);
-
-
-extern edict_t *PF_checkclient_I(void);
-extern void PF_makevectors_I(float *angles);
-extern edict_t *PF_Spawn_I(void);
-extern void PF_Remove_I(edict_t *ed);
-extern void PF_makestatic_I(edict_t *ent);
-extern int PF_checkbottom_I(edict_t *ent);
-extern float PF_droptofloor_I(edict_t *ent);
-extern float PF_walkmove_I(edict_t *ent, float yaw, float dist);
-extern void PF_setorigin_I(edict_t *e, float *org);
-extern void PF_sound_I(edict_t *entity, int channel, const char *sample, float volume, float attenuation);
-extern void PF_ambientsound_I(float *pos, const char *samp, float vol, float attenuation);
-extern void PF_traceline_DLL(float *v1, float *v2, int fNoMonsters, edict_t *pentToSkip, TraceResult *ptr);
-extern void PF_TraceToss_DLL(edict_t *pent, edict_t *pentToIgnore, TraceResult *ptr);
-extern void PF_aim_I(edict_t *ent, float speed, float *dir);
-extern void PF_localcmd_I(char *str);
-extern void PF_stuffcmd_I(edict_t *pEdict, char *szFmt, ...);
-extern void SV_StartParticle(float *org, float *dir, float color, float count);
-extern void SV_BroadcastLightStyle(int style_num, const char *style_str);
-extern char *SV_DecalSetName(int decal, const char *name);
-extern int PF_pointcontents_I(vec3_t p);
-
-
-extern void MSG_WriteByte_Dest(int dest, int value);
-extern void MSG_WriteChar_Dest(int dest, int value);
-extern void MSG_WriteShort_Dest(int dest, int value);
-extern void MSG_WriteLong_Dest(int dest, int value);
-extern void MSG_WriteAngle_Dest(int dest, float value);
-extern void MSG_WriteCoord_Dest(int dest, float value);
-extern void MSG_WriteString_Dest(int dest, const char *s);
-extern void MSG_WriteEntity_Dest(int dest, int entnum);
-extern float ED_GetCvarValue(const char *cvarname);
-extern const char *ED_GetCvarString(const char *cvarname);
-extern void ED_SetCvarValue(const char *cvarname, float value);
-extern void ED_SetCvarString(const char *cvarname, const char *value);
-extern int EngineFprintf(FILE *Stream, const char *Format, ...);
-extern void *ED_AllocPrivateData(edict_t *ent, int size);
-extern void *ED_GetPrivateData(edict_t *ent);
-extern void ED_FreePrivateData(edict_t *ent);
-extern void *ED_GetDispatch(void *ent, int callback_type);
-extern void ED_AssertMethodNotChanged(void);
-extern void *EDICT_TO_ENTVAR(edict_t *ent);
-extern int EDICT_INDEX(int offset);
-extern edict_t *ENTVAR_TO_EDICT(void *entvar);
-extern int ED_FindModel(edict_t *ent);
-extern void AlertMessage(int alert_type, const char *fmt, ...);
-
-static void (*enginefuncs[64])() = {
+// handed to every game DLL by GiveFnptrsToDll, in this order
+static void (*enginefuncs[])() =
+{
 	(void (*)())PF_precache_model_internal,
 	(void (*)())PF_precache_sound_internal,
 	(void (*)())PF_setmodel_I,
@@ -157,12 +88,12 @@ static void (*enginefuncs[64])() = {
 	(void (*)())EDICT_TO_PROG,
 	(void (*)())EDICT_INDEX,
 	(void (*)())ENTVAR_TO_EDICT,
-	(void (*)())ED_FindModel,
+	(void (*)())ED_FindModel
 };
 
 static char g_alertBuffer[1024];
 
-static void *g_entityfuncs[9];
+static void *g_entityfuncs[NUM_ENTITYFUNCS];
 
 void *g_pfnDispatchSpawn;
 void *g_pfnDispatchThink;
@@ -173,7 +104,10 @@ void *g_pfnDispatchRestore;
 void *g_pfnDispatchKeyValue;
 void *g_pfnDispatchBlocked;
 
-static const char *g_ExtDLLProcNames[] = {
+// game DLL exports that replace the progs functions of the same name,
+// in ENTITYFUNC_* order
+static const char *g_ExtDLLProcNames[NUM_ENTITYFUNCS] =
+{
 	"ClientDisconnect",
 	"PlayerPreThink",
 	"PlayerPostThink",
@@ -182,16 +116,20 @@ static const char *g_ExtDLLProcNames[] = {
 	"SetChangeParms",
 	"ClientKill",
 	"ClientConnect",
-	"PutClientInServer",
+	"PutClientInServer"
 };
 
-extern void Con_Printf(const char *fmt, ...);
-extern void Sys_Error(const char *error, ...);
+/*
+==============
+GetDispatch
 
+Returns the first export of that name found in the loaded game DLLs.
+==============
+*/
 void *GetDispatch(const char *pszProcName)
 {
-	int i;
-	FARPROC pfn;
+	int		i;
+	FARPROC	pfn;
 
 	if (g_iextdllcount <= 0)
 	{
@@ -210,81 +148,102 @@ void *GetDispatch(const char *pszProcName)
 	return NULL;
 }
 
+/*
+==============
+GetEntityInit
+
+Each entity class is exported from the game DLL under its classname.
+==============
+*/
 void *GetEntityInit(const char *pszClassName)
 {
 	return GetDispatch(pszClassName);
 }
 
+/*
+==============
+LoadThisDll
+
+Loads a game DLL, hands it the engine functions and picks up the entity
+functions no earlier DLL provided.
+==============
+*/
 void *LoadThisDll(const char *szDLLPath)
 {
-	HMODULE hLib;
-	FARPROC pfnGiveFnptrsToDll;
-	FARPROC result;
-	int i;
+	HMODULE	hDLL;
+	FARPROC	pfnGiveFnptrsToDll;
+	FARPROC	pfn;
+	int		i;
 
-	hLib = LoadLibraryA(szDLLPath);
-	if (!hLib)
+	hDLL = LoadLibraryA(szDLLPath);
+	if (!hDLL)
 	{
 		Con_Printf("LoadLibrary failed on %s\n", szDLLPath);
 		return NULL;
 	}
 
-	pfnGiveFnptrsToDll = GetProcAddress(hLib, "GiveFnptrsToDll");
+	pfnGiveFnptrsToDll = GetProcAddress(hDLL, "GiveFnptrsToDll");
 	if (!pfnGiveFnptrsToDll)
 	{
 		Con_Printf("Couldn't get GiveFnptrsToDll in %s\n", szDLLPath);
-		FreeLibrary(hLib);
+		FreeLibrary(hDLL);
 		return NULL;
 	}
 
-	((void(__stdcall *)(void **))pfnGiveFnptrsToDll)((void **)enginefuncs);
+	((void (__stdcall *)(void **))pfnGiveFnptrsToDll)((void **)enginefuncs);
 
 	if (g_iextdllcount == MAX_GAME_DLLS)
 	{
 		Con_Printf("Too many DLLs, ignoring remainder\n");
-		FreeLibrary(hLib);
+		FreeLibrary(hDLL);
 		return NULL;
 	}
 
-	g_rgextdll[g_iextdllcount] = NULL;
-	g_rgextdll[g_iextdllcount] = hLib;
+	g_rgextdll[g_iextdllcount] = hDLL;
 	g_iextdllcount++;
 
-	result = NULL;
-	for (i = 0; i < 9; i++)
+	pfn = NULL;
+	for (i = 0; i < NUM_ENTITYFUNCS; i++)
 	{
 		if (!g_entityfuncs[i])
 		{
-			result = GetProcAddress(hLib, g_ExtDLLProcNames[i]);
-			if (result)
-				g_entityfuncs[i] = (void *)result;
+			pfn = GetProcAddress(hDLL, g_ExtDLLProcNames[i]);
+			if (pfn)
+				g_entityfuncs[i] = (void *)pfn;
 		}
 	}
 
-	return (void *)result;
+	return (void *)pfn;
 }
 
+/*
+==============
+LoadEntityDLLs
+
+Loads every DLL in the game DLL directory and looks up the Dispatch functions.
+==============
+*/
 int LoadEntityDLLs(const char *szBasePath)
 {
-	struct _finddata_t finddata;
-	intptr_t hFind;
-	char szSearchPath[260];
-	char szDLLPath[260];
+	struct _finddata_t	findData;
+	intptr_t			hFind;
+	char				szSearchPath[MAX_PATH];
+	char				szDLLPath[MAX_PATH];
 
 	memset(g_entityfuncs, 0, sizeof(g_entityfuncs));
 	g_iextdllcount = 0;
 	memset(g_rgextdll, 0, sizeof(g_rgextdll));
 
-	sprintf(szSearchPath, "%s\\%s\\*.dll", szBasePath, "valve\\dlls");
+	sprintf(szSearchPath, "%s\\%s\\*.dll", szBasePath, GAME_DLL_DIR);
 
-	hFind = _findfirst(szSearchPath, &finddata);
+	hFind = _findfirst(szSearchPath, &findData);
 	if (hFind != -1)
 	{
 		do
 		{
-			sprintf(szDLLPath, "%s\\%s\\%s", szBasePath, "valve\\dlls", finddata.name);
+			sprintf(szDLLPath, "%s\\%s\\%s", szBasePath, GAME_DLL_DIR, findData.name);
 			LoadThisDll(szDLLPath);
-		} while (!_findnext(hFind, &finddata));
+		} while (!_findnext(hFind, &findData));
 	}
 	_findclose(hFind);
 
@@ -297,14 +256,14 @@ int LoadEntityDLLs(const char *szBasePath)
 	g_pfnDispatchKeyValue = GetDispatch("DispatchKeyValue");
 	g_pfnDispatchBlocked = GetDispatch("DispatchBlocked");
 
-	if (!g_pfnDispatchSpawn ||
-		!g_pfnDispatchThink ||
-		!g_pfnDispatchUse ||
-		!g_pfnDispatchTouch ||
-		!g_pfnDispatchSave ||
-		!g_pfnDispatchRestore ||
-		!g_pfnDispatchKeyValue ||
-		!g_pfnDispatchBlocked)
+	if (!g_pfnDispatchSpawn
+		|| !g_pfnDispatchThink
+		|| !g_pfnDispatchUse
+		|| !g_pfnDispatchTouch
+		|| !g_pfnDispatchSave
+		|| !g_pfnDispatchRestore
+		|| !g_pfnDispatchKeyValue
+		|| !g_pfnDispatchBlocked)
 	{
 		Sys_Error("Can't get all dispatchfunctions!");
 	}
@@ -314,8 +273,8 @@ int LoadEntityDLLs(const char *szBasePath)
 
 int UnloadEntityDLLs(void)
 {
-	int result;
-	int i;
+	int		result;
+	int		i;
 
 	result = g_iextdllcount;
 	for (i = 0; i < g_iextdllcount; i++)
@@ -329,77 +288,95 @@ int UnloadEntityDLLs(void)
 
 int EngineFprintf(FILE *Stream, const char *Format, ...)
 {
-	va_list va;
+	va_list	argptr;
 
-	va_start(va, Format);
-	vsprintf(Buffer, Format, va);
-	va_end(va);
+	va_start(argptr, Format);
+	vsprintf(Buffer, Format, argptr);
+	va_end(argptr);
 
 	return fprintf(Stream, Buffer);
 }
 
-void AlertMessage(int atype, const char *fmt, ...)
+/*
+==============
+AlertMessage
+
+Developer messages from the game DLL: at_console goes to the console,
+the others to a message box unless developer is above 2.
+==============
+*/
+void AlertMessage(ALERT_TYPE atype, const char *fmt, ...)
 {
-	double devValue;
-	UINT uType;
-	HWND activeWindow;
-	va_list va;
+	va_list	argptr;
+	double	dev;
+	UINT	uType;
+	HWND	hWnd;
 
-	va_start(va, fmt);
+	va_start(argptr, fmt);
 
-	devValue = developer.value;
+	dev = developer.value;
 	uType = 0;
 
-	if (developer.value != 0.0f)
+	if (developer.value)
 	{
-		if (atype)
+		if (atype != at_notice)
 		{
 			switch (atype)
 			{
-				case 1:
-					g_alertBuffer[0] = 0;
-					break;
-				case 2:
-					strcpy(g_alertBuffer, "WARNING:  ");
-					uType = 48;
-					break;
-				case 3:
-					strcpy(g_alertBuffer, "ERROR:  ");
-					uType = 16;
-					break;
+			case at_console:
+				g_alertBuffer[0] = 0;
+				break;
+			case at_warning:
+				strcpy(g_alertBuffer, "WARNING:  ");
+				uType = MB_ICONWARNING;
+				break;
+			case at_error:
+				strcpy(g_alertBuffer, "ERROR:  ");
+				uType = MB_ICONERROR;
+				break;
+			default:
+				break;
 			}
 		}
 		else
 		{
 			strcpy(g_alertBuffer, "NOTE:  ");
-			uType = 64;
+			uType = MB_ICONINFORMATION;
 		}
 
-		vsprintf(g_alertBuffer + strlen(g_alertBuffer), fmt, va);
+		vsprintf(g_alertBuffer + strlen(g_alertBuffer), fmt, argptr);
 
-		if (atype == 1 || (ED_GetCvarValue("vid_mode"), devValue > 2.0))
+		// vid_mode is read but not used
+		if (atype == at_console || (ED_GetCvarValue("vid_mode"), dev > 2))
 		{
 			Con_Printf(g_alertBuffer);
 		}
 		else
 		{
-			activeWindow = GetActiveWindow();
-			if (activeWindow)
-				MessageBoxA(activeWindow, g_alertBuffer, "Alert", uType);
+			hWnd = GetActiveWindow();
+			if (hWnd)
+				MessageBoxA(hWnd, g_alertBuffer, "Alert", uType);
 		}
 	}
 
-	va_end(va);
+	va_end(argptr);
 }
 
+/*
+==============
+DispatchEntityCallback
+
+Runs a game DLL entity function if one was loaded, the progs function otherwise.
+==============
+*/
 void DispatchEntityCallback(int callbackIndex)
 {
-	int (__stdcall *pfn)(globalvars_t *);
-	edict_t *self;
-	int self_ofs;
-	int max_self_ofs;
+	int		(__stdcall *pfn)(globalvars_t *);
+	edict_t	*self;
+	int		self_ofs;
+	int		max_self_ofs;
 
-	if (callbackIndex < 0 || callbackIndex >= (int)(sizeof(g_entityfuncs) / sizeof(g_entityfuncs[0])))
+	if (callbackIndex < 0 || callbackIndex >= NUM_ENTITYFUNCS)
 		return;
 
 	pfn = (int (__stdcall *)(globalvars_t *))g_entityfuncs[callbackIndex];
@@ -408,6 +385,7 @@ void DispatchEntityCallback(int callbackIndex)
 		if (!pr_global_struct)
 			return;
 
+		// make sure self is a valid edict and linked back to its entvars
 		if (sv.edicts && sv.num_edicts > 0 && pr_edict_size > 0)
 		{
 			self_ofs = pr_global_struct->self;
@@ -429,34 +407,32 @@ void DispatchEntityCallback(int callbackIndex)
 
 	switch (callbackIndex)
 	{
-		case 0:
-			PR_ExecuteProgram(pr_global_struct->ClientDisconnect);
-			break;
-		case 1:
-			PR_ExecuteProgram(pr_global_struct->PlayerPreThink);
-			break;
-		case 2:
-			PR_ExecuteProgram(pr_global_struct->PlayerPostThink);
-			break;
-		case 3:
-			PR_ExecuteProgram(pr_global_struct->StartFrame);
-			break;
-		case 4:
-			PR_ExecuteProgram(pr_global_struct->SetNewParms);
-			break;
-		case 5:
-			PR_ExecuteProgram(pr_global_struct->SetChangeParms);
-			break;
-		case 6:
-			PR_ExecuteProgram(pr_global_struct->ClientKill);
-			break;
-		case 7:
-			PR_ExecuteProgram(pr_global_struct->ClientConnect);
-			break;
-		case 8:
-			PR_ExecuteProgram(pr_global_struct->PutClientInServer);
-			break;
-		default:
-			break;
+	case ENTITYFUNC_CLIENTDISCONNECT:
+		PR_ExecuteProgram(pr_global_struct->ClientDisconnect);
+		break;
+	case ENTITYFUNC_PLAYERPRETHINK:
+		PR_ExecuteProgram(pr_global_struct->PlayerPreThink);
+		break;
+	case ENTITYFUNC_PLAYERPOSTTHINK:
+		PR_ExecuteProgram(pr_global_struct->PlayerPostThink);
+		break;
+	case ENTITYFUNC_STARTFRAME:
+		PR_ExecuteProgram(pr_global_struct->StartFrame);
+		break;
+	case ENTITYFUNC_SETNEWPARMS:
+		PR_ExecuteProgram(pr_global_struct->SetNewParms);
+		break;
+	case ENTITYFUNC_SETCHANGEPARMS:
+		PR_ExecuteProgram(pr_global_struct->SetChangeParms);
+		break;
+	case ENTITYFUNC_CLIENTKILL:
+		PR_ExecuteProgram(pr_global_struct->ClientKill);
+		break;
+	case ENTITYFUNC_CLIENTCONNECT:
+		PR_ExecuteProgram(pr_global_struct->ClientConnect);
+		break;
+	case ENTITYFUNC_PUTCLIENTINSERVER:
+		PR_ExecuteProgram(pr_global_struct->PutClientInServer);
+		break;
 	}
 }

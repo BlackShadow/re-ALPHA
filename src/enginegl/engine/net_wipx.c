@@ -13,424 +13,469 @@
 *
 ****/
 
+// net_wipx.c -- Winsock IPX driver
+
 #include "quakedef.h"
-#include <winsock.h>
+#include "winquake.h"
+#include <wsipx.h>
 
-#ifndef _SOCKADDR_IPX_DEFINED
-#define _SOCKADDR_IPX_DEFINED 1
-struct sockaddr_ipx
+#define MAXHOSTNAMELEN		256
+#define WINSOCK_VERSION_1_1	0x0101
+
+#define IPXSOCKETS			18
+#define IPXSEQUENCESIZE		4	// sequence number in front of every packet
+
+static int		winsock_initialized;
+
+static int		net_controlsocket;
+static int		net_acceptsocket = -1;	// socket for fielding new connections
+qboolean		ipx_configured;		// set once IPX is up; nothing reads it
+
+static SOCKET	ipxsocket[IPXSOCKETS];
+static int		sequence[IPXSOCKETS];
+
+static struct
 {
-	short sa_family;
-	char  sa_netnum[4];
-	char  sa_nodenum[6];
-	u_short sa_socket;
-	char  sa_zero[2];
-};
-#endif
+	int		sequence;
+	byte	data[NET_MAXMESSAGE];
+} packetBuffer;
 
-#define AF_IPX  6
+static struct qsockaddr	broadcastaddr;
 
-extern int (__stdcall *WSAStartupFunc)(WORD, LPWSADATA);
-extern int (__stdcall *WSACleanupFunc)(void);
-extern int (__stdcall *ioctlsocketFunc)(SOCKET, long, u_long *);
-extern int (__stdcall *recvfromFunc)(SOCKET, char *, int, int, struct sockaddr *, int *);
-extern int (__stdcall *sendtoFunc)(SOCKET, const char *, int, int, const struct sockaddr *, int);
-extern SOCKET (__stdcall *socketFunc)(int, int, int);
-extern int (__stdcall *setsockoptFunc)(SOCKET, int, int, const char *, int);
-extern int (__stdcall *closesocketFunc)(SOCKET);
-extern int (__stdcall *WSAGetLastErrorFunc)(void);
-extern int (__stdcall *getsocknameFunc)(SOCKET, struct sockaddr *, int *);
-extern int (__stdcall *gethostnameFunc)(char *, int);
-extern qboolean ipxAvailable;
+char			my_ipx_address[NET_NAMELEN];
 
-int         winsock_initialized;
-int         ipx_controlSocket;
-int         ipx_acceptSocket = -1;
-qboolean    ipx_configured;
+//=============================================================================
 
-SOCKET      ipx_sockets[18];
-int         ipx_sequence[18];
-
-int         ipx_packetBuffer[1];
-byte        ipx_packetData[8192];
-
-short       ipx_broadcastAddr_family;
-byte        ipx_broadcastAddr_net[4];
-byte        ipx_broadcastAddr_node[6];
-short       ipx_broadcastAddr_port;
-
-char        ipx_addressBuffer[32];
-
-char        my_ipx_address[64];
-
-void WIPX_Listen(qboolean state);
-int WIPX_OpenSocket(int port);
-void WIPX_CloseSocket(int socket);
-int WIPX_GetSocketAddr(int socket, struct sockaddr *addr);
-int WIPX_Write(int socket, void *buf, int len, struct sockaddr *addr);
-char *WIPX_AddrToString(struct sockaddr *addr);
-
+/*
+================
+WIPX_Init
+================
+*/
 int WIPX_Init(void)
 {
-	char        hostname_buf[256];
-	char        *s;
-	int         i;
-	struct sockaddr_ipx addr;
-	WSADATA     winsockdata;
+	int			i;
+	char		buff[MAXHOSTNAMELEN];
+	char		*p;
+	WSADATA		winsockdata;
+	struct qsockaddr	addr;
 
 	if (COM_CheckParm("-noipx"))
 		return -1;
 
+	// FIXME: nothing sets ipxAvailable, so IPX never starts
 	if (!ipxAvailable)
 		return -1;
 
-	if (winsock_initialized || WSAStartupFunc(0x0101, &winsockdata) == 0)
-	{
-		winsock_initialized++;
-		memset(ipx_sockets, 0, sizeof(ipx_sockets));
-
-		if (gethostnameFunc(hostname_buf, 256) == 0)
-		{
-			if (Q_strcmp(hostname.string, "UNNAMED") == 0)
-			{
-
-				s = hostname_buf;
-				while (*s)
-				{
-					if ((*s < '0' || *s > '9') && *s != '.')
-						break;
-					s++;
-				}
-
-				if (*s)
-				{
-
-					for (i = 0; i < 15; i++)
-					{
-						if (hostname_buf[i] == '.')
-							break;
-					}
-					hostname_buf[i] = 0;
-				}
-
-				Cvar_Set("hostname", hostname_buf);
-			}
-		}
-
-		ipx_controlSocket = WIPX_OpenSocket(0);
-		if (ipx_controlSocket == -1)
-		{
-			Con_DPrintf("WIPX_Init: Unable to open control socket\n");
-			if (--winsock_initialized == 0)
-				WSACleanupFunc();
-			return -1;
-		}
-
-		ipx_broadcastAddr_family = AF_IPX;
-		memset(ipx_broadcastAddr_net, 0, 4);
-		memset(ipx_broadcastAddr_node, 0xFF, 6);
-		ipx_broadcastAddr_port = htons(hostshort);
-
-		WIPX_GetSocketAddr(ipx_controlSocket, (struct sockaddr *)&addr);
-		Q_strcpy(my_ipx_address, WIPX_AddrToString((struct sockaddr *)&addr));
-
-		s = strchr(my_ipx_address, ':');
-		if (s)
-			*s = 0;
-
-		Con_Printf("Winsock IPX initialized\n");
-		ipx_configured = true;
-
-		return ipx_controlSocket;
-	}
-	else
+	if (!winsock_initialized && pWSAStartup(WINSOCK_VERSION_1_1, &winsockdata))
 	{
 		Con_Printf("Winsock initialization failed\n");
 		return -1;
 	}
+	winsock_initialized++;
+
+	memset(ipxsocket, 0, sizeof(ipxsocket));
+
+	// determine my name & address
+	if (pgethostname(buff, MAXHOSTNAMELEN) == 0)
+	{
+		// if the hostname cvar isn't set, set it to the machine name
+		if (Q_strcmp(hostname.string, "UNNAMED") == 0)
+		{
+			// see if it's a text IP address (well, close enough)
+			for (p = buff; *p; p++)
+			{
+				if ((*p < '0' || *p > '9') && *p != '.')
+					break;
+			}
+
+			// if it is a real name, strip off the domain; we only want the host
+			if (*p)
+			{
+				for (i = 0; i < 15; i++)
+				{
+					if (buff[i] == '.')
+						break;
+				}
+				buff[i] = 0;
+			}
+			Cvar_Set("hostname", buff);
+		}
+	}
+
+	if ((net_controlsocket = WIPX_OpenSocket(0)) == -1)
+	{
+		Con_DPrintf("WIPX_Init: Unable to open control socket\n");
+		if (--winsock_initialized == 0)
+			pWSACleanup();
+		return -1;
+	}
+
+	((struct sockaddr_ipx *)&broadcastaddr)->sa_family = AF_IPX;
+	memset(((struct sockaddr_ipx *)&broadcastaddr)->sa_netnum, 0, 4);
+	memset(((struct sockaddr_ipx *)&broadcastaddr)->sa_nodenum, 0xff, 6);
+	((struct sockaddr_ipx *)&broadcastaddr)->sa_socket = htons(hostshort);
+
+	WIPX_GetSocketAddr(net_controlsocket, &addr);
+	Q_strcpy(my_ipx_address, WIPX_AddrToString(&addr));
+	p = strchr(my_ipx_address, ':');
+	if (p)
+		*p = 0;
+
+	Con_Printf("Winsock IPX initialized\n");
+	ipx_configured = true;
+
+	return net_controlsocket;
 }
 
+/*
+================
+WIPX_Shutdown
+================
+*/
 void WIPX_Shutdown(void)
 {
 	WIPX_Listen(false);
-	WIPX_CloseSocket(ipx_controlSocket);
-
+	WIPX_CloseSocket(net_controlsocket);
 	if (--winsock_initialized == 0)
-		WSACleanupFunc();
+		pWSACleanup();
 }
 
+/*
+================
+WIPX_Listen
+================
+*/
 void WIPX_Listen(qboolean state)
 {
+	// enable listening
 	if (state)
 	{
-		if (ipx_acceptSocket == -1)
-		{
-			ipx_acceptSocket = WIPX_OpenSocket(hostshort);
-			if (ipx_acceptSocket == -1)
-				Sys_Error("WIPX_Listen: Unable to open accept socket");
-		}
+		if (net_acceptsocket != -1)
+			return;
+		if ((net_acceptsocket = WIPX_OpenSocket(hostshort)) == -1)
+			Sys_Error("WIPX_Listen: Unable to open accept socket");
+		return;
 	}
-	else
-	{
-		if (ipx_acceptSocket != -1)
-		{
-			WIPX_CloseSocket(ipx_acceptSocket);
-			ipx_acceptSocket = -1;
-		}
-	}
+
+	// disable listening
+	if (net_acceptsocket == -1)
+		return;
+	WIPX_CloseSocket(net_acceptsocket);
+	net_acceptsocket = -1;
 }
 
+/*
+================
+WIPX_OpenSocket
+
+Returns an index into ipxsocket, not a winsock handle.
+================
+*/
 int WIPX_OpenSocket(int port)
 {
-	int         i;
-	SOCKET      newsocket;
-	int         one = 1;
-	struct sockaddr_ipx addr;
+	int					handle;
+	SOCKET				newsocket;
+	u_long				_true = 1;
+	struct sockaddr_ipx	address;
 
-	for (i = 0; i < 18; i++)
+	for (handle = 0; handle < IPXSOCKETS; handle++)
 	{
-		if (ipx_sockets[i] == 0)
+		if (ipxsocket[handle] == 0)
 			break;
 	}
-
-	if (i == 18)
+	if (handle == IPXSOCKETS)
 		return -1;
 
-	newsocket = socketFunc(AF_IPX, SOCK_DGRAM, 1000);
-	if (newsocket == INVALID_SOCKET)
+	if ((newsocket = psocket(AF_IPX, SOCK_DGRAM, NSPROTO_IPX)) == INVALID_SOCKET)
 		return -1;
 
-	if (ioctlsocketFunc(newsocket, FIONBIO, (u_long *)&one) == -1 ||
-		setsockoptFunc(newsocket, 0xFFFF, 32, (char *)&one, sizeof(one)) < 0)
+	if (pioctlsocket(newsocket, FIONBIO, &_true) == -1
+		|| psetsockopt(newsocket, SOL_SOCKET, SO_BROADCAST, (char *)&_true, sizeof(_true)) < 0)
 	{
-		closesocketFunc(newsocket);
+		pclosesocket(newsocket);
 		return -1;
 	}
 
-	addr.sa_family = AF_IPX;
-	memset(addr.sa_netnum, 0, 10);
-	addr.sa_socket = htons((u_short)port);
-
-	if (bind(newsocket, (struct sockaddr *)&addr, 14))
+	address.sa_family = AF_IPX;
+	memset(address.sa_netnum, 0, 4);
+	memset(address.sa_nodenum, 0, 6);
+	address.sa_socket = htons((u_short)port);
+	if (bind(newsocket, (struct sockaddr *)&address, sizeof(address)) != 0)
 		Sys_Error("Winsock IPX bind failed");
 
-	ipx_sockets[i] = newsocket;
-	ipx_sequence[i] = 0;
-
-	return i;
+	ipxsocket[handle] = newsocket;
+	sequence[handle] = 0;
+	return handle;
 }
 
-void WIPX_CloseSocket(int socket)
+/*
+================
+WIPX_CloseSocket
+================
+*/
+void WIPX_CloseSocket(int handle)
 {
-	closesocketFunc(ipx_sockets[socket]);
-	ipx_sockets[socket] = 0;
+	pclosesocket(ipxsocket[handle]);
+	ipxsocket[handle] = 0;
 }
 
+/*
+================
+WIPX_Connect
+================
+*/
 int WIPX_Connect(void)
 {
 	return 0;
 }
 
+/*
+================
+WIPX_CheckNewConnections
+================
+*/
 int WIPX_CheckNewConnections(void)
 {
-	u_long  available;
+	u_long	available;
 
-	if (ipx_acceptSocket == -1)
+	if (net_acceptsocket == -1)
 		return -1;
 
-	if (ioctlsocketFunc(ipx_sockets[ipx_acceptSocket], FIONREAD, &available) == -1)
+	if (pioctlsocket(ipxsocket[net_acceptsocket], FIONREAD, &available) == -1)
 		Sys_Error("WIPX: ioctlsocket (FIONREAD) failed");
 
 	if (available)
-		return ipx_acceptSocket;
+		return net_acceptsocket;
 
 	return -1;
 }
 
-int WIPX_Read(int socket, void *buf, int len, struct sockaddr *addr)
+/*
+================
+WIPX_Read
+================
+*/
+int WIPX_Read(int handle, void *buf, int len, struct qsockaddr *addr)
 {
-	int         ret;
-	int         addrlen = 16;
+	int		addrlen = sizeof(struct qsockaddr);
+	int		ret;
+	int		err;
 
-	ret = recvfromFunc(ipx_sockets[socket], (char *)ipx_packetBuffer, len + 4, 0, addr, &addrlen);
-
+	ret = precvfrom(ipxsocket[handle], (char *)&packetBuffer, len + IPXSEQUENCESIZE, 0, (struct sockaddr *)addr, &addrlen);
 	if (ret == -1)
 	{
-		int err = WSAGetLastErrorFunc();
+		err = pWSAGetLastError();
 		if (err == WSAEWOULDBLOCK || err == WSAECONNREFUSED)
 			return 0;
 	}
 
-	if (ret < 4)
+	if (ret < IPXSEQUENCESIZE)
 		return 0;
 
-	ret -= 4;
-	Q_memcpy(buf, ipx_packetData, ret);
-
+	// remove sequence number, it's only needed for DOS IPX
+	ret -= IPXSEQUENCESIZE;
+	Q_memcpy(buf, packetBuffer.data, ret);
 	return ret;
 }
 
-int WIPX_Broadcast(int socket, void *buf, int len)
+/*
+================
+WIPX_Broadcast
+================
+*/
+int WIPX_Broadcast(int handle, void *buf, int len)
 {
-	return WIPX_Write(socket, buf, len, (struct sockaddr *)&ipx_broadcastAddr_family);
+	return WIPX_Write(handle, buf, len, &broadcastaddr);
 }
 
-int WIPX_Write(int socket, void *buf, int len, struct sockaddr *addr)
+/*
+================
+WIPX_Write
+================
+*/
+int WIPX_Write(int handle, void *buf, int len, struct qsockaddr *addr)
 {
-	int         ret;
+	int		ret;
 
-	ipx_packetBuffer[0] = ipx_sequence[socket]++;
+	// build packet with sequence number
+	packetBuffer.sequence = sequence[handle]++;
+	Q_memcpy(packetBuffer.data, buf, len);
 
-	Q_memcpy(ipx_packetData, buf, len);
-
-	ret = sendtoFunc(ipx_sockets[socket], (char *)ipx_packetBuffer, len + 4, 0, addr, 16);
-
+	ret = psendto(ipxsocket[handle], (char *)&packetBuffer, len + IPXSEQUENCESIZE, 0, (struct sockaddr *)addr, sizeof(struct qsockaddr));
 	if (ret == -1)
 	{
-		if (WSAGetLastErrorFunc() == WSAEWOULDBLOCK)
+		if (pWSAGetLastError() == WSAEWOULDBLOCK)
 			return 0;
 	}
 
 	return ret;
 }
 
-char *WIPX_AddrToString(struct sockaddr *addr)
+/*
+================
+WIPX_AddrToString
+================
+*/
+char *WIPX_AddrToString(struct qsockaddr *addr)
 {
-	byte *a = (byte *)addr;
+	static char	buf[32];
 
-	sprintf(ipx_addressBuffer, "%02x%02x%02x%02x:%02x%02x%02x%02x%02x%02x:%u",
-		a[2], a[3], a[4], a[5],
-		a[6], a[7], a[8], a[9], a[10], a[11],
-		ntohs(*(u_short *)&a[12]));
-
-	return ipx_addressBuffer;
+	sprintf(buf, "%02x%02x%02x%02x:%02x%02x%02x%02x%02x%02x:%u",
+		((struct sockaddr_ipx *)addr)->sa_netnum[0] & 0xff,
+		((struct sockaddr_ipx *)addr)->sa_netnum[1] & 0xff,
+		((struct sockaddr_ipx *)addr)->sa_netnum[2] & 0xff,
+		((struct sockaddr_ipx *)addr)->sa_netnum[3] & 0xff,
+		((struct sockaddr_ipx *)addr)->sa_nodenum[0] & 0xff,
+		((struct sockaddr_ipx *)addr)->sa_nodenum[1] & 0xff,
+		((struct sockaddr_ipx *)addr)->sa_nodenum[2] & 0xff,
+		((struct sockaddr_ipx *)addr)->sa_nodenum[3] & 0xff,
+		((struct sockaddr_ipx *)addr)->sa_nodenum[4] & 0xff,
+		((struct sockaddr_ipx *)addr)->sa_nodenum[5] & 0xff,
+		ntohs(((struct sockaddr_ipx *)addr)->sa_socket));
+	return buf;
 }
 
-int WIPX_StringToAddr(char *string, struct sockaddr *addr)
+/*
+================
+WIPX_StringToAddr
+================
+*/
+int WIPX_StringToAddr(char *string, struct qsockaddr *addr)
 {
-	int     val;
-	char    buf[3];
+	int		val;
+	char	buf[3];
 
 	buf[2] = 0;
-	memset(addr, 0, 16);
-	((struct sockaddr_ipx *)addr)->sa_family = AF_IPX;
+	memset(addr, 0, sizeof(struct qsockaddr));
+	addr->sa_family = AF_IPX;
 
-	buf[0] = string[0]; buf[1] = string[1];
-	if (sscanf(buf, "%x", &val) != 1) return -1;
-	((byte *)addr)[2] = val;
+#define DO(src, dest)						\
+	buf[0] = string[src];					\
+	buf[1] = string[src + 1];				\
+	if (sscanf(buf, "%x", &val) != 1)		\
+		return -1;							\
+	((struct sockaddr_ipx *)addr)->dest = val
 
-	buf[0] = string[2]; buf[1] = string[3];
-	if (sscanf(buf, "%x", &val) != 1) return -1;
-	((byte *)addr)[3] = val;
-
-	buf[0] = string[4]; buf[1] = string[5];
-	if (sscanf(buf, "%x", &val) != 1) return -1;
-	((byte *)addr)[4] = val;
-
-	buf[0] = string[6]; buf[1] = string[7];
-	if (sscanf(buf, "%x", &val) != 1) return -1;
-	((byte *)addr)[5] = val;
-
-	buf[0] = string[9]; buf[1] = string[10];
-	if (sscanf(buf, "%x", &val) != 1) return -1;
-	((byte *)addr)[6] = val;
-
-	buf[0] = string[11]; buf[1] = string[12];
-	if (sscanf(buf, "%x", &val) != 1) return -1;
-	((byte *)addr)[7] = val;
-
-	buf[0] = string[13]; buf[1] = string[14];
-	if (sscanf(buf, "%x", &val) != 1) return -1;
-	((byte *)addr)[8] = val;
-
-	buf[0] = string[15]; buf[1] = string[16];
-	if (sscanf(buf, "%x", &val) != 1) return -1;
-	((byte *)addr)[9] = val;
-
-	buf[0] = string[17]; buf[1] = string[18];
-	if (sscanf(buf, "%x", &val) != 1) return -1;
-	((byte *)addr)[10] = val;
-
-	buf[0] = string[19]; buf[1] = string[20];
-	if (sscanf(buf, "%x", &val) != 1) return -1;
-	((byte *)addr)[11] = val;
+	DO(0, sa_netnum[0]);
+	DO(2, sa_netnum[1]);
+	DO(4, sa_netnum[2]);
+	DO(6, sa_netnum[3]);
+	DO(9, sa_nodenum[0]);
+	DO(11, sa_nodenum[1]);
+	DO(13, sa_nodenum[2]);
+	DO(15, sa_nodenum[3]);
+	DO(17, sa_nodenum[4]);
+	DO(19, sa_nodenum[5]);
+#undef DO
 
 	sscanf(&string[22], "%u", &val);
-	*(u_short *)&((byte *)addr)[12] = htons((u_short)val);
+	((struct sockaddr_ipx *)addr)->sa_socket = htons((u_short)val);
 
 	return 0;
 }
 
-int WIPX_GetSocketAddr(int socket, struct sockaddr *addr)
+/*
+================
+WIPX_GetSocketAddr
+================
+*/
+int WIPX_GetSocketAddr(int handle, struct qsockaddr *addr)
 {
-	int     addrlen = 16;
+	int		addrlen = sizeof(struct qsockaddr);
 
-	memset(addr, 0, 16);
-
-	if (getsocknameFunc(ipx_sockets[socket], addr, &addrlen))
-		WSAGetLastErrorFunc();
+	memset(addr, 0, sizeof(struct qsockaddr));
+	if (pgetsockname(ipxsocket[handle], (struct sockaddr *)addr, &addrlen) != 0)
+		pWSAGetLastError();
 
 	return 0;
 }
 
-int WIPX_GetNameFromAddr(struct sockaddr *addr, char *name)
+/*
+================
+WIPX_GetNameFromAddr
+================
+*/
+int WIPX_GetNameFromAddr(struct qsockaddr *addr, char *name)
 {
 	Q_strcpy(name, WIPX_AddrToString(addr));
 	return 0;
 }
 
-int WIPX_GetAddrFromName(char *name, struct sockaddr *addr)
+/*
+================
+WIPX_GetAddrFromName
+
+Accepts "node", "net:node" or "net:node:port" in hex.
+================
+*/
+int WIPX_GetAddrFromName(char *name, struct qsockaddr *addr)
 {
-	int     len;
-	char    buffer[32];
+	int		n;
+	char	buf[32];
 
-	len = strlen(name);
+	n = strlen(name);
 
-	if (len == 12)
+	if (n == 12)
 	{
-		sprintf(buffer, "00000000:%s:%u", name, hostshort);
-		return WIPX_StringToAddr(buffer, addr);
+		sprintf(buf, "00000000:%s:%u", name, hostshort);
+		return WIPX_StringToAddr(buf, addr);
 	}
-	else if (len == 21)
+	if (n == 21)
 	{
-		sprintf(buffer, "%s:%u", name, hostshort);
-		return WIPX_StringToAddr(buffer, addr);
+		sprintf(buf, "%s:%u", name, hostshort);
+		return WIPX_StringToAddr(buf, addr);
 	}
-	else if (len > 21 && len <= 27)
-	{
+	if (n > 21 && n <= 27)
 		return WIPX_StringToAddr(name, addr);
-	}
 
 	return -1;
 }
 
-int WIPX_AddrCompare(struct sockaddr *addr1, struct sockaddr *addr2)
-{
-	byte *a1 = (byte *)addr1;
-	byte *a2 = (byte *)addr2;
+/*
+================
+WIPX_AddrCompare
 
-	if (*(short *)a2 != *(short *)a1)
+Returns 0 for the same address and port, 1 for the same address on
+another port, -1 otherwise.
+================
+*/
+int WIPX_AddrCompare(struct qsockaddr *addr1, struct qsockaddr *addr2)
+{
+	if (addr2->sa_family != addr1->sa_family)
 		return -1;
 
-	if (a1[2] && a2[2])
+	if (*((struct sockaddr_ipx *)addr1)->sa_netnum && *((struct sockaddr_ipx *)addr2)->sa_netnum)
 	{
-		if (memcmp(&a1[2], &a2[2], 4))
+		if (memcmp(((struct sockaddr_ipx *)addr1)->sa_netnum, ((struct sockaddr_ipx *)addr2)->sa_netnum, 4) != 0)
 			return -1;
 	}
 
-	if (memcmp(&a1[6], &a2[6], 6))
+	if (memcmp(((struct sockaddr_ipx *)addr1)->sa_nodenum, ((struct sockaddr_ipx *)addr2)->sa_nodenum, 6) != 0)
 		return -1;
 
-	return (*(u_short *)&a2[12] != *(u_short *)&a1[12]) ? 1 : 0;
+	if (((struct sockaddr_ipx *)addr2)->sa_socket != ((struct sockaddr_ipx *)addr1)->sa_socket)
+		return 1;
+
+	return 0;
 }
 
-int WIPX_GetSocketPort(struct sockaddr *addr)
+/*
+================
+WIPX_GetSocketPort
+================
+*/
+int WIPX_GetSocketPort(struct qsockaddr *addr)
 {
-	return ntohs(*(u_short *)&((byte *)addr)[12]);
+	return ntohs(((struct sockaddr_ipx *)addr)->sa_socket);
 }
 
-int WIPX_SetSocketPort(struct sockaddr *addr, int port)
+/*
+================
+WIPX_SetSocketPort
+================
+*/
+int WIPX_SetSocketPort(struct qsockaddr *addr, int port)
 {
-	*(u_short *)&((byte *)addr)[12] = htons((u_short)port);
+	((struct sockaddr_ipx *)addr)->sa_socket = htons((u_short)port);
 	return 0;
 }

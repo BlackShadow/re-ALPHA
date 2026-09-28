@@ -12,44 +12,42 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
+// gl_rlight.c
+
 #include "quakedef.h"
 
-int r_dlightframecount;
+int			r_dlightframecount;
 
-vec3_t lightspot;
-mplane_t *lightplane;
+vec3_t		lightspot;
+mplane_t	*lightplane;		// plane the last light point hit
 
-int d_lightstylevalue[256];
+int			d_lightstylevalue[256];	// 8.8 fraction of base light value
 
-float v_blend[4];
+float		v_blend[4];			// rgba 0.0 - 1.0
 
-extern vec3_t r_origin;
-extern vec3_t vpn;
-extern vec3_t vright;
-extern vec3_t vup;
+cvar_t		gl_flashblend = { "gl_flashblend", "0" };
 
-extern int r_framecount;
+lightstyle_t	cl_lightstyle[MAX_LIGHTSTYLES];
+char		cl_lightstyle_value[MAX_LIGHTSTYLES][64];
+vec3_t		r_light_rgb;
 
-extern double cl_time;
+byte		ambientlight_r = 0;
+byte		ambientlight_g = 0;
+byte		ambientlight_b = 0;
 
-extern dlight_t cl_dlights[MAX_DLIGHTS];
-
-extern model_t *cl_worldmodel;
-
-cvar_t gl_flashblend = {"gl_flashblend", "0"};
-
-lightstyle_t cl_lightstyle[MAX_LIGHTSTYLES];
-char cl_lightstyle_value[MAX_LIGHTSTYLES][64];
-vec3_t r_light_rgb;
-
-byte ambientlight_r = 0;
-byte ambientlight_g = 0;
-byte ambientlight_b = 0;
-
+/*
+==================
+R_AnimateLight
+==================
+*/
 void R_AnimateLight(void)
 {
-	int i, j, k;
+	int		i, j, k;
 
+	//
+	// light animations
+	// 'm' is normal light, 'a' is no light, 'z' is double bright
+	//
 	i = (int)(cl_time * 10.0);
 
 	for (j = 0; j < MAX_LIGHTSTYLES; j++)
@@ -67,10 +65,25 @@ void R_AnimateLight(void)
 	}
 }
 
+/*
+=============================================================================
+
+DYNAMIC LIGHTS BLEND RENDERING
+
+=============================================================================
+*/
+
+/*
+=============
+AddLightBlend
+
+Mixes a color into the full screen blend
+=============
+*/
 void AddLightBlend(float r, float g, float b, float a2)
 {
-	float a;
-	float mix;
+	float	a;
+	float	mix;
 
 	a = v_blend[3] + a2 * (1.0f - v_blend[3]);
 	v_blend[3] = a;
@@ -82,12 +95,19 @@ void AddLightBlend(float r, float g, float b, float a2)
 	v_blend[2] = v_blend[2] * (1.0f - mix) + b * mix;
 }
 
+/*
+=============
+R_RenderDlight
+
+Draws a light glow as a fan facing the viewer
+=============
+*/
 void R_RenderDlight(dlight_t *light)
 {
-	int i, j;
-	float a;
-	vec3_t v;
-	float rad;
+	int		i, j;
+	float	a;
+	vec3_t	v;
+	float	rad;
 
 	rad = light->radius * 0.35f;
 
@@ -95,6 +115,7 @@ void R_RenderDlight(dlight_t *light)
 
 	if (VectorLength(v) < rad)
 	{
+		// view is inside the dlight
 		AddLightBlend(1.0f, 0.5f, 0.0f, light->radius * 0.0003f);
 		return;
 	}
@@ -119,16 +140,21 @@ void R_RenderDlight(dlight_t *light)
 	glEnd();
 }
 
+/*
+=============
+R_RenderDlights
+=============
+*/
 void R_RenderDlights(void)
 {
-	int i;
-	dlight_t *l;
+	int			i;
+	dlight_t	*l;
 
 	if (gl_flashblend.value == 0.0f)
 		return;
 
-	r_dlightframecount = r_framecount + 1;
-
+	r_dlightframecount = r_framecount + 1;	// because the count hasn't
+											//  advanced yet for this frame
 	glDepthMask(0);
 	glDisable(GL_TEXTURE_2D);
 	glShadeModel(GL_SMOOTH);
@@ -150,17 +176,30 @@ void R_RenderDlights(void)
 	glDepthMask(1);
 }
 
+/*
+=============================================================================
+
+DYNAMIC LIGHTS
+
+=============================================================================
+*/
+
+/*
+=============
+R_MarkLights
+=============
+*/
 void R_MarkLights(dlight_t *light, int bit, mnode_t *node)
 {
-	mplane_t *splitplane;
-	float dist;
-	msurface_t *surf;
-	int i;
-	float maxdist;
-	int s, t;
-	mtexinfo_t *tex;
-	vec3_t lightorigin;
-	float radius;
+	mplane_t	*splitplane;
+	float		dist;
+	msurface_t	*surf;
+	int			i;
+	float		maxdist;
+	int			s, t;
+	mtexinfo_t	*tex;
+	vec3_t		lightorigin;
+	float		radius;
 
 	if (node->contents < 0)
 		return;
@@ -184,6 +223,7 @@ void R_MarkLights(dlight_t *light, int bit, mnode_t *node)
 
 	maxdist = radius - fabs(dist);
 
+	// mark the polygons
 	surf = cl_worldmodel->surfaces + node->firstsurface;
 	for (i = 0; i < node->numsurfaces; i++, surf++)
 	{
@@ -212,16 +252,21 @@ void R_MarkLights(dlight_t *light, int bit, mnode_t *node)
 	R_MarkLights(light, bit, node->children[1]);
 }
 
+/*
+=============
+R_PushDlights
+=============
+*/
 void R_PushDlights(void)
 {
-	int i;
-	dlight_t *l;
+	int			i;
+	dlight_t	*l;
 
 	if (gl_flashblend.value != 0.0f)
 		return;
 
-	r_dlightframecount = r_framecount + 1;
-
+	r_dlightframecount = r_framecount + 1;	// because the count hasn't
+											//  advanced yet for this frame
 	l = cl_dlights;
 	for (i = 0; i < MAX_DLIGHTS; i++, l++)
 	{
@@ -231,25 +276,43 @@ void R_PushDlights(void)
 	}
 }
 
+/*
+=============================================================================
+
+LIGHT SAMPLING
+
+=============================================================================
+*/
+
+/*
+=============
+RecursiveLightPoint
+
+Leaves the light color in r_light_rgb.
+=============
+*/
 int RecursiveLightPoint(mnode_t *node, vec3_t start, vec3_t end)
 {
-	int r;
-	float front, back, frac;
-	int side;
-	mplane_t *plane;
-	vec3_t mid;
-	msurface_t *surf;
-	int s, t, ds, dt;
-	int i;
-	mtexinfo_t *tex;
-	byte *lightmap;
-	unsigned scale;
-	int maps;
-	int smax, tmax;
+	int			r;
+	float		front, back, frac;
+	int			side;
+	mplane_t	*plane;
+	vec3_t		mid;
+	msurface_t	*surf;
+	int			s, t, ds, dt;
+	int			i;
+	mtexinfo_t	*tex;
+	byte		*lightmap;
+	unsigned	scale;
+	int			maps;
+	int			smax, tmax;
 
 	if (node->contents < 0)
-		return 0;
+		return 0;		// didn't hit anything
 
+	// calculate mid point
+
+	// FIXME: optimize for axial
 	plane = node->plane;
 	front = DotProduct(start, plane->normal) - plane->dist;
 	back = DotProduct(end, plane->normal) - plane->dist;
@@ -263,13 +326,15 @@ int RecursiveLightPoint(mnode_t *node, vec3_t start, vec3_t end)
 	mid[1] = start[1] + (end[1] - start[1]) * frac;
 	mid[2] = start[2] + (end[2] - start[2]) * frac;
 
+	// go down front side
 	r = RecursiveLightPoint(node->children[side], start, mid);
 	if (r)
-		return r;
+		return r;		// hit something
 
 	if ((back < 0) == side)
-		return 0;
+		return 0;		// didn't hit anything
 
+	// check for impact on this node
 	VectorCopy(mid, lightspot);
 	lightplane = plane;
 
@@ -277,7 +342,7 @@ int RecursiveLightPoint(mnode_t *node, vec3_t start, vec3_t end)
 	for (i = 0; i < node->numsurfaces; i++, surf++)
 	{
 		if (surf->flags & SURF_DRAWTILED)
-			continue;
+			continue;	// no lightmaps
 
 		tex = surf->texinfo;
 
@@ -325,9 +390,17 @@ int RecursiveLightPoint(mnode_t *node, vec3_t start, vec3_t end)
 		return 1;
 	}
 
+	// go down back side
 	return RecursiveLightPoint(node->children[!side], mid, end);
 }
 
+/*
+=============
+R_GetLightmap
+
+Light color where the line from point to end first hits the world.
+=============
+*/
 unsigned int *R_GetLightmap(unsigned int *lightrgb, vec3_t point, vec3_t end)
 {
 	if (cl_worldmodel->lightdata)
@@ -348,9 +421,14 @@ unsigned int *R_GetLightmap(unsigned int *lightrgb, vec3_t point, vec3_t end)
 	return lightrgb;
 }
 
+/*
+=============
+R_LightPoint
+=============
+*/
 unsigned int *R_LightPoint(unsigned int *lightrgb, vec3_t point)
 {
-	vec3_t end;
+	vec3_t	end;
 
 	end[0] = point[0];
 	end[1] = point[1];

@@ -67,6 +67,8 @@ char    *Draw_NameToDecal(int decal, char *name);
 int     Draw_DecalIndex(int decal);
 void    *Draw_GetDecal(int index);
 
+extern byte gammatable[256];	// texture gamma, built by V_BuildGammaTables
+
 // =========================================================
 // Menu Draw Helpers (centered on 320x200)
 // =========================================================

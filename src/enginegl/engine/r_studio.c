@@ -12,131 +12,73 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
+// r_studio.c -- studio model rendering
 
 #include "quakedef.h"
 #include "studio.h"
 
-#include <GL/gl.h>
-#include <math.h>
-#include <string.h>
+// bone controllers of these types move along or rotate about an axis
+#define STUDIO_CONTROLLER_TYPES	(STUDIO_X | STUDIO_Y | STUDIO_Z | STUDIO_XR | STUDIO_YR | STUDIO_ZR | STUDIO_LX | STUDIO_LY | STUDIO_LZ)
+
+#define CONTROLLER_LERP_TIME	0.1		// controllers move to their new values over this time
+#define SEQUENCE_BLEND_TIME		0.2		// a new sequence blends in from the old one over this time
+
+#define MAX_TRANS_ENTITIES		100
+
+#define LIGHTCOLOR_SCALE		49407.0f	// light color 0..1 to 8.8 fixed point
 
 typedef float vec4_t[4];
 
-typedef struct alight_s
-{
-	int ambient;
-	int shade;
-	float color[3];
-	vec3_t *plightvec;
-} alight_t;
+static studiohdr_t			*g_pStudioHeader;
+static mstudiobodyparts_t	*g_pBodypart;
+static mstudiomodel_t		*g_pStudioModel;
 
-#define ENT_ORIGIN_OFFSET 104
-#define ENT_YAW_OFFSET 144
-#define ENT_RENDERMODE_OFFSET 152
-#define ENT_RENDERAMT_OFFSET 156
-#define ENT_RENDERFX_OFFSET 164
-#define ENT_MODEL_OFFSET 168
-#define ENT_EFFECTS_OFFSET 188
-#define ENT_UNKNOWN_208_OFFSET 208
-#define ENT_BODY_OFFSET 228
-#define ENT_SEQUENCE_OFFSET 232
-#define ENT_CONTROLLER_OFFSET 236
-#define ENT_FRAME_OFFSET 176
-#define ENT_ANIMTIME_OFFSET 220
-#define ENT_FRAMERATE_OFFSET 224
-#define ENT_LATCH_ANIMTIME_OFFSET 244
-#define ENT_BLEND_OLDFRAME_OFFSET 272
-#define ENT_BLEND_TIME_OFFSET 276
-#define ENT_BLEND_OLDSEQ_OFFSET 280
-#define ENT_LATCH_CONTROLLER_OFFSET 284
-#define ENT_LIGHTCOLOR_OFFSET 292
+static int		g_r_studio_rendercount;
+static int		g_r_studio_render_flag;
+static int		g_r_studio_num_verts;
+static int		g_r_studio_mode;
+static int		g_r_studio_hardware_color;
 
-#define ENT_PTR(ent, offset, type) ((type *)((byte *)(ent) + (offset)))
-#define ENT_FLOAT(ent, offset) (*ENT_PTR(ent, offset, float))
-#define ENT_INT(ent, offset) (*ENT_PTR(ent, offset, int))
-#define ENT_BYTE(ent, offset) (*ENT_PTR(ent, offset, byte))
+static int		g_r_studio_ambient;
+static float	g_r_studio_shade;
+static int		g_r_studio_lightcolor_r;
+static int		g_r_studio_lightcolor_g;
+static int		g_r_studio_lightcolor_b;
 
-extern entity_t *currententity;
-extern double cl_time;
+static float	g_shadow_dir[3];
 
-extern vec3_t r_origin;
-extern vec3_t lightspot;
-extern vec3_t r_light_rgb;
+static vec3_t	g_bonepos[MAXSTUDIOBONES];
+static vec4_t	g_bonequat[MAXSTUDIOBONES];
+static vec3_t	g_bonepos2[MAXSTUDIOBONES];
+static vec4_t	g_bonequat2[MAXSTUDIOBONES];
 
-extern cvar_t cv_lambert;
-extern cvar_t cv_direct;
-extern float r_plightvec[3];
+static float	g_bonetransform[MAXSTUDIOBONES][3][4];
+static float	g_lighttransform[MAXSTUDIOBONES][3][4];
 
-extern dlight_t cl_dlights[MAX_DLIGHTS];
+static float	g_transformedverts[MAXSTUDIOVERTS][3];
+static float	g_lightvalues[MAXSTUDIOVERTS];
+static int		g_chrome[MAXSTUDIOVERTS][2];
 
-extern cvar_t r_fullbright;
-extern cvar_t r_drawentities;
-extern cvar_t r_shadows;
-extern cvar_t gl_smoothmodels;
-extern cvar_t gl_affinemodels;
-extern cvar_t gl_ztrick;
-
-extern int lightgammatable[1024];
-
-extern void R_RotateForEntity(int entity_ptr);
-extern unsigned int *R_GetLightmap(unsigned int *lightrgb, vec3_t point, vec3_t end);
-
-extern void R_DrawSpriteModel(entity_t *entity);
-extern void R_DrawAliasModel(entity_t *entity);
-extern void R_DrawBrushModel(entity_t *entity);
-
-extern int CL_FxBlend(int entity_ptr);
-extern vec3_t vpn;
-
-static studiohdr_t *g_pStudioHeader;
-static mstudiobodyparts_t *g_pBodypart;
-static mstudiomodel_t *g_pStudioModel;
-
-static int g_r_studio_rendercount;
-static int g_r_studio_render_flag;
-static int g_r_studio_num_verts;
-static int g_r_studio_mode;
-static int g_r_studio_hardware_color;
-
-static int g_r_studio_ambient;
-static float g_r_studio_shade;
-static int g_r_studio_lightcolor_r;
-static int g_r_studio_lightcolor_g;
-static int g_r_studio_lightcolor_b;
-
-static float g_shadow_dir[3];
-
-static vec3_t g_bonepos[MAXSTUDIOBONES];
-static vec4_t g_bonequat[MAXSTUDIOBONES];
-static vec3_t g_bonepos2[MAXSTUDIOBONES];
-static vec4_t g_bonequat2[MAXSTUDIOBONES];
-
-static float g_bonetransform[MAXSTUDIOBONES][3][4];
-static float g_lighttransform[MAXSTUDIOBONES][3][4];
-
-static float g_transformedverts[MAXSTUDIOVERTS][3];
-static float g_lightvalues[MAXSTUDIOVERTS];
-static int g_chrome[MAXSTUDIOVERTS][2];
-
-enum { MAX_TRANS_ENTITIES = 100 };
-static int r_numtranslucent;
-static int r_translucent_entities[MAX_TRANS_ENTITIES];
-static float r_translucent_dist[MAX_TRANS_ENTITIES];
-
-static int abs32(int x)
-{
-	return (x < 0) ? -x : x;
-}
+static int		r_numtranslucent;
+static entity_t	*r_translucent_entities[MAX_TRANS_ENTITIES];
+static float	r_translucent_dist[MAX_TRANS_ENTITIES];
 
 int R_StudioCheckBBox(void)
 {
 	return 1;
 }
 
+/*
+================
+R_StudioGetFrameCount
+
+Number of sub-models in the first body part.
+================
+*/
 int R_StudioGetFrameCount(model_t *model)
 {
-	studiohdr_t *pstudio;
-	mstudiobodyparts_t *pbodypart;
+	studiohdr_t			*pstudio;
+	mstudiobodyparts_t	*pbodypart;
 
 	if (!model || model->type != mod_studio)
 		return 0;
@@ -149,14 +91,16 @@ int R_StudioGetFrameCount(model_t *model)
 	return pbodypart->nummodels;
 }
 
-int R_StudioSetupLighting(int lightptr)
+/*
+================
+R_StudioSetupLighting
+================
+*/
+void R_StudioSetupLighting(alight_t *plight)
 {
-	alight_t *plight;
-	vec3_t *plightvec;
-	float shade;
-	int result;
+	vec3_t		*plightvec;
+	float		shade;
 
-	plight = (alight_t *)lightptr;
 	plightvec = plight->plightvec;
 
 	g_r_studio_ambient = plight->ambient;
@@ -167,18 +111,21 @@ int R_StudioSetupLighting(int lightptr)
 	r_plightvec[1] = (*plightvec)[1];
 	r_plightvec[2] = (*plightvec)[2];
 
-	g_r_studio_lightcolor_r = ((int)(plight->color[0] * 49407.0f)) & 0xFF00;
-	g_r_studio_lightcolor_g = ((int)(plight->color[1] * 49407.0f)) & 0xFF00;
-	result = ((int)(plight->color[2] * 49407.0f)) & 0xFF00;
-	g_r_studio_lightcolor_b = result;
-	return result;
+	g_r_studio_lightcolor_r = ((int)(plight->color[0] * LIGHTCOLOR_SCALE)) & 0xFF00;
+	g_r_studio_lightcolor_g = ((int)(plight->color[1] * LIGHTCOLOR_SCALE)) & 0xFF00;
+	g_r_studio_lightcolor_b = ((int)(plight->color[2] * LIGHTCOLOR_SCALE)) & 0xFF00;
 }
 
+/*
+================
+R_StudioSetupModel
+================
+*/
 static mstudiomodel_t *R_StudioSetupModel(int bodypart)
 {
-	mstudiobodyparts_t *pbodypart;
-	int body;
-	int modelOffset;
+	mstudiobodyparts_t	*pbodypart;
+	mstudiomodel_t		*psubmodel;
+	int					index;
 
 	if (!g_pStudioHeader)
 		return NULL;
@@ -190,31 +137,43 @@ static mstudiomodel_t *R_StudioSetupModel(int bodypart)
 	}
 
 	pbodypart = (mstudiobodyparts_t *)((byte *)g_pStudioHeader + g_pStudioHeader->bodypartindex) + bodypart;
-	body = ENT_INT(currententity, ENT_BODY_OFFSET);
 
-	modelOffset = pbodypart->modelindex + 108 * ((body / pbodypart->base) % pbodypart->nummodels);
+	index = (currententity->body / pbodypart->base) % pbodypart->nummodels;
+	psubmodel = (mstudiomodel_t *)((byte *)g_pStudioHeader + pbodypart->modelindex) + index;
+
 	g_pBodypart = pbodypart;
-	g_pStudioModel = (mstudiomodel_t *)((byte *)g_pStudioHeader + modelOffset);
-	return g_pStudioModel;
+	g_pStudioModel = psubmodel;
+	return psubmodel;
 }
 
-float *R_StudioTransformVertex(float *out, int boneIndex, float *in)
+/*
+================
+R_StudioTransformVertex
+================
+*/
+void R_StudioTransformVertex(float *out, int bone, float *in)
 {
-	float (*m)[4] = g_bonetransform[boneIndex];
+	float	(*m)[4] = g_bonetransform[bone];
 
 	out[0] = m[0][0] * in[0] + m[0][1] * in[1] + m[0][2] * in[2] + m[0][3];
 	out[1] = m[1][0] * in[0] + m[1][1] * in[1] + m[1][2] * in[2] + m[1][3];
 	out[2] = m[2][0] * in[0] + m[2][1] * in[1] + m[2][2] * in[2] + m[2][3];
-	return out;
 }
 
-float *R_StudioLighting(float *lv, int boneIndex, char flags, float *normal)
+/*
+================
+R_StudioLighting
+
+Light value of one normal, and its chrome texture coordinates.
+================
+*/
+void R_StudioLighting(float *lv, int bone, char flags, float *normal)
 {
-	float (*m)[4] = g_lighttransform[boneIndex];
-	float nx, ny, nz;
-	float illum;
-	float ambientScale;
-	float dot;
+	float	(*m)[4] = g_lighttransform[bone];
+	float	nx, ny, nz;
+	float	illum;
+	float	lambert;
+	float	dot;
 
 	nx = m[0][0] * normal[0] + m[0][1] * normal[1] + m[0][2] * normal[2];
 	ny = m[1][0] * normal[0] + m[1][1] * normal[1] + m[1][2] * normal[2];
@@ -222,14 +181,14 @@ float *R_StudioLighting(float *lv, int boneIndex, char flags, float *normal)
 
 	illum = (float)g_r_studio_ambient;
 
-	if ((flags & 1) == 0 || g_r_studio_mode == 1)
+	if (!(flags & STUDIO_NF_FLATSHADE) || g_r_studio_mode == 1)
 	{
-		ambientScale = cv_lambert.value;
-		if (ambientScale <= 1.0f)
-			ambientScale = 1.0f;
+		lambert = cv_lambert.value;
+		if (lambert <= 1.0f)
+			lambert = 1.0f;
 
 		dot = r_plightvec[0] * nx + r_plightvec[1] * ny + r_plightvec[2] * nz;
-		dot = (dot - (ambientScale - 1.0f)) / ambientScale;
+		dot = (dot - (lambert - 1.0f)) / lambert;
 		if (dot < 0.0f)
 			illum = illum - g_r_studio_shade * dot;
 	}
@@ -238,240 +197,239 @@ float *R_StudioLighting(float *lv, int boneIndex, char flags, float *normal)
 		illum = g_r_studio_shade * 0.5f + illum;
 	}
 
-	if ((flags & 2) != 0)
+	if (flags & STUDIO_NF_CHROME)
 	{
-		int normalIndex = (int)(lv - g_lightvalues);
-		float v = (vpn[1] * ny + vpn[2] * nz + vpn[0] * nx) * 2.0f;
-		float s = v * nx - vpn[0];
-		float t = v * nz - vpn[2];
+		int		i = (int)(lv - g_lightvalues);
+		float	n = (vpn[1] * ny + vpn[2] * nz + vpn[0] * nx) * 2.0f;
+		float	s = n * nx - vpn[0];
+		float	t = n * nz - vpn[2];
 
-		g_chrome[normalIndex][0] = (int)((s + 1.0f) * 32.0f);
-		g_chrome[normalIndex][1] = (int)((t + 1.0f) * 32.0f);
+		// reflection vector (-1..1) to 0..64 texels
+		g_chrome[i][0] = (int)((s + 1.0f) * 32.0f);
+		g_chrome[i][1] = (int)((t + 1.0f) * 32.0f);
 	}
 
 	if (illum > 255.0f)
 		illum = 255.0f;
 
-	*lv = (float)lightgammatable[(int)(illum * 4.0f)] * 0.0009765625f;
-	return lv;
+	*lv = (float)lightgammatable[(int)(illum * 4.0f)] * (1.0f / 1024);
 }
 
+/*
+================
+R_StudioCalcRotations
+
+Bone positions and quaternions of a sequence at the given frame,
+with the entity's bone controllers applied.
+================
+*/
 void R_StudioCalcRotations(float *pos, float *quat, int seq, float frame)
 {
-	mstudioseqdesc_t *pseqdesc;
-	int frameInt;
-	float controllerBlend;
-
-	int bone;
-	byte *controller;
-	byte *controllerLatched;
-
-	int numBoneControllers;
-	mstudiobonecontroller_t *pcontrollers;
-
-	byte *pAnim;
-	int *pAnimBone;
-
-	float adjX, adjY, adjZ;
+	mstudioseqdesc_t		*pseqdesc;
+	mstudioboneanim_t		*panim;
+	mstudiobonecontroller_t	*pbonecontroller;
+	int						numbonecontrollers;
+	int						iframe;
+	float					blend;
+	int						bone;
+	byte					*controller;
+	byte					*latched;
+	float					adjX, adjY, adjZ;
 
 	if (!g_pStudioHeader)
 		return;
 
-	frameInt = (int)frame;
+	iframe = (int)frame;
 
 	pseqdesc = (mstudioseqdesc_t *)((byte *)g_pStudioHeader + g_pStudioHeader->seqindex) + seq;
-	pAnim = (byte *)g_pStudioHeader + pseqdesc->animindex;
-	pAnimBone = (int *)(pAnim + 8);
+	panim = (mstudioboneanim_t *)((byte *)g_pStudioHeader + pseqdesc->animindex);
 
-	controllerBlend = 1.0f;
-	if (ENT_FLOAT(currententity, ENT_LATCH_ANIMTIME_OFFSET) + 0.01f <= ENT_FLOAT(currententity, ENT_ANIMTIME_OFFSET))
+	blend = 1.0f;
+	if (currententity->latched_anim_time + 0.01f <= currententity->anim_time)
 	{
-		controllerBlend = (float)((cl_time - (double)ENT_FLOAT(currententity, ENT_ANIMTIME_OFFSET)) / 0.1);
-		if (controllerBlend > 2.0f)
-			controllerBlend = 2.0f;
+		blend = (float)((cl_time - (double)currententity->anim_time) / CONTROLLER_LERP_TIME);
+		if (blend > 2.0f)
+			blend = 2.0f;
 	}
 
-	numBoneControllers = g_pStudioHeader->numbonecontrollers;
-	pcontrollers = (mstudiobonecontroller_t *)((byte *)g_pStudioHeader + g_pStudioHeader->bonecontrollerindex);
+	numbonecontrollers = g_pStudioHeader->numbonecontrollers;
+	pbonecontroller = (mstudiobonecontroller_t *)((byte *)g_pStudioHeader + g_pStudioHeader->bonecontrollerindex);
 
-	controller = (byte *)currententity + ENT_CONTROLLER_OFFSET;
-	controllerLatched = (byte *)currententity + ENT_LATCH_CONTROLLER_OFFSET;
+	controller = currententity->controller;
+	latched = currententity->latched_controller;
 
 	for (bone = 0; bone < g_pStudioHeader->numbones; ++bone)
 	{
-		int numPosKeys;
-		int numRotKeys;
-		byte *pPos;
-		byte *pRot;
+		mstudioposkey_t	*pposkey;
+		mstudiorotkey_t	*protkey;
+		int				numposkeys;
+		int				numrotkeys;
+		int				key;
 
 		adjX = 0.0f;
 		adjY = 0.0f;
 		adjZ = 0.0f;
 
-		pPos = (byte *)g_pStudioHeader + *(pAnimBone - 1);
-		pRot = (byte *)g_pStudioHeader + pAnimBone[1];
+		pposkey = (mstudioposkey_t *)((byte *)g_pStudioHeader + panim->poskeyindex);
+		protkey = (mstudiorotkey_t *)((byte *)g_pStudioHeader + panim->rotkeyindex);
 
-		numPosKeys = *(pAnimBone - 2);
-		numRotKeys = *pAnimBone;
+		numposkeys = panim->numposkeys;
+		numrotkeys = panim->numrotkeys;
 
-		for (int i = 0; i < numBoneControllers; ++i)
+		for (int i = 0; i < numbonecontrollers; ++i)
 		{
-			mstudiobonecontroller_t *bc = &pcontrollers[i];
-			float value;
+			mstudiobonecontroller_t	*pbc = &pbonecontroller[i];
+			float					value;
 
-			if (bc->bone != bone)
+			if (pbc->bone != bone)
 				continue;
 
-			if ((bc->type & STUDIO_RLOOP) == 0)
+			if (!(pbc->type & STUDIO_RLOOP))
 			{
-				float t = ((1.0f - controllerBlend) * (float)controllerLatched[i] + (float)controller[i] * controllerBlend) / 255.0f;
+				float t = ((1.0f - blend) * (float)latched[i] + (float)controller[i] * blend) / 255.0f;
 				if (t < 0.0f)
 					t = 0.0f;
 				if (t > 1.0f)
 					t = 1.0f;
 
-				value = bc->end * t + (1.0f - t) * bc->start;
+				value = pbc->end * t + (1.0f - t) * pbc->start;
 			}
 			else
 			{
 				int c0 = controller[i];
-				int c1 = controllerLatched[i];
+				int c1 = latched[i];
 
-				if (abs32(c0 - c1) <= 128)
+				// wrapping controllers take the short way around
+				if (abs(c0 - c1) <= 128)
 				{
-					value = ((1.0f - controllerBlend) * (float)c1 + (float)c0 * controllerBlend) * 1.40625f + bc->start;
+					value = ((1.0f - blend) * (float)c1 + (float)c0 * blend) * (360.0f / 256) + pbc->start;
 				}
 				else
 				{
 					int a0 = (c0 + 128) & 0xFF;
 					int a1 = (c1 + 128) & 0xFF;
-					value = ((1.0f - controllerBlend) * (float)a1 + (float)a0 * controllerBlend - 128.0f) * 1.40625f + bc->start;
+					value = ((1.0f - blend) * (float)a1 + (float)a0 * blend - 128.0f) * (360.0f / 256) + pbc->start;
 				}
 			}
 
-			switch (bc->type & 0x1FF)
+			switch (pbc->type & STUDIO_CONTROLLER_TYPES)
 			{
-				case STUDIO_XR:
-					adjX += value;
-					break;
-				case STUDIO_YR:
-					adjY += value;
-					break;
-				case STUDIO_ZR:
-					adjZ += value;
-					break;
+			case STUDIO_XR:
+				adjX += value;
+				break;
+			case STUDIO_YR:
+				adjY += value;
+				break;
+			case STUDIO_ZR:
+				adjZ += value;
+				break;
 			}
 		}
 
+		// rotation
+		key = 1;
+		for (mstudiorotkey_t *pkey = &protkey[1]; key < numrotkeys; ++pkey, ++key)
 		{
-			int key = 1;
-			__int16 *keys = (__int16 *)(pRot + 8);
-			while (key < numRotKeys)
-			{
-				if (*keys > frameInt)
-					break;
-				keys += 4;
-				++key;
-			}
-
-			if (key >= numRotKeys)
-			{
-				float angles[3];
-				float *outQuat = quat + 4 * bone;
-				__int16 *k = (__int16 *)(pRot + 8 * (key - 1));
-
-				angles[0] = (float)k[2] / 100.0f + adjY;
-				angles[1] = (float)k[3] / 100.0f + adjZ;
-				angles[2] = (float)k[1] / 100.0f + adjX;
-				AngleQuaternion(angles, outQuat);
-			}
-			else
-			{
-				float angles1[3];
-				float angles2[3];
-				float q1[4];
-				float q2[4];
-				float *outQuat = quat + 4 * bone;
-				__int16 *k = (__int16 *)(pRot + 8 * (key - 1));
-
-				angles1[0] = (float)k[2] / 100.0f + adjY;
-				angles1[1] = (float)k[3] / 100.0f + adjZ;
-				angles1[2] = (float)k[1] / 100.0f + adjX;
-				AngleQuaternion(angles1, q1);
-
-				angles2[0] = (float)k[6] / 100.0f + adjY;
-				angles2[1] = (float)k[7] / 100.0f + adjZ;
-				angles2[2] = (float)k[5] / 100.0f + adjX;
-				AngleQuaternion(angles2, q2);
-
-				{
-					int timeDelta = k[4] - k[0];
-					float t = (timeDelta != 0) ? ((frame - (float)k[0]) / (float)timeDelta) : 0.0f;
-					QuaternionSlerp(q1, q2, t, outQuat);
-				}
-			}
+			if (pkey->frame > iframe)
+				break;
 		}
 
+		if (key >= numrotkeys)
 		{
-			int key = 1;
-			byte *kptr = pPos + 16;
-			while (key < numPosKeys)
-			{
-				if (*(__int16 *)kptr > frameInt)
-					break;
-				kptr += 16;
-				++key;
-			}
+			float			angles[3];
+			float			*q = quat + 4 * bone;
+			mstudiorotkey_t	*k = &protkey[key - 1];
 
-			if (key >= numPosKeys)
-			{
-				float *k = (float *)(pPos + 16 * (key - 1));
-				float *dst = pos + 3 * bone;
-				dst[0] = k[1];
-				dst[1] = k[2];
-				dst[2] = k[3];
-			}
-			else
-			{
-				float *k = (float *)(pPos + 16 * (key - 1));
-				int timeDelta = *((__int16 *)k + 8) - *(__int16 *)k;
-				float t = (timeDelta != 0) ? ((frame - (float)*(__int16 *)k) / (float)timeDelta) : 0.0f;
-				float it = 1.0f - t;
-				float *dst = pos + 3 * bone;
+			angles[0] = (float)k->pitch / ROTKEY_SCALE + adjY;
+			angles[1] = (float)k->yaw / ROTKEY_SCALE + adjZ;
+			angles[2] = (float)k->roll / ROTKEY_SCALE + adjX;
+			AngleQuaternion(angles, q);
+		}
+		else
+		{
+			float			angles1[3];
+			float			angles2[3];
+			float			q1[4];
+			float			q2[4];
+			float			*q = quat + 4 * bone;
+			mstudiorotkey_t	*k = &protkey[key - 1];
+			int				numframes;
+			float			t;
 
-				dst[0] = k[1] * it + k[5] * t;
-				dst[1] = k[2] * it + k[6] * t;
-				dst[2] = k[3] * it + k[7] * t;
-			}
+			angles1[0] = (float)k[0].pitch / ROTKEY_SCALE + adjY;
+			angles1[1] = (float)k[0].yaw / ROTKEY_SCALE + adjZ;
+			angles1[2] = (float)k[0].roll / ROTKEY_SCALE + adjX;
+			AngleQuaternion(angles1, q1);
+
+			angles2[0] = (float)k[1].pitch / ROTKEY_SCALE + adjY;
+			angles2[1] = (float)k[1].yaw / ROTKEY_SCALE + adjZ;
+			angles2[2] = (float)k[1].roll / ROTKEY_SCALE + adjX;
+			AngleQuaternion(angles2, q2);
+
+			numframes = k[1].frame - k[0].frame;
+			t = (numframes != 0) ? ((frame - (float)k[0].frame) / (float)numframes) : 0.0f;
+			QuaternionSlerp(q1, q2, t, q);
 		}
 
-		pAnimBone += 4;
+		// position
+		key = 1;
+		for (mstudioposkey_t *pkey = &pposkey[1]; key < numposkeys; ++pkey, ++key)
+		{
+			if (pkey->frame > iframe)
+				break;
+		}
+
+		if (key >= numposkeys)
+		{
+			mstudioposkey_t	*k = &pposkey[key - 1];
+			float			*p = pos + 3 * bone;
+
+			p[0] = k->pos[0];
+			p[1] = k->pos[1];
+			p[2] = k->pos[2];
+		}
+		else
+		{
+			mstudioposkey_t	*k = &pposkey[key - 1];
+			int				numframes = k[1].frame - k[0].frame;
+			float			t = (numframes != 0) ? ((frame - (float)k[0].frame) / (float)numframes) : 0.0f;
+			float			it = 1.0f - t;
+			float			*p = pos + 3 * bone;
+
+			p[0] = k[0].pos[0] * it + k[1].pos[0] * t;
+			p[1] = k[0].pos[1] * it + k[1].pos[1] * t;
+			p[2] = k[0].pos[2] * it + k[1].pos[2] * t;
+		}
+
+		panim++;
 	}
 
-	for (int i = 0; i < numBoneControllers; ++i)
+	// position controllers
+	for (int i = 0; i < numbonecontrollers; ++i)
 	{
-		mstudiobonecontroller_t *bc = &pcontrollers[i];
-		float t = (float)controller[i] / 255.0f;
-		float value = bc->end * t + (1.0f - t) * bc->start;
-		float *dst = NULL;
+		mstudiobonecontroller_t	*pbc = &pbonecontroller[i];
+		float					t = (float)controller[i] / 255.0f;
+		float					value = pbc->end * t + (1.0f - t) * pbc->start;
+		float					*p = NULL;
 
-		switch (bc->type)
+		switch (pbc->type)
 		{
-			case STUDIO_X:
-				dst = &pos[3 * bc->bone];
-				break;
-			case STUDIO_Y:
-				dst = &pos[3 * bc->bone + 1];
-				break;
-			case STUDIO_Z:
-				dst = &pos[3 * bc->bone + 2];
-				break;
+		case STUDIO_X:
+			p = &pos[3 * pbc->bone];
+			break;
+		case STUDIO_Y:
+			p = &pos[3 * pbc->bone + 1];
+			break;
+		case STUDIO_Z:
+			p = &pos[3 * pbc->bone + 2];
+			break;
 		}
 
-		if (dst)
-			*dst += value;
+		if (p)
+			*p += value;
 	}
 
+	// the motion bone stays in place, the entity moves instead
 	if (pseqdesc->motiontype & STUDIO_X)
 		pos[3 * pseqdesc->motionbone] = 0.0f;
 	if (pseqdesc->motiontype & STUDIO_Y)
@@ -480,31 +438,40 @@ void R_StudioCalcRotations(float *pos, float *quat, int seq, float frame)
 		pos[3 * pseqdesc->motionbone + 2] = 0.0f;
 }
 
-int R_StudioSetupBones(void)
+/*
+================
+R_StudioSetupBones
+
+Builds the bone and lighting transforms of currententity,
+blending in its previous sequence for a moment after a change.
+================
+*/
+void R_StudioSetupBones(void)
 {
-	int sequence;
-	mstudioseqdesc_t *pseqdesc;
-	int numframes;
-	float baseFrame;
-	float frame;
+	mstudioseqdesc_t	*pseqdesc;
+	mstudiobone_t		*pbones;
+	int					sequence;
+	int					numframes;
+	float				frame;
 
 	if (!g_pStudioHeader || !currententity)
-		return 0;
+		return;
 
-	sequence = ENT_INT(currententity, ENT_SEQUENCE_OFFSET);
+	sequence = currententity->sequence;
 	if (g_pStudioHeader->numseq <= sequence)
 	{
-		ENT_INT(currententity, ENT_SEQUENCE_OFFSET) = 0;
+		currententity->sequence = 0;
 		sequence = 0;
 	}
 
 	pseqdesc = (mstudioseqdesc_t *)((byte *)g_pStudioHeader + g_pStudioHeader->seqindex) + sequence;
 	numframes = pseqdesc->numframes;
 
-	baseFrame = ENT_FLOAT(currententity, ENT_FRAME_OFFSET) * (float)(numframes - 1) / 256.0f;
-	frame = baseFrame + (float)((cl_time - (double)ENT_FLOAT(currententity, ENT_ANIMTIME_OFFSET))
-								* (double)ENT_FLOAT(currententity, ENT_FRAMERATE_OFFSET)
-								* (double)pseqdesc->fps);
+	// entity frame is 0..255 over the whole sequence
+	frame = currententity->frame * (float)(numframes - 1) / 256.0f;
+	frame = frame + (float)((cl_time - (double)currententity->anim_time)
+							* (double)currententity->framerate
+							* (double)pseqdesc->fps);
 
 	if (pseqdesc->flags & STUDIO_LOOPING)
 	{
@@ -521,76 +488,77 @@ int R_StudioSetupBones(void)
 
 	R_StudioCalcRotations((float *)g_bonepos, (float *)g_bonequat, sequence, frame);
 
-	if (ENT_FLOAT(currententity, ENT_BLEND_TIME_OFFSET) != 0.0f && ENT_FLOAT(currententity, ENT_BLEND_TIME_OFFSET) + 0.2f > (float)cl_time)
+	if (currententity->blend_time != 0.0f && currententity->blend_time + (float)SEQUENCE_BLEND_TIME > (float)cl_time)
 	{
-		int oldseq = ENT_INT(currententity, ENT_BLEND_OLDSEQ_OFFSET);
+		int oldseq = currententity->blend_oldseq;
 		if (g_pStudioHeader->numseq > oldseq)
 		{
-			float blend = (float)((cl_time - (double)ENT_FLOAT(currententity, ENT_BLEND_TIME_OFFSET)) / 0.2);
-			float slerpT = 1.0f - blend;
+			float s = (float)((cl_time - (double)currententity->blend_time) / SEQUENCE_BLEND_TIME);
+			float t = 1.0f - s;
 
-			R_StudioCalcRotations((float *)g_bonepos2, (float *)g_bonequat2, oldseq, ENT_FLOAT(currententity, ENT_BLEND_OLDFRAME_OFFSET));
+			R_StudioCalcRotations((float *)g_bonepos2, (float *)g_bonequat2, oldseq, currententity->blend_oldframe);
 
 			for (int i = 0; i < g_pStudioHeader->numbones; ++i)
 			{
-				QuaternionSlerp((float *)g_bonequat[i], (float *)g_bonequat2[i], slerpT, (float *)g_bonequat[i]);
+				QuaternionSlerp(g_bonequat[i], g_bonequat2[i], t, g_bonequat[i]);
 
-				g_bonepos[i][0] = g_bonepos2[i][0] * (1.0f - blend) + g_bonepos[i][0] * blend;
-				g_bonepos[i][1] = g_bonepos2[i][1] * (1.0f - blend) + g_bonepos[i][1] * blend;
-				g_bonepos[i][2] = g_bonepos2[i][2] * (1.0f - blend) + g_bonepos[i][2] * blend;
+				g_bonepos[i][0] = g_bonepos2[i][0] * (1.0f - s) + g_bonepos[i][0] * s;
+				g_bonepos[i][1] = g_bonepos2[i][1] * (1.0f - s) + g_bonepos[i][1] * s;
+				g_bonepos[i][2] = g_bonepos2[i][2] * (1.0f - s) + g_bonepos[i][2] * s;
 			}
 		}
 		else
 		{
-			ENT_FLOAT(currententity, ENT_BLEND_OLDFRAME_OFFSET) = frame;
+			currententity->blend_oldframe = frame;
 		}
 	}
 	else
 	{
-		ENT_FLOAT(currententity, ENT_BLEND_OLDFRAME_OFFSET) = frame;
+		currententity->blend_oldframe = frame;
 	}
 
+	pbones = (mstudiobone_t *)((byte *)g_pStudioHeader + g_pStudioHeader->boneindex);
+	for (int i = 0; i < g_pStudioHeader->numbones; ++i)
 	{
-		mstudiobone_t *pbones = (mstudiobone_t *)((byte *)g_pStudioHeader + g_pStudioHeader->boneindex);
-		for (int i = 0; i < g_pStudioHeader->numbones; ++i)
-		{
-			float m[3][4];
-			QuaternionMatrix((float *)g_bonequat[i], (float *)m);
-			m[0][3] = g_bonepos[i][0];
-			m[1][3] = g_bonepos[i][1];
-			m[2][3] = g_bonepos[i][2];
+		float	bonematrix[3][4];
 
-			if (pbones[i].parent == -1)
-			{
-				memcpy(g_bonetransform[i], m, sizeof(m));
-				memcpy(g_lighttransform[i], m, sizeof(m));
-			}
-			else
-			{
-				R_ConcatTransforms(g_bonetransform[pbones[i].parent], m, g_bonetransform[i]);
-				R_ConcatTransforms(g_lighttransform[pbones[i].parent], m, g_lighttransform[i]);
-			}
+		QuaternionMatrix(g_bonequat[i], (float *)bonematrix);
+		bonematrix[0][3] = g_bonepos[i][0];
+		bonematrix[1][3] = g_bonepos[i][1];
+		bonematrix[2][3] = g_bonepos[i][2];
+
+		if (pbones[i].parent == -1)
+		{
+			memcpy(g_bonetransform[i], bonematrix, sizeof(bonematrix));
+			memcpy(g_lighttransform[i], bonematrix, sizeof(bonematrix));
+		}
+		else
+		{
+			R_ConcatTransforms(g_bonetransform[pbones[i].parent], bonematrix, g_bonetransform[i]);
+			R_ConcatTransforms(g_lighttransform[pbones[i].parent], bonematrix, g_lighttransform[i]);
 		}
 	}
-
-	return (int)g_pStudioHeader;
 }
 
-int R_StudioEntityLight(int entity_ptr, int lightptr)
-{
-	alight_t *plight;
-	vec3_t *plightvec;
-	vec3_t start, end;
-	unsigned int lightrgb[3];
+/*
+================
+R_StudioEntityLight
 
-	float r, g, b;
-	float maxc;
-	float total;
-	vec3_t lightvec;
+Samples the world light below the entity and adds the dynamic lights.
+================
+*/
+void R_StudioEntityLight(entity_t *ent, alight_t *plight)
+{
+	vec3_t			*plightvec;
+	vec3_t			start, end;
+	unsigned int	lightrgb[3];
+	float			r, g, b;
+	float			maxc;
+	float			total;
+	vec3_t			lightvec;
 
 	if (r_fullbright.value == 1.0f)
 	{
-		plight = (alight_t *)lightptr;
 		plightvec = plight->plightvec;
 
 		plight->ambient = 192;
@@ -601,13 +569,12 @@ int R_StudioEntityLight(int entity_ptr, int lightptr)
 		plight->color[0] = 1.0f;
 		plight->color[1] = 1.0f;
 		plight->color[2] = 1.0f;
-
-		return 0x3F800000;
+		return;
 	}
 
-	start[0] = ENT_FLOAT((void *)entity_ptr, ENT_ORIGIN_OFFSET);
-	start[1] = ENT_FLOAT((void *)entity_ptr, ENT_ORIGIN_OFFSET + 4);
-	start[2] = ENT_FLOAT((void *)entity_ptr, ENT_ORIGIN_OFFSET + 8) + 8.0f;
+	start[0] = ent->origin[0];
+	start[1] = ent->origin[1];
+	start[2] = ent->origin[2] + 8.0f;
 
 	end[0] = start[0];
 	end[1] = start[1];
@@ -619,9 +586,9 @@ int R_StudioEntityLight(int entity_ptr, int lightptr)
 	g = (float)lightrgb[1];
 	b = (float)lightrgb[2];
 
-	ENT_FLOAT((void *)entity_ptr, ENT_LIGHTCOLOR_OFFSET) = r;
-	ENT_FLOAT((void *)entity_ptr, ENT_LIGHTCOLOR_OFFSET + 4) = g;
-	ENT_FLOAT((void *)entity_ptr, ENT_LIGHTCOLOR_OFFSET + 8) = b;
+	ent->lightcolor[0] = r;
+	ent->lightcolor[1] = g;
+	ent->lightcolor[2] = b;
 
 	maxc = r;
 	if (g > maxc)
@@ -640,11 +607,11 @@ int R_StudioEntityLight(int entity_ptr, int lightptr)
 
 	for (int i = 0; i < MAX_DLIGHTS; ++i)
 	{
-		dlight_t *dl = &cl_dlights[i];
-		vec3_t delta;
-		float dist;
-		float add;
-		float scaledAdd;
+		dlight_t	*dl = &cl_dlights[i];
+		vec3_t		delta;
+		float		dist;
+		float		add;
+		float		scale;
 
 		if (dl->die < cl_time)
 			continue;
@@ -661,11 +628,11 @@ int R_StudioEntityLight(int entity_ptr, int lightptr)
 		total += add;
 
 		if (dist > 1.0f)
-			scaledAdd = add / dist;
+			scale = add / dist;
 		else
-			scaledAdd = add;
+			scale = add;
 
-		VectorScale(delta, scaledAdd, delta);
+		VectorScale(delta, scale, delta);
 		lightvec[0] += delta[0];
 		lightvec[1] += delta[1];
 		lightvec[2] += delta[2];
@@ -680,7 +647,6 @@ int R_StudioEntityLight(int entity_ptr, int lightptr)
 		VectorScale(lightvec, scale, lightvec);
 	}
 
-	plight = (alight_t *)lightptr;
 	plightvec = plight->plightvec;
 
 	plight->shade = (int)Length(lightvec);
@@ -703,9 +669,9 @@ int R_StudioEntityLight(int entity_ptr, int lightptr)
 	if (plight->ambient + plight->shade > 256)
 		plight->shade = 256 - plight->ambient;
 
-	if (ENT_INT((void *)entity_ptr, ENT_EFFECTS_OFFSET) & 2)
+	if (ent->effects & EF_MUZZLEFLASH)
 	{
-		ENT_INT((void *)entity_ptr, ENT_EFFECTS_OFFSET) &= ~2;
+		ent->effects &= ~EF_MUZZLEFLASH;
 
 		plight->ambient = plight->shade;
 		plight->shade = 80;
@@ -718,102 +684,102 @@ int R_StudioEntityLight(int entity_ptr, int lightptr)
 	(*plightvec)[0] = lightvec[0];
 	(*plightvec)[1] = lightvec[1];
 	(*plightvec)[2] = lightvec[2];
-
-	{
-		int ret;
-		memcpy(&ret, &lightvec[0], sizeof(ret));
-		return ret;
-	}
 }
 
-int R_StudioDrawShadow(void)
+/*
+================
+R_StudioDrawShadow
+
+Projects the model onto the ground along g_shadow_dir.
+================
+*/
+void R_StudioDrawShadow(void)
 {
-	mstudiomesh_t *pmesh;
-	int meshIndex;
-	float zOffset;
-	float pointZ;
+	mstudiomesh_t	*pmesh;
+	float			height;
+	float			lheight;
 
 	if (!g_pStudioHeader || !g_pStudioModel || !currententity)
-		return 0;
+		return;
 
-	zOffset = ENT_FLOAT(currententity, ENT_ORIGIN_OFFSET + 8) - lightspot[2];
-	pointZ = 1.0f - zOffset;
+	height = currententity->origin[2] - lightspot[2];
+	lheight = 1.0f - height;
 
 	pmesh = (mstudiomesh_t *)((byte *)g_pStudioHeader + g_pStudioModel->meshindex);
 
-	for (meshIndex = 0; meshIndex < g_pStudioModel->nummesh; ++meshIndex)
+	for (int m = 0; m < g_pStudioModel->nummesh; ++m)
 	{
-		short *tri = (short *)((byte *)g_pStudioHeader + pmesh[meshIndex].triindex);
+		mstudiotrivert_t *ptri = (mstudiotrivert_t *)((byte *)g_pStudioHeader + pmesh[m].triindex);
 
-		for (int t = 0; t < pmesh[meshIndex].numtris; ++t, tri += 12)
+		for (int j = 0; j < pmesh[m].numtris; ++j, ptri += 3)
 		{
 			glBegin(GL_TRIANGLES);
 			for (int k = 0; k < 3; ++k)
 			{
-				int vindex = tri[k * 4 + 0];
-				float x = g_transformedverts[vindex][0];
-				float y = g_transformedverts[vindex][1];
-				float z = g_transformedverts[vindex][2];
+				float	*v = g_transformedverts[ptri[k].vertindex];
+				float	x = v[0];
+				float	y = v[1];
+				float	z = v[2];
+				float	dist = height + z;
+				float	point[3];
 
-				float worldZDiff = zOffset + z;
-				float point[3];
-				point[0] = x - worldZDiff * g_shadow_dir[0];
-				point[1] = y - worldZDiff * g_shadow_dir[1];
-				point[2] = pointZ;
+				point[0] = x - dist * g_shadow_dir[0];
+				point[1] = y - dist * g_shadow_dir[1];
+				point[2] = lheight;
 				glVertex3fv(point);
 			}
 			glEnd();
 		}
 	}
-
-	return (int)g_pStudioHeader;
 }
 
-int R_StudioDrawPoints(int entity_ptr, int lightptr)
-{
-	alight_t *plight;
-	mstudiomesh_t *pmesh;
-	mstudiotexture_t *ptextures;
-	mstudiomodeldata_t *pmodeldata;
+/*
+================
+R_StudioDrawPoints
 
-	byte *pvertbone;
-	byte *pnormbone;
-	float *pverts;
-	float *pnorms;
-	float *lv;
+Transforms, lights and draws the meshes of the current sub-model.
+================
+*/
+void R_StudioDrawPoints(alight_t *plight)
+{
+	mstudiomesh_t		*pmesh;
+	mstudiotexture_t	*ptexture;
+	mstudiomodeldata_t	*pmodeldata;
+	byte				*pvertbone;
+	byte				*pnormbone;
+	float				*pstudioverts;
+	float				*pstudionorms;
+	float				*lv;
 
 	if (!g_pStudioHeader || !g_pStudioModel)
-		return 0;
+		return;
 
-	plight = (alight_t *)lightptr;
-
-	ptextures = (mstudiotexture_t *)((byte *)g_pStudioHeader + g_pStudioHeader->textureindex);
+	ptexture = (mstudiotexture_t *)((byte *)g_pStudioHeader + g_pStudioHeader->textureindex);
 	pmesh = (mstudiomesh_t *)((byte *)g_pStudioHeader + g_pStudioModel->meshindex);
 
 	pvertbone = (byte *)g_pStudioHeader + g_pStudioModel->vertinfoindex;
 	pnormbone = (byte *)g_pStudioHeader + g_pStudioModel->norminfoindex;
 
 	pmodeldata = (mstudiomodeldata_t *)((byte *)g_pStudioHeader + g_pStudioModel->modeldataindex);
-	pverts = (float *)((byte *)g_pStudioHeader + pmodeldata->vertindex);
-	pnorms = (float *)((byte *)g_pStudioHeader + pmodeldata->normindex);
+	pstudioverts = (float *)((byte *)g_pStudioHeader + pmodeldata->vertindex);
+	pstudionorms = (float *)((byte *)g_pStudioHeader + pmodeldata->normindex);
 
 	g_r_studio_num_verts = g_pStudioModel->numverts;
 
 	for (int i = 0; i < g_r_studio_num_verts; ++i)
-	{
-		R_StudioTransformVertex(g_transformedverts[i], pvertbone[i], &pverts[i * 3]);
-	}
+		R_StudioTransformVertex(g_transformedverts[i], pvertbone[i], &pstudioverts[i * 3]);
 
 	lv = g_lightvalues;
 	for (int m = 0; m < g_pStudioModel->nummesh; ++m)
 	{
-		int flags = ptextures[pmesh[m].skinref].flags;
+		int flags = ptexture[pmesh[m].skinref].flags;
+
 		for (int n = 0; n < pmesh[m].numnorms; ++n)
 		{
-			R_StudioLighting(lv, *pnormbone, (char)flags, pnorms);
+			R_StudioLighting(lv, *pnormbone, (char)flags, pstudionorms);
 			++lv;
 			++pnormbone;
-			pnorms += 3;
+			pstudionorms += 3;
 		}
 	}
 
@@ -821,75 +787,72 @@ int R_StudioDrawPoints(int entity_ptr, int lightptr)
 
 	for (int m = 0; m < g_pStudioModel->nummesh; ++m)
 	{
-		mstudiotexture_t *tex = &ptextures[pmesh[m].skinref];
-		float sScale = 1.0f / (float)tex->width;
-		float tScale = 1.0f / (float)tex->height;
+		mstudiotexture_t	*ptex = &ptexture[pmesh[m].skinref];
+		float				s = 1.0f / (float)ptex->width;
+		float				t = 1.0f / (float)ptex->height;
+		mstudiotrivert_t	*ptri;
+		int					flags;
 
-		GL_Bind(tex->index);
+		GL_Bind(ptex->index);
 
+		ptri = (mstudiotrivert_t *)((byte *)g_pStudioHeader + pmesh[m].triindex);
+		flags = ptex->flags;
+
+		for (int j = 0; j < pmesh[m].numtris; ++j, ptri += 3)
 		{
-			short *tri = (short *)((byte *)g_pStudioHeader + pmesh[m].triindex);
-			int flags = tex->flags;
-
-			for (int t = 0; t < pmesh[m].numtris; ++t, tri += 12)
+			glBegin(GL_TRIANGLES);
+			for (int k = 0; k < 3; ++k)
 			{
-				glBegin(GL_TRIANGLES);
-				for (int k = 0; k < 3; ++k)
-				{
-					int vindex = tri[k * 4 + 0];
-					int nindex = tri[k * 4 + 1];
-					float intensity = g_lightvalues[nindex];
+				int		vertindex = ptri[k].vertindex;
+				int		normindex = ptri[k].normindex;
+				float	lightvalue = g_lightvalues[normindex];
 
-					if ((flags & 2) != 0)
-					{
-						glTexCoord2f((float)g_chrome[nindex][0] * sScale, (float)g_chrome[nindex][1] * tScale);
-					}
-					else
-					{
-						glTexCoord2f((float)tri[k * 4 + 2] * sScale, (float)tri[k * 4 + 3] * tScale);
-					}
+				if (flags & STUDIO_NF_CHROME)
+					glTexCoord2f((float)g_chrome[normindex][0] * s, (float)g_chrome[normindex][1] * t);
+				else
+					glTexCoord2f((float)ptri[k].s * s, (float)ptri[k].t * t);
 
-					glColor4f(
-						plight->color[0] * intensity,
-						plight->color[1] * intensity,
-						plight->color[2] * intensity,
-						r_blend_alpha);
+				glColor4f(
+					plight->color[0] * lightvalue,
+					plight->color[1] * lightvalue,
+					plight->color[2] * lightvalue,
+					r_blend_alpha);
 
-					glVertex3f(
-						g_transformedverts[vindex][0],
-						g_transformedverts[vindex][1],
-						g_transformedverts[vindex][2]);
-				}
-				glEnd();
+				glVertex3f(
+					g_transformedverts[vertindex][0],
+					g_transformedverts[vertindex][1],
+					g_transformedverts[vertindex][2]);
 			}
+			glEnd();
 		}
 	}
-
-	return (int)g_pStudioHeader;
 }
 
-void R_DrawStudioModel(int entity_ptr, int lightptr)
+/*
+================
+R_DrawStudioModel
+================
+*/
+void R_DrawStudioModel(entity_t *ent, alight_t *plight)
 {
-	alight_t *plight;
-	float yawRad;
+	float		angle;
 
 	++g_r_studio_rendercount;
 
-	g_pStudioHeader = (studiohdr_t *)Mod_Extradata(*(model_t **)((byte *)currententity + ENT_MODEL_OFFSET));
+	g_pStudioHeader = (studiohdr_t *)Mod_Extradata(currententity->model);
 	if (!g_pStudioHeader)
 		return;
 
-	yawRad = -ENT_FLOAT((void *)entity_ptr, ENT_YAW_OFFSET) * (3.14159265358979323846f / 180.0f);
-	g_shadow_dir[0] = sinf(yawRad);
-	g_shadow_dir[1] = cosf(yawRad);
+	angle = -ent->angles[YAW] * ((float)M_PI / 180.0f);
+	g_shadow_dir[0] = sinf(angle);
+	g_shadow_dir[1] = cosf(angle);
 	g_shadow_dir[2] = 1.0f;
 	VectorNormalize(g_shadow_dir);
 
-	plight = (alight_t *)lightptr;
-	R_StudioSetupLighting((int)plight);
+	R_StudioSetupLighting(plight);
 
 	glPushMatrix();
-	R_RotateForEntity(entity_ptr);
+	R_RotateForEntity(ent);
 
 	if (gl_smoothmodels.value != 0.0f)
 		glShadeModel(GL_SMOOTH);
@@ -903,67 +866,68 @@ void R_DrawStudioModel(int entity_ptr, int lightptr)
 
 	for (int i = 0; i < g_pStudioHeader->numbodyparts; ++i)
 	{
+		int rendermode;
+
 		R_StudioSetupModel(i);
 
 		if (g_r_studio_hardware_color)
-			ENT_INT((void *)entity_ptr, ENT_UNKNOWN_208_OFFSET) = 0;
+			ent->trivial_accept = 0;
 
+		rendermode = ent->rendermode;
+		if (rendermode)
 		{
-			int rendermode = ENT_INT((void *)entity_ptr, ENT_RENDERMODE_OFFSET);
-			if (rendermode)
+			if (rendermode == kRenderTransColor)
 			{
-				if (rendermode == 1)
-				{
+				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+				glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_ALPHA);
+			}
+			else
+			{
+				glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_BLEND);
+				if (rendermode == kRenderTransAdd)
+					glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+				else
 					glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-					glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_ALPHA);
-				}
-				else
-				{
-					glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_BLEND);
-					if (rendermode == 5)
-						glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-					else
-						glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-					glColor4f(1.0f, 1.0f, 1.0f, r_blend_alpha);
-				}
-
-				glEnable(GL_BLEND);
+				glColor4f(1.0f, 1.0f, 1.0f, r_blend_alpha);
 			}
 
-			R_StudioDrawPoints(entity_ptr, (int)plight);
+			glEnable(GL_BLEND);
+		}
 
-			if (r_shadows.value != 0.0f && rendermode != 5)
-			{
-				float c = 1.0f - r_blend_alpha * 0.5f;
-				glShadeModel(GL_FLAT);
-				glDisable(GL_TEXTURE_2D);
-				glBlendFunc(GL_ZERO, GL_SRC_COLOR);
-				glEnable(GL_BLEND);
-				glColor4f(c, c, c, 0.5f);
-				glDepthMask(GL_FALSE);
-				glEnable(GL_POLYGON_OFFSET_FILL);
+		R_StudioDrawPoints(plight);
 
-				if (gl_ztrick.value == 0.0f || gldepthmin < 0.5f)
-					glPolygonOffset(1.0f, -4.0f);
-				else
-					glPolygonOffset(1.0f, 4.0f);
+		if (r_shadows.value != 0.0f && rendermode != kRenderTransAdd)
+		{
+			float c = 1.0f - r_blend_alpha * 0.5f;
 
-				R_StudioDrawShadow();
+			glShadeModel(GL_FLAT);
+			glDisable(GL_TEXTURE_2D);
+			glBlendFunc(GL_ZERO, GL_SRC_COLOR);
+			glEnable(GL_BLEND);
+			glColor4f(c, c, c, 0.5f);
+			glDepthMask(GL_FALSE);
+			glEnable(GL_POLYGON_OFFSET_FILL);
 
-				glDisable(GL_POLYGON_OFFSET_FILL);
-				glEnable(GL_TEXTURE_2D);
-				glDisable(GL_BLEND);
-				glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-				glDepthMask(GL_TRUE);
+			if (gl_ztrick.value == 0.0f || gldepthmin < 0.5f)
+				glPolygonOffset(1.0f, -4.0f);
+			else
+				glPolygonOffset(1.0f, 4.0f);
 
-				if (gl_smoothmodels.value != 0.0f)
-					glShadeModel(GL_SMOOTH);
-			}
+			R_StudioDrawShadow();
+
+			glDisable(GL_POLYGON_OFFSET_FILL);
+			glEnable(GL_TEXTURE_2D);
+			glDisable(GL_BLEND);
+			glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+			glDepthMask(GL_TRUE);
+
+			if (gl_smoothmodels.value != 0.0f)
+				glShadeModel(GL_SMOOTH);
 		}
 	}
 
-	if (ENT_INT((void *)entity_ptr, ENT_RENDERMODE_OFFSET))
+	if (ent->rendermode)
 		glDisable(GL_BLEND);
 
 	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
@@ -975,50 +939,60 @@ void R_DrawStudioModel(int entity_ptr, int lightptr)
 	glPopMatrix();
 }
 
-int R_AddToTranslucentList(int entity_ptr)
+/*
+================
+R_AddToTranslucentList
+
+Keeps the list sorted far to near.
+================
+*/
+void R_AddToTranslucentList(entity_t *ent)
 {
-	model_t *model;
-	vec3_t center;
-	vec3_t worldCenter;
-	vec3_t delta;
-	float distSq;
-	int insertPos;
+	model_t		*model;
+	vec3_t		center;
+	vec3_t		org;
+	vec3_t		delta;
+	float		dist;
+	int			i;
 
 	if (r_numtranslucent == MAX_TRANS_ENTITIES)
 		Sys_Error("AddTentity: too many translucent entities\n");
 
-	model = *(model_t **)((byte *)entity_ptr + ENT_MODEL_OFFSET);
+	model = ent->model;
 	center[0] = model->maxs[0] + model->mins[0];
 	center[1] = model->mins[1] + model->maxs[1];
 	center[2] = model->maxs[2] + model->mins[2];
 	VectorScale(center, 0.5f, center);
 
-	worldCenter[0] = ENT_FLOAT((void *)entity_ptr, ENT_ORIGIN_OFFSET) + center[0];
-	worldCenter[1] = ENT_FLOAT((void *)entity_ptr, ENT_ORIGIN_OFFSET + 4) + center[1];
-	worldCenter[2] = ENT_FLOAT((void *)entity_ptr, ENT_ORIGIN_OFFSET + 8) + center[2];
+	org[0] = ent->origin[0] + center[0];
+	org[1] = ent->origin[1] + center[1];
+	org[2] = ent->origin[2] + center[2];
 
-	delta[0] = r_origin[0] - worldCenter[0];
-	delta[1] = r_origin[1] - worldCenter[1];
-	delta[2] = r_origin[2] - worldCenter[2];
-	distSq = delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2];
+	delta[0] = r_origin[0] - org[0];
+	delta[1] = r_origin[1] - org[1];
+	delta[2] = r_origin[2] - org[2];
+	dist = delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2];
 
-	insertPos = r_numtranslucent;
-	while (insertPos > 0)
+	i = r_numtranslucent;
+	while (i > 0)
 	{
-		if (r_translucent_dist[insertPos - 1] >= distSq)
+		if (r_translucent_dist[i - 1] >= dist)
 			break;
-		r_translucent_entities[insertPos] = r_translucent_entities[insertPos - 1];
-		r_translucent_dist[insertPos] = r_translucent_dist[insertPos - 1];
-		--insertPos;
+		r_translucent_entities[i] = r_translucent_entities[i - 1];
+		r_translucent_dist[i] = r_translucent_dist[i - 1];
+		--i;
 	}
 
-	r_translucent_entities[insertPos] = entity_ptr;
-	r_translucent_dist[insertPos] = distSq;
+	r_translucent_entities[i] = ent;
+	r_translucent_dist[i] = dist;
 	++r_numtranslucent;
-
-	return *(int *)&distSq;
 }
 
+/*
+================
+R_DrawTransEntitiesOnList
+================
+*/
 void R_DrawTransEntitiesOnList(void)
 {
 	if (r_drawentities.value == 0.0f)
@@ -1026,41 +1000,42 @@ void R_DrawTransEntitiesOnList(void)
 
 	for (int i = 0; i < r_numtranslucent; ++i)
 	{
-		int ent = r_translucent_entities[i];
-		model_t *model;
-		int modeltype;
+		entity_t	*ent = r_translucent_entities[i];
+		model_t		*model;
+		int			modeltype;
 
-		currententity = (entity_t *)ent;
+		currententity = ent;
 
 		r_blend_alpha = (float)CL_FxBlend(ent) / 256.0f;
 		if (r_blend_alpha == 0.0f)
 			continue;
 
-		model = *(model_t **)((byte *)ent + ENT_MODEL_OFFSET);
-		modeltype = model ? model->type : 0;
+		model = ent->model;
+		modeltype = model ? model->type : mod_brush;
 
 		switch (modeltype)
 		{
-			case mod_sprite:
-				R_DrawSpriteModel((entity_t *)ent);
-				break;
-			case mod_alias:
-				R_DrawAliasModel((entity_t *)ent);
-				break;
-			case mod_studio:
-				if (R_StudioCheckBBox())
-				{
-					alight_t lighting;
-					vec3_t lightvec;
-					lighting.plightvec = &lightvec;
-					R_StudioEntityLight(ent, (int)&lighting);
-					R_DrawStudioModel(ent, (int)&lighting);
-				}
-				break;
-			case mod_brush:
-			default:
-				R_DrawBrushModel((entity_t *)ent);
-				break;
+		case mod_sprite:
+			R_DrawSpriteModel(ent);
+			break;
+		case mod_alias:
+			R_DrawAliasModel(ent);
+			break;
+		case mod_studio:
+			if (R_StudioCheckBBox())
+			{
+				alight_t	lighting;
+				vec3_t		lightvec;
+
+				lighting.plightvec = &lightvec;
+				R_StudioEntityLight(ent, &lighting);
+				R_DrawStudioModel(ent, &lighting);
+			}
+			break;
+		case mod_brush:
+		default:
+			R_DrawBrushModel(ent);
+			break;
 		}
 	}
 

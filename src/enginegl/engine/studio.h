@@ -17,16 +17,19 @@
 STUDIO MODELS
 
 Studio models are position independent, so the cache manager can move them.
+This is the alpha format (version 6), the same as StudioMDL writes.
 ==============================================================================
 */
 
+#define STUDIO_VERSION		6	// IDSTUDIOHEADER is in bspfile.h
+
 #define MAXSTUDIOTRIANGLES	65536
 #define MAXSTUDIOVERTS		8192
-#define MAXSTUDIOSEQUENCES	256 // total animation sequences
-#define MAXSTUDIOSSKINS		100 // total textures
-#define MAXSTUDIOSRCBONES	512 // bones allowed at source movement
-#define MAXSTUDIOBONES		128 // total bones actually used
-#define MAXSTUDIOMODELS		32 // sub-models per model
+#define MAXSTUDIOSEQUENCES	256		// total animation sequences
+#define MAXSTUDIOSKINS		100		// total textures
+#define MAXSTUDIOSRCBONES	512		// bones allowed at source movement
+#define MAXSTUDIOBONES		128		// total bones actually used
+#define MAXSTUDIOMODELS		32		// sub-models per model
 #define MAXSTUDIOBODYPARTS	32
 #define MAXSTUDIOGROUPS		16
 #define MAXSTUDIOANIMATIONS	2048
@@ -37,111 +40,196 @@ Studio models are position independent, so the cache manager can move them.
 
 typedef struct
 {
-	int					id;
-	int					version;
+	int		id;
+	int		version;
 
-	char				name[64];
-	int					length;
+	char	name[64];
+	int		length;
 
-	int					numbones; // 76
-	int					boneindex; // 80
+	int		numbones;				// bones
+	int		boneindex;
 
-	int					numbonecontrollers; // 84 (alpha: studio bone controllers)
-	int					bonecontrollerindex; // 88
+	int		numbonecontrollers;		// bone controllers
+	int		bonecontrollerindex;
 
-	int					numseq; // 92
-	int					seqindex; // 96
+	int		numseq;					// animation sequences
+	int		seqindex;
 
-	int					numtextures; // 100
-	int					textureindex; // 104
+	int		numtextures;			// raw textures
+	int		textureindex;
+	int		texturedataindex;
 
-	int					texturedataindex; // 108
-	int					numskinref; // 112
-	int					numskinfamilies; // 116
-	int					skinindex; // 120
+	int		numskinref;				// replaceable textures
+	int		numskinfamilies;
+	int		skinindex;
 
-	int					numbodyparts; // 124
-	int					bodypartindex; // 128
+	int		numbodyparts;
+	int		bodypartindex;
 
-	int					numattachments; // 132
-	int					attachmentindex; // 136
+	int		numattachments;			// attachable points
+	int		attachmentindex;
 
-	int					soundtable;
-	int					soundindex;
-	int					soundgroups;
-	int					soundgroupindex;
+	int		soundtable;
+	int		soundindex;
+	int		soundgroups;
+	int		soundgroupindex;
 
-	int					numtransitions;
-	int					transitionindex;
+	int		numtransitions;			// animation node to animation node transition graph
+	int		transitionindex;
 } studiohdr_t;
 
+// bones
 typedef struct
 {
-	char				name[64];
-	int					nummodels;
-	int					base;
-	int					modelindex; // index into models
+	char	name[32];				// bone name for symbolic links
+	int		parent;					// parent bone
+	int		unused[6];
+} mstudiobone_t;
+
+// bone controllers
+typedef struct
+{
+	int		bone;					// -1 == 0
+	int		type;					// X, Y, Z, XR, YR, ZR, RLOOP
+	float	start;
+	float	end;
+} mstudiobonecontroller_t;
+
+// sequence descriptions
+typedef struct
+{
+	char	label[32];				// sequence label
+	float	fps;					// frames per second
+	int		flags;					// looping/non-looping flags
+
+	int		numevents;				// mstudioevent_t
+	int		eventindex;
+
+	int		numframes;				// number of frames per sequence
+
+	int		numfullevents;			// events with options, only StudioMDL and MDLDec use them
+	int		fulleventindex;
+
+	int		animindex2;				// StudioMDL repeats animindex here, the engine doesn't read it
+
+	int		motiontype;
+	int		motionbone;
+	int		unused1;
+	vec3_t	linearmovement;			// movement of the motion bone over the whole sequence
+
+	int		numblends;				// always 1, the engine plays the first blend only
+	int		animindex;				// mstudioboneanim_t for each bone
+	int		unused2[2];
+} mstudioseqdesc_t;
+
+// events
+typedef struct
+{
+	short			frame;
+	unsigned char	event;
+	unsigned char	type;
+} mstudioevent_t;
+
+// key frames of one bone, at animindex
+typedef struct
+{
+	int		numposkeys;				// mstudioposkey_t
+	int		poskeyindex;
+	int		numrotkeys;				// mstudiorotkey_t
+	int		rotkeyindex;
+} mstudioboneanim_t;
+
+typedef struct
+{
+	short	frame;
+	short	unused;
+	vec3_t	pos;
+} mstudioposkey_t;
+
+typedef struct
+{
+	short	frame;
+	short	roll;					// angles in 1 / ROTKEY_SCALE degrees
+	short	pitch;
+	short	yaw;
+} mstudiorotkey_t;
+
+#define ROTKEY_SCALE		100.0f
+
+// body part index
+typedef struct
+{
+	char	name[64];
+	int		nummodels;
+	int		base;
+	int		modelindex;				// index into models array
 } mstudiobodyparts_t;
 
+// skin info
 typedef struct
 {
-	char				name[64];
-	int					flags; // 64
-	int					width; // 68
-	int					height; // 72
-	int					index; // 76
-} mstudiotexture_t; // stride 80
+	char	name[64];
+	int		flags;
+	int		width;
+	int		height;
+	int		index;
+} mstudiotexture_t;
+
+// studio models
+typedef struct
+{
+	char	name[64];
+
+	int		type;
+
+	float	boundingradius;
+
+	int		unused1;
+	int		nummesh;
+	int		meshindex;
+
+	int		numverts;				// number of unique vertices
+	int		vertinfoindex;			// vertex bone info
+	int		unused2;
+	int		norminfoindex;			// normal bone info
+	int		unused3;
+
+	int		modeldataindex;			// mstudiomodeldata_t
+} mstudiomodel_t;
 
 typedef struct
 {
-	int					numtris; // 0
-	int					triindex; // 4
-	int					skinref; // 8
-	int					numnorms; // 12
-	int					normindex; // 16
-} mstudiomesh_t; // stride 20
-
-typedef struct
-{
-	int					unused0[4]; // 0..15
-	int					vertindex; // 16
-	int					unused1; // 20
-	int					normindex; // 24
+	int		unused1[4];
+	int		vertindex;				// vertex vec3_t
+	int		unused2;
+	int		normindex;				// normal vec3_t
 } mstudiomodeldata_t;
 
+// meshes
 typedef struct
 {
-	char				name[64];
-	int					type;
-	float				boundingradius;
-	int					unused0; // 72
-	int					nummesh; // 76
-	int					meshindex; // 80
-	int					numverts; // 84
-	int					vertinfoindex; // 88
-	int					unused1; // 92
-	int					norminfoindex; // 96
-	int					unused2; // 100
-	int					modeldataindex; // 104
-} mstudiomodel_t; // stride 108
+	int		numtris;				// three mstudiotrivert_t each
+	int		triindex;
+	int		skinref;
+	int		numnorms;				// per mesh normals
+	int		normindex;				// normal vec3_t
+} mstudiomesh_t;
 
 typedef struct
 {
-	char				label[32]; // 0
-	float				fps; // 32
-	int					flags; // 36
-	int					activity;
-	int					actweight;
-	int					numframes; // 48
-	int					numevents; // 52
-	int					eventindex; // 56
-	int					unused0; // 60
-	int					motiontype; // 64
-	int					motionbone; // 68
-	int					unused1[5]; // 72...88
-	int					animindex; // 92
-	int					unused2[2]; // 96, 100
-} mstudioseqdesc_t; // stride 104
+	short	vertindex;
+	short	normindex;
+	short	s, t;
+} mstudiotrivert_t;
+
+// lighting options
+#define STUDIO_NF_FLATSHADE		0x0001
+#define STUDIO_NF_CHROME		0x0002
+#define STUDIO_NF_FULLBRIGHT	0x0004
+#define STUDIO_NF_NOMIPS		0x0008
+#define STUDIO_NF_ALPHA			0x0010
+#define STUDIO_NF_ADDITIVE		0x0020
+#define STUDIO_NF_MASKED		0x0040
 
 // motion flags
 #define STUDIO_X		0x0001
@@ -156,41 +244,19 @@ typedef struct
 #define STUDIO_AX		0x0200
 #define STUDIO_AY		0x0400
 #define STUDIO_AZ		0x0800
-#define STUDIO_XRT		0x1000
-#define STUDIO_YRT		0x2000
-#define STUDIO_ZRT		0x4000
-#define STUDIO_QT		0x8000 // quaternion rather than angle used for orientation
-#define STUDIO_RLOOP	0x8000 // bonecontroller wrap-around
+#define STUDIO_AXR		0x1000
+#define STUDIO_AYR		0x2000
+#define STUDIO_AZR		0x4000
+#define STUDIO_TYPES	0x7FFF
+#define STUDIO_RLOOP	0x8000	// controller that wraps shortest distance
 
+// sequence flags
 #define STUDIO_LOOPING	0x0001
 
-// bone flags
+// model flags
 #define STUDIO_HAS_NORMALS	0x0001
-#define STUDIO_HAS_VERTICES 0x0002
+#define STUDIO_HAS_VERTICES	0x0002
 #define STUDIO_HAS_BBOX		0x0004
-#define STUDIO_HAS_CHROME	0x0008 // if any of the textures have chrome on them
-
-typedef struct
-{
-	char				name[32]; // 0
-	int					parent; // 32
-	int					unused[6]; // 36..59
-} mstudiobone_t;
-
-typedef struct
-{
-	int					bone; // 0
-	int					type; // 4 (STUDIO_* flags, includes STUDIO_RLOOP)
-	float				start; // 8
-	float				end; // 12
-} mstudiobonecontroller_t;
-
-typedef struct
-{
-	int					bone;
-	int					group; // intersection group
-	vec3_t				bbmin; // bounding box
-	vec3_t				bbmax;
-} mstudiobbox_t;
+#define STUDIO_HAS_CHROME	0x0008	// if any of the textures have chrome on them
 
 #endif // STUDIO_H
