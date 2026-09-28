@@ -136,6 +136,7 @@ int			vid_skip_swap;
 
 int			app_active_state;
 int			app_active_flag;
+static int	vid_wassuspended;	// fullscreen mode was dropped on focus loss
 
 RECT		g_Rect;
 int			g_X, g_Y;
@@ -804,6 +805,26 @@ void AppActivate(BOOL fActive, BOOL minimize)
 			IN_ShowMouse();
 		}
 	}
+
+	if (vid_fullscreen == MS_FULLDIB && dibwindow)
+	{
+		if (!fActive && !vid_wassuspended)
+		{
+			vid_wassuspended = true;
+			if (!leavecurrentmode)
+				ChangeDisplaySettingsA(NULL, 0);
+			ShowWindow(dibwindow, SW_SHOWMINNOACTIVE);
+		}
+		else if (fActive && vid_wassuspended)
+		{
+			vid_wassuspended = false;
+			if (!leavecurrentmode)
+				ChangeDisplaySettingsA(&gdevmode, CDS_FULLSCREEN);
+			ShowWindow(dibwindow, SW_SHOWNORMAL);
+			MoveWindow(dibwindow, 0, 0, DIBWidth, DIBHeight, FALSE);
+			VID_UpdateWindowStatus();
+		}
+	}
 }
 
 /*
@@ -1376,8 +1397,7 @@ int VID_InitFullDIB(void)
 		{
 			devmode.dmFields = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT;
 
-			stat = ChangeDisplaySettingsA(&devmode, CDS_TEST);
-			if (stat == DISP_CHANGE_SUCCESSFUL)
+			if (ChangeDisplaySettingsA(&devmode, CDS_TEST) == DISP_CHANGE_SUCCESSFUL)
 			{
 				modelist[nummodes].type = MS_FULLDIB;
 				modelist[nummodes].width = devmode.dmPelsWidth;
@@ -1391,8 +1411,7 @@ int VID_InitFullDIB(void)
 
 				// if the width is more than twice the height, reduce it by half because this
 				// is probably a dual-screen monitor
-				stat = COM_CheckParm("-noadjustaspect");
-				if (!stat)
+				if (!COM_CheckParm("-noadjustaspect"))
 				{
 					if (2 * modelist[nummodes].height < modelist[nummodes].width)
 					{
