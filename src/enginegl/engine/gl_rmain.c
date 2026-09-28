@@ -764,7 +764,7 @@ void MYgluPerspective(double fovy, double aspect, double zNear, double zFar)
 {
 	double	ymax;
 
-	ymax = tan(fovy * 3.14159265358979 / 360.0);
+	ymax = tan(fovy * M_PI / 360.0);
 
 	glFrustum(
 		-ymax * zNear * aspect,
