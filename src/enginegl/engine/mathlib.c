@@ -13,56 +13,66 @@
 *
 ****/
 
+// mathlib.c -- math primitives
+
 #include "quakedef.h"
 #include <float.h>
-#include <math.h>
 
-vec3_t vec3_origin = { 0.0f, 0.0f, 0.0f };
+vec3_t vec3_origin = {0, 0, 0};
 
-#undef VectorCopy
-#undef VectorScale
-#undef VectorMA
+/*-----------------------------------------------------------------*/
 
-void VectorScale(vec3_t in, vec_t scale, vec3_t out)
+void _VectorScale(vec3_t in, vec_t scale, vec3_t out)
 {
 	out[0] = in[0] * scale;
 	out[1] = in[1] * scale;
 	out[2] = in[2] * scale;
 }
 
+/*
+================
+R_ConcatRotations
+================
+*/
 void R_ConcatRotations(float in1[3][3], float in2[3][3], float out[3][3])
 {
 	out[0][0] = in1[0][0] * in2[0][0] + in1[0][1] * in2[1][0] + in1[0][2] * in2[2][0];
 	out[0][1] = in1[0][0] * in2[0][1] + in1[0][1] * in2[1][1] + in1[0][2] * in2[2][1];
 	out[0][2] = in1[0][0] * in2[0][2] + in1[0][1] * in2[1][2] + in1[0][2] * in2[2][2];
-
 	out[1][0] = in1[1][0] * in2[0][0] + in1[1][1] * in2[1][0] + in1[1][2] * in2[2][0];
 	out[1][1] = in1[1][0] * in2[0][1] + in1[1][1] * in2[1][1] + in1[1][2] * in2[2][1];
 	out[1][2] = in1[1][0] * in2[0][2] + in1[1][1] * in2[1][2] + in1[1][2] * in2[2][2];
-
 	out[2][0] = in1[2][0] * in2[0][0] + in1[2][1] * in2[1][0] + in1[2][2] * in2[2][0];
 	out[2][1] = in1[2][0] * in2[0][1] + in1[2][1] * in2[1][1] + in1[2][2] * in2[2][1];
 	out[2][2] = in1[2][0] * in2[0][2] + in1[2][1] * in2[1][2] + in1[2][2] * in2[2][2];
 }
 
+/*
+================
+R_ConcatTransforms
+================
+*/
 void R_ConcatTransforms(float in1[3][4], float in2[3][4], float out[3][4])
 {
 	out[0][0] = in1[0][0] * in2[0][0] + in1[0][1] * in2[1][0] + in1[0][2] * in2[2][0];
 	out[0][1] = in1[0][0] * in2[0][1] + in1[0][1] * in2[1][1] + in1[0][2] * in2[2][1];
 	out[0][2] = in1[0][0] * in2[0][2] + in1[0][1] * in2[1][2] + in1[0][2] * in2[2][2];
 	out[0][3] = in1[0][0] * in2[0][3] + in1[0][1] * in2[1][3] + in1[0][2] * in2[2][3] + in1[0][3];
-
 	out[1][0] = in1[1][0] * in2[0][0] + in1[1][1] * in2[1][0] + in1[1][2] * in2[2][0];
 	out[1][1] = in1[1][0] * in2[0][1] + in1[1][1] * in2[1][1] + in1[1][2] * in2[2][1];
 	out[1][2] = in1[1][0] * in2[0][2] + in1[1][1] * in2[1][2] + in1[1][2] * in2[2][2];
 	out[1][3] = in1[1][0] * in2[0][3] + in1[1][1] * in2[1][3] + in1[1][2] * in2[2][3] + in1[1][3];
-
 	out[2][0] = in1[2][0] * in2[0][0] + in1[2][1] * in2[1][0] + in1[2][2] * in2[2][0];
 	out[2][1] = in1[2][0] * in2[0][1] + in1[2][1] * in2[1][1] + in1[2][2] * in2[2][1];
 	out[2][2] = in1[2][0] * in2[0][2] + in1[2][1] * in2[1][2] + in1[2][2] * in2[2][2];
 	out[2][3] = in1[2][0] * in2[0][3] + in1[2][1] * in2[1][3] + in1[2][2] * in2[2][3] + in1[2][3];
 }
 
+/*
+===================
+GreatestCommonDivisor
+====================
+*/
 int GreatestCommonDivisor(int i1, int i2)
 {
 	int temp;
@@ -87,20 +97,39 @@ int GreatestCommonDivisor(int i1, int i2)
 	return i1;
 }
 
+/*
+===============
+anglemod
+
+Snaps the angle to 360/65536 degrees and wraps it into [0, 360)
+===============
+*/
 float anglemod(float a)
 {
-	return (float)((double)(unsigned short)((int)(a * 182.0444444444445f) & 65535) * 0.0054931640625);
+	return (360.0 / 65536) * ((int)(a * (65536 / 360.0f)) & 65535);
 }
 
+/*
+==================
+BOPS_Error
+
+Split out like this for ASM to call.
+==================
+*/
 void BOPS_Error(void)
 {
 	Sys_Error("BoxOnPlaneSide:  Bad signbits");
 }
 
+/*
+================
+AngleVectors
+================
+*/
 void AngleVectors(vec3_t angles, vec3_t forward, vec3_t right, vec3_t up)
 {
-	float		angle;
-	float		sr, sp, sy, cr, cp, cy;
+	float angle;
+	float sr, sp, sy, cr, cp, cy;
 
 	angle = angles[YAW] * (M_PI * 2 / 360);
 	sy = sin(angle);
@@ -123,6 +152,11 @@ void AngleVectors(vec3_t angles, vec3_t forward, vec3_t right, vec3_t up)
 	up[2] = cr * cp;
 }
 
+/*
+================
+VectorTransform
+================
+*/
 void VectorTransform(vec3_t in, float matrix[3][4], vec3_t out)
 {
 	out[0] = matrix[0][0] * in[0] + matrix[0][1] * in[1] + matrix[0][2] * in[2] + matrix[0][3];
@@ -132,7 +166,7 @@ void VectorTransform(vec3_t in, float matrix[3][4], vec3_t out)
 
 int VectorCompare(vec3_t v1, vec3_t v2)
 {
-	int		i;
+	int i;
 
 	for (i = 0; i < 3; i++)
 		if (v1[i] != v2[i])
@@ -141,14 +175,14 @@ int VectorCompare(vec3_t v1, vec3_t v2)
 	return 1;
 }
 
-void VectorMA(vec3_t veca, float scale, vec3_t vecb, vec3_t vecc)
+void _VectorMA(vec3_t veca, float scale, vec3_t vecb, vec3_t vecc)
 {
 	vecc[0] = veca[0] + scale * vecb[0];
 	vecc[1] = veca[1] + scale * vecb[1];
 	vecc[2] = veca[2] + scale * vecb[2];
 }
 
-void VectorCopy(vec3_t in, vec3_t out)
+void _VectorCopy(vec3_t in, vec3_t out)
 {
 	out[0] = in[0];
 	out[1] = in[1];
@@ -164,23 +198,23 @@ void CrossProduct(vec3_t v1, vec3_t v2, vec3_t cross)
 
 vec_t Length(vec3_t v)
 {
-	int		i;
-	float	length;
+	int i;
+	float length;
 
 	length = 0;
 	for (i = 0; i < 3; i++)
 		length += v[i] * v[i];
-	length = sqrt(length);
+	length = sqrt(length);		// FIXME
 
 	return length;
 }
 
 float VectorNormalize(vec3_t v)
 {
-	float	length, ilength;
+	float length, ilength;
 
 	length = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
-	length = sqrt(length);
+	length = sqrt(length);		// FIXME
 
 	if (length)
 	{
@@ -193,44 +227,64 @@ float VectorNormalize(vec3_t v)
 	return length;
 }
 
-#define M_PI_DIV_180	0.0174532925199433f
+/*
+===============================================================================
 
-float	g_SlerpCosom;
-float	s_slerp_p;
-float	s_slerp_q;
-float	s_slerp_omega;
-float	s_slerp_sinom;
+QUATERNIONS
 
-float *AngleQuaternion(float *angles, float *quaternion)
+===============================================================================
+*/
+
+// last QuaternionSlerp values
+float g_SlerpCosom;
+float s_slerp_p;
+float s_slerp_q;
+float s_slerp_omega;
+float s_slerp_sinom;
+
+/*
+================
+AngleQuaternion
+
+angles are in degrees
+================
+*/
+void AngleQuaternion(float *angles, float *quaternion)
 {
 	float angle;
 	float sr, sp, sy, cr, cp, cy;
-	double halfAngle;
+	double half;
 
-	angle = angles[1] * M_PI_DIV_180;
-	halfAngle = angle / 2.0;
-	sy = (float)sin(halfAngle);
-	cy = (float)cos(halfAngle);
+	// FIXME: rescale the inputs to 1/2 angle
+	angle = angles[YAW] * (float)(M_PI / 180);
+	half = angle / 2.0;
+	sy = sin(half);
+	cy = cos(half);
 
-	angle = angles[0] * M_PI_DIV_180;
-	halfAngle = angle / 2.0;
-	sp = (float)sin(halfAngle);
-	cp = (float)cos(halfAngle);
+	angle = angles[PITCH] * (float)(M_PI / 180);
+	half = angle / 2.0;
+	sp = sin(half);
+	cp = cos(half);
 
-	angle = angles[2] * M_PI_DIV_180;
-	halfAngle = angle / 2.0;
-	sr = (float)sin(halfAngle);
-	cr = (float)cos(halfAngle);
+	angle = angles[ROLL] * (float)(M_PI / 180);
+	half = angle / 2.0;
+	sr = sin(half);
+	cr = cos(half);
 
-	quaternion[0] = sr * cp * cy - cr * sp * sy;
-	quaternion[1] = cr * sp * cy + sr * cp * sy;
-	quaternion[2] = cr * cp * sy - sr * sp * cy;
-	quaternion[3] = cr * cp * cy + sr * sp * sy;
-
-	return quaternion;
+	quaternion[0] = sr * cp * cy - cr * sp * sy;	// X
+	quaternion[1] = cr * sp * cy + sr * cp * sy;	// Y
+	quaternion[2] = cr * cp * sy - sr * sp * cy;	// Z
+	quaternion[3] = cr * cp * cy + sr * sp * sy;	// W
 }
 
-int QuaternionMatrix(float *quaternion, float *matrix)
+/*
+================
+QuaternionMatrix
+
+matrix is a 3x4 matrix; the translation column is left alone
+================
+*/
+void QuaternionMatrix(float *quaternion, float *matrix)
 {
 	float xx, yy, zz, xy, xz, yz, wx, wy, wz;
 	float x = quaternion[0];
@@ -248,45 +302,46 @@ int QuaternionMatrix(float *quaternion, float *matrix)
 	wy = w * y;
 	wz = w * z;
 
-	matrix[0] = 1.0f - 2.0f * (yy + zz);
-	matrix[4] = 2.0f * (xy + wz);
-	matrix[8] = 2.0f * (xz - wy);
+	matrix[0 * 4 + 0] = 1.0f - 2.0f * (yy + zz);
+	matrix[1 * 4 + 0] = 2.0f * (xy + wz);
+	matrix[2 * 4 + 0] = 2.0f * (xz - wy);
 
-	matrix[1] = 2.0f * (xy - wz);
-	matrix[5] = 1.0f - 2.0f * (xx + zz);
-	matrix[9] = 2.0f * (yz + wx);
+	matrix[0 * 4 + 1] = 2.0f * (xy - wz);
+	matrix[1 * 4 + 1] = 1.0f - 2.0f * (xx + zz);
+	matrix[2 * 4 + 1] = 2.0f * (yz + wx);
 
-	matrix[2] = 2.0f * (xz + wy);
-	matrix[6] = 2.0f * (yz - wx);
-	matrix[10] = 1.0f - 2.0f * (xx + yy);
-
-	return *(int *)&matrix[6];
+	matrix[0 * 4 + 2] = 2.0f * (xz + wy);
+	matrix[1 * 4 + 2] = 2.0f * (yz - wx);
+	matrix[2 * 4 + 2] = 1.0f - 2.0f * (xx + yy);
 }
 
-int QuaternionSlerp(float *p, float *q, float t, float *qt)
+/*
+================
+QuaternionSlerp
+================
+*/
+void QuaternionSlerp(float *p, float *q, float t, float *qt)
 {
-	float *pSrc = p;
-	float *qSrc = q;
-	float sumDiffSq = 0.0f;
-	float sumAddSq = 0.0f;
+	int i;
+	float a, b;
 	float diff, sum;
 	float omega, sinom, sclp, sclq;
-	int i;
 
+	// decide if one of the quaternions is backwards
+	a = 0;
+	b = 0;
 	for (i = 0; i < 4; i++)
 	{
-		diff = pSrc[i] - qSrc[i];
-		sum = pSrc[i] + qSrc[i];
-		sumDiffSq += diff * diff;
-		sumAddSq += sum * sum;
+		diff = p[i] - q[i];
+		sum = p[i] + q[i];
+		a += diff * diff;
+		b += sum * sum;
 	}
 
-	if (sumAddSq < sumDiffSq)
+	if (b < a)
 	{
 		for (i = 0; i < 4; i++)
-		{
 			q[i] = -q[i];
-		}
 	}
 
 	g_SlerpCosom = q[2] * p[2] + q[1] * p[1] + q[3] * p[3] + q[0] * p[0];
@@ -298,93 +353,102 @@ int QuaternionSlerp(float *p, float *q, float t, float *qt)
 		qt[2] = -p[3];
 		qt[3] = p[2];
 
-			s_slerp_p = sinf((1.0 - t) * 1.570796326794897);
-		s_slerp_q = sinf(t * 1.570796326794897);
+		s_slerp_p = sinf((1.0 - t) * (M_PI / 2));
+		s_slerp_q = sinf(t * (M_PI / 2));
 
 		for (i = 0; i < 3; i++)
-		{
-			qt[i] = qt[i] * s_slerp_q + pSrc[i] * s_slerp_p;
-		}
-		return 3;
+			qt[i] = qt[i] * s_slerp_q + p[i] * s_slerp_p;
+		return;
+	}
+
+	if (1.0 - g_SlerpCosom <= 0.00000001)
+	{
+		sclq = t;
+		s_slerp_p = 1.0f - t;
 	}
 	else
 	{
-		if (1.0 - g_SlerpCosom <= 0.00000001)
-		{
-			sclq = t;
-			s_slerp_p = 1.0f - t;
-		}
-		else
-		{
-			omega = acos(g_SlerpCosom);
-			s_slerp_omega = omega;
-			sinom = sinf(omega);
-			s_slerp_sinom = sinom;
+		omega = acos(g_SlerpCosom);
+		s_slerp_omega = omega;
+		sinom = sinf(omega);
+		s_slerp_sinom = sinom;
 
-			sclp = sinf((1.0f - t) * omega) / sinom;
-			s_slerp_p = sclp;
+		sclp = sinf((1.0f - t) * omega) / sinom;
+		s_slerp_p = sclp;
 
-			sclq = sinf(t * omega) / sinom;
-		}
-
-		s_slerp_q = sclq;
-
-		for (i = 0; i < 4; i++)
-		{
-			qt[i] = qSrc[i] * sclq + pSrc[i] * s_slerp_p;
-		}
-		return 4;
+		sclq = sinf(t * omega) / sinom;
 	}
+
+	s_slerp_q = sclq;
+
+	for (i = 0; i < 4; i++)
+		qt[i] = q[i] * sclq + p[i] * s_slerp_p;
 }
 
+/*
+==================
+BoxOnPlaneSide
+
+Returns 1, 2, or 1 + 2
+==================
+*/
 int BoxOnPlaneSide(vec3_t emins, vec3_t emaxs, mplane_t *p)
 {
-	float distMin, distMax;
+	float dist1, dist2;
+	int sides;
 
 	if (p->signbits >= 8)
 		BOPS_Error();
 
+	// general case
 	switch (p->signbits)
 	{
 	case 0:
-		distMin = p->normal[0] * emins[0] + p->normal[1] * emins[1] + p->normal[2] * emins[2];
-		distMax = p->normal[0] * emaxs[0] + p->normal[1] * emaxs[1] + p->normal[2] * emaxs[2];
+		dist2 = p->normal[0] * emins[0] + p->normal[1] * emins[1] + p->normal[2] * emins[2];
+		dist1 = p->normal[0] * emaxs[0] + p->normal[1] * emaxs[1] + p->normal[2] * emaxs[2];
 		break;
 	case 1:
-		distMin = p->normal[0] * emaxs[0] + p->normal[1] * emins[1] + p->normal[2] * emins[2];
-		distMax = p->normal[0] * emins[0] + p->normal[1] * emaxs[1] + p->normal[2] * emaxs[2];
+		dist2 = p->normal[0] * emaxs[0] + p->normal[1] * emins[1] + p->normal[2] * emins[2];
+		dist1 = p->normal[0] * emins[0] + p->normal[1] * emaxs[1] + p->normal[2] * emaxs[2];
 		break;
 	case 2:
-		distMin = p->normal[0] * emins[0] + p->normal[1] * emaxs[1] + p->normal[2] * emins[2];
-		distMax = p->normal[0] * emaxs[0] + p->normal[1] * emins[1] + p->normal[2] * emaxs[2];
+		dist2 = p->normal[0] * emins[0] + p->normal[1] * emaxs[1] + p->normal[2] * emins[2];
+		dist1 = p->normal[0] * emaxs[0] + p->normal[1] * emins[1] + p->normal[2] * emaxs[2];
 		break;
 	case 3:
-		distMin = p->normal[0] * emaxs[0] + p->normal[1] * emaxs[1] + p->normal[2] * emins[2];
-		distMax = p->normal[0] * emins[0] + p->normal[1] * emins[1] + p->normal[2] * emaxs[2];
+		dist2 = p->normal[0] * emaxs[0] + p->normal[1] * emaxs[1] + p->normal[2] * emins[2];
+		dist1 = p->normal[0] * emins[0] + p->normal[1] * emins[1] + p->normal[2] * emaxs[2];
 		break;
 	case 4:
-		distMin = p->normal[0] * emins[0] + p->normal[1] * emins[1] + p->normal[2] * emaxs[2];
-		distMax = p->normal[0] * emaxs[0] + p->normal[1] * emaxs[1] + p->normal[2] * emins[2];
+		dist2 = p->normal[0] * emins[0] + p->normal[1] * emins[1] + p->normal[2] * emaxs[2];
+		dist1 = p->normal[0] * emaxs[0] + p->normal[1] * emaxs[1] + p->normal[2] * emins[2];
 		break;
 	case 5:
-		distMin = p->normal[0] * emaxs[0] + p->normal[1] * emins[1] + p->normal[2] * emaxs[2];
-		distMax = p->normal[0] * emins[0] + p->normal[1] * emaxs[1] + p->normal[2] * emins[2];
+		dist2 = p->normal[0] * emaxs[0] + p->normal[1] * emins[1] + p->normal[2] * emaxs[2];
+		dist1 = p->normal[0] * emins[0] + p->normal[1] * emaxs[1] + p->normal[2] * emins[2];
 		break;
 	case 6:
-		distMin = p->normal[0] * emins[0] + p->normal[1] * emaxs[1] + p->normal[2] * emaxs[2];
-		distMax = p->normal[0] * emaxs[0] + p->normal[1] * emins[1] + p->normal[2] * emins[2];
+		dist2 = p->normal[0] * emins[0] + p->normal[1] * emaxs[1] + p->normal[2] * emaxs[2];
+		dist1 = p->normal[0] * emaxs[0] + p->normal[1] * emins[1] + p->normal[2] * emins[2];
 		break;
 	case 7:
-		distMin = p->normal[0] * emaxs[0] + p->normal[1] * emaxs[1] + p->normal[2] * emaxs[2];
-		distMax = p->normal[0] * emins[0] + p->normal[1] * emins[1] + p->normal[2] * emins[2];
+		dist2 = p->normal[0] * emaxs[0] + p->normal[1] * emaxs[1] + p->normal[2] * emaxs[2];
+		dist1 = p->normal[0] * emins[0] + p->normal[1] * emins[1] + p->normal[2] * emins[2];
 		break;
 	}
 
-	return (unsigned char)((2 * (distMin < p->dist)) + (distMax >= p->dist));
+	// 1 = in front, 2 = behind
+	sides = 2 * (dist2 < p->dist) + (dist1 >= p->dist);
+
+	return sides;
 }
 
+/*
+================
+_fpclear
+================
+*/
 void _fpclear(void)
 {
 	_clearfp();
 }
-

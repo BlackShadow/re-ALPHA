@@ -251,6 +251,9 @@
     <ClInclude Include="console.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="const.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="crc.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -266,10 +269,19 @@
     <ClInclude Include="edict.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="glquake.h">
+    <ClInclude Include="eiface.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="globals.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="glquake.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="host.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="in.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="keys.h">
@@ -287,7 +299,13 @@
     <ClInclude Include="net.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="net_loop.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="nullsubs.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="pmove.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="progdefs.h">
@@ -314,22 +332,19 @@
     <ClInclude Include="sys.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="usercmd.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="wad.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="winquake.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="world.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="zone.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="winquake.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="net_loop.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="pmove.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

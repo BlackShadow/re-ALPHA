@@ -12,31 +12,48 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
+// decal.c -- decals projected onto brush surfaces
+
 #include "quakedef.h"
-#include "glquake.h"
-#include "decal.h"
 
-static decal_t gDecalPool[MAX_DECALS];
+#define DECAL_DISTANCE		4.0f	// a surface this close to the impact point gets the decal
+#define DECAL_OVERLAP_DIST	8.0f	// decals nearer than this overlap
+#define MAX_OVERLAP_DECALS	4		// with this many overlapping, the closest one is reused
 
-static int gDecalCount;
+#define MAX_DECALCLIPVERT	64
 
-static vec3_t g_decal_origin;
-static int g_decal_radius;
-static int g_decal_texture;
-static int g_decal_flags;
-static model_t *g_decal_model;
-static texture_t *g_decal_texture_data;
+// clip edges in texture space
+#define CLIP_LEFT		0
+#define CLIP_RIGHT		1
+#define CLIP_TOP		2
+#define CLIP_BOTTOM		3
 
-extern msurface_t *decal_list[500];
-extern int decal_list_count;
+static decal_t		gDecalPool[MAX_DECALS];
+static int			gDecalCount;
 
-#define CLIP_LEFT   0
-#define CLIP_RIGHT  1
-#define CLIP_TOP    2
-#define CLIP_BOTTOM 3
+static vec3_t		g_decal_origin;
+static int			g_decal_radius;
+static int			g_decal_texture;
+static int			g_decal_flags;
+static model_t		*g_decal_model;
+static texture_t	*g_decal_texture_data;
 
-#define VERTEXSIZE 7
+/*
+=============================================================================
 
+  POLYGON CLIPPING
+
+  Vertices are VERTEXSIZE floats, the decal texture s, t in [3], [4].
+  The decal covers 0..1 in both.
+
+=============================================================================
+*/
+
+/*
+================
+Inside
+================
+*/
 static int Inside(float *vert, int edge)
 {
 	switch (edge)
@@ -53,9 +70,16 @@ static int Inside(float *vert, int edge)
 	return 0;
 }
 
+/*
+================
+Intersect
+
+The vertex where the edge from one to two crosses a clip edge
+================
+*/
 static void Intersect(float *one, float *two, int edge, float *out)
 {
-	float t;
+	float	t;
 
 	if (edge >= CLIP_TOP)
 	{
@@ -96,10 +120,17 @@ static void Intersect(float *one, float *two, int edge, float *out)
 	out[6] = 0.0f;
 }
 
+/*
+================
+SHClip
+
+Sutherland-Hodgman clip of a polygon against one edge
+================
+*/
 static int SHClip(float *vert, int vertCount, float *out, int edge)
 {
-	int j, outCount;
-	float *s, *p;
+	int		j, outCount;
+	float	*s, *p;
 
 	outCount = 0;
 	s = &vert[(vertCount - 1) * VERTEXSIZE];
@@ -112,12 +143,14 @@ static int SHClip(float *vert, int vertCount, float *out, int edge)
 		{
 			if (Inside(s, edge))
 			{
+				// both inside: add p
 				memcpy(out, p, VERTEXSIZE * sizeof(float));
 				outCount++;
 				out += VERTEXSIZE;
 			}
 			else
 			{
+				// coming in: add the intersection and p
 				Intersect(s, p, edge, out);
 				out += VERTEXSIZE;
 				outCount++;
@@ -130,6 +163,7 @@ static int SHClip(float *vert, int vertCount, float *out, int edge)
 		{
 			if (Inside(s, edge))
 			{
+				// going out: add the intersection
 				Intersect(s, p, edge, out);
 				out += VERTEXSIZE;
 				outCount++;
@@ -141,16 +175,36 @@ static int SHClip(float *vert, int vertCount, float *out, int edge)
 	return outCount;
 }
 
-int R_DecalInit(void)
+/*
+=============================================================================
+
+  DECAL LISTS
+
+=============================================================================
+*/
+
+/*
+================
+R_DecalInit
+================
+*/
+void R_DecalInit(void)
 {
 	memset(gDecalPool, 0, sizeof(gDecalPool));
 	gDecalCount = 0;
-	return 0;
 }
 
+/*
+================
+R_AllocateDecal
+
+Unlinks pdecal from its surface, or the next non-permanent
+decal from the pool when pdecal is NULL.
+================
+*/
 decal_t *R_AllocateDecal(decal_t *pdecal)
 {
-	int count;
+	int		count;
 
 	if (!pdecal)
 	{
@@ -163,7 +217,7 @@ decal_t *R_AllocateDecal(decal_t *pdecal)
 
 			pdecal = &gDecalPool[gDecalCount];
 
-			if ((pdecal->flags & FDECAL_PERMANENT) == 0)
+			if (!(pdecal->flags & FDECAL_PERMANENT))
 				break;
 
 			count--;
@@ -175,6 +229,7 @@ decal_t *R_AllocateDecal(decal_t *pdecal)
 	if (surf != NULL)
 	{
 		decal_t *head = surf->pdecals;
+
 		if (pdecal == head)
 		{
 			surf->pdecals = pdecal->pnext;
@@ -195,7 +250,7 @@ decal_t *R_AllocateDecal(decal_t *pdecal)
 
 					prev = prev->pnext;
 					if (!prev->pnext)
-						goto cleanup;
+						goto done;		// not in the list
 				}
 
 				prev->pnext = pdecal->pnext;
@@ -203,65 +258,70 @@ decal_t *R_AllocateDecal(decal_t *pdecal)
 		}
 	}
 
-cleanup:
+done:
 	pdecal->psurface = NULL;
 	return pdecal;
 }
 
+/*
+================
+R_FindDecalSurface
+
+Places the decal on every surface near g_decal_origin that it overlaps.
+================
+*/
 void R_FindDecalSurface(mnode_t *node)
 {
-	mnode_t *current = node;
-
-	while (current)
+	while (node)
 	{
-		if (current->contents < 0)
+		if (node->contents < 0)
 			break;
 
-		mplane_t *plane = current->plane;
-		const float dist = plane->normal[0] * g_decal_origin[0] + plane->normal[1] * g_decal_origin[1] + plane->normal[2] * g_decal_origin[2] - plane->dist;
-		const float radius = (float)g_decal_radius;
+		mplane_t	*plane = node->plane;
+		const float	dist = DotProduct(plane->normal, g_decal_origin) - plane->dist;
+		const float	radius = (float)g_decal_radius;
 
 		if (radius >= dist)
 		{
 			if (-radius <= dist)
 			{
-				if (dist < 4.0f && dist > -4.0f)
+				if (dist < DECAL_DISTANCE && dist > -DECAL_DISTANCE)
 				{
-					msurface_t *surf = g_decal_model->surfaces + current->firstsurface;
-					for (int surfaceIndex = 0; surfaceIndex < current->numsurfaces; ++surfaceIndex, ++surf)
+					msurface_t *surf = g_decal_model->surfaces + node->firstsurface;
+
+					for (int i = 0; i < node->numsurfaces; ++i, ++surf)
 					{
-						mtexinfo_t *texinfo = surf->texinfo;
-						const float texAxisLength = Length(texinfo->vecs[0]);
+						mtexinfo_t	*tex = surf->texinfo;
+						const float	texAxisLength = Length(tex->vecs[0]);
+
 						if (texAxisLength == 0.0f)
 							continue;
 
-						const float s = texinfo->vecs[0][0] * g_decal_origin[0]
-							+ texinfo->vecs[0][1] * g_decal_origin[1]
-							+ texinfo->vecs[0][2] * g_decal_origin[2]
-							+ texinfo->vecs[0][3]
+						const float s = DotProduct(tex->vecs[0], g_decal_origin)
+							+ tex->vecs[0][3]
 							- (float)surf->texturemins[0];
 
-						const float t = texinfo->vecs[1][0] * g_decal_origin[0]
-							+ texinfo->vecs[1][1] * g_decal_origin[1]
-							+ texinfo->vecs[1][2] * g_decal_origin[2]
-							+ texinfo->vecs[1][3]
+						const float t = DotProduct(tex->vecs[1], g_decal_origin)
+							+ tex->vecs[1][3]
 							- (float)surf->texturemins[1];
 
-						const int scaledDecalW = (int)((float)g_decal_texture_data->width * texAxisLength);
-						const int scaledDecalH = (int)((float)g_decal_texture_data->height * texAxisLength);
+						// decal size in surface texels
+						const int w = (int)((float)g_decal_texture_data->width * texAxisLength);
+						const int h = (int)((float)g_decal_texture_data->height * texAxisLength);
 
-						const float decalS = (float)(s - (double)scaledDecalW * 0.5);
-						const float decalT = (float)(t - (double)scaledDecalH * 0.5);
+						// top left corner of the decal
+						const float decalS = (float)(s - (double)w * 0.5);
+						const float decalT = (float)(t - (double)h * 0.5);
 
-						if ((float)-scaledDecalW < decalS && (float)-scaledDecalH < decalT)
+						if ((float)-w < decalS && (float)-h < decalT)
 						{
-							if ((float)(scaledDecalW + surf->extents[0]) >= decalS && (float)(scaledDecalH + surf->extents[1]) >= decalT)
+							if ((float)(w + surf->extents[0]) >= decalS && (float)(h + surf->extents[1]) >= decalT)
 							{
 								const float scale = 1.0f / texAxisLength;
 
-								texture_t *baseTexture = texinfo->texture;
-								const float sNorm = (decalS + (float)surf->texturemins[0]) / (float)baseTexture->width;
-								const float tNorm = (decalT + (float)surf->texturemins[1]) / (float)baseTexture->height;
+								texture_t	*base = tex->texture;
+								const float	sNorm = (decalS + (float)surf->texturemins[0]) / (float)base->width;
+								const float	tNorm = (decalT + (float)surf->texturemins[1]) / (float)base->height;
 
 								R_PlaceDecal(surf, g_decal_texture, scale, sNorm, tNorm);
 							}
@@ -269,47 +329,57 @@ void R_FindDecalSurface(mnode_t *node)
 					}
 				}
 
-				R_FindDecalSurface(current->children[0]);
+				R_FindDecalSurface(node->children[0]);
 			}
 
-			current = current->children[1];
+			node = node->children[1];
 		}
 		else
 		{
-			current = current->children[0];
+			node = node->children[0];
 		}
 	}
 }
 
+/*
+================
+R_DecalGetClosest
+
+The non-permanent decal on surf nearest to s, t,
+and how many decals overlap that spot.
+================
+*/
 static decal_t *R_DecalGetClosest(msurface_t *surf, int *decalCount, float s, float t)
 {
-	texture_t *baseTexture;
-	float baseW;
-	float baseH;
-	float centerS;
-	float centerT;
-	float maxWidth;
-	decal_t *best;
-	int bestDist;
+	texture_t	*base;
+	float		baseW;
+	float		baseH;
+	float		centerS;
+	float		centerT;
+	float		maxWidth;
+	decal_t		*best;
+	int			bestDist;
 
 	best = NULL;
 	bestDist = 0xFFFF;
 
-	baseTexture = surf->texinfo->texture;
+	base = surf->texinfo->texture;
 	*decalCount = 0;
 
-	baseW = (float)baseTexture->width;
-	baseH = (float)baseTexture->height;
+	baseW = (float)base->width;
+	baseH = (float)base->height;
 
 	centerS = s * baseW + (float)(g_decal_texture_data->width >> 1);
 	centerT = t * baseH + (float)(g_decal_texture_data->height >> 1);
 
+	// much bigger decals are never replaced by a smaller one
 	maxWidth = (float)g_decal_texture_data->width * 1.5f;
 
 	for (decal_t *decal = surf->pdecals; decal; decal = decal->pnext)
 	{
 		texture_t *decalTexture = (texture_t *)Draw_GetDecal(decal->texture);
-		if ((decal->flags & FDECAL_PERMANENT) != 0)
+
+		if (decal->flags & FDECAL_PERMANENT)
 			continue;
 
 		if ((float)decalTexture->width > maxWidth)
@@ -326,11 +396,12 @@ static decal_t *R_DecalGetClosest(msurface_t *surf, int *decalCount, float s, fl
 		if (diffT < 0)
 			diffT = -diffT;
 
+		// approximate distance
 		const int major = (diffT <= diffS) ? diffS : diffT;
 		const int minor = (diffT <= diffS) ? diffT : diffS;
 		const int dist = major + (minor / 2);
 
-		if (decal->scale * (float)dist < 8.0f)
+		if (decal->scale * (float)dist < DECAL_OVERLAP_DIST)
 		{
 			++*decalCount;
 			if (!best || bestDist >= dist)
@@ -344,11 +415,19 @@ static decal_t *R_DecalGetClosest(msurface_t *surf, int *decalCount, float s, fl
 	return best;
 }
 
-int R_PlaceDecal(msurface_t *surf, int texture, float scale, float s, float t)
+/*
+================
+R_PlaceDecal
+
+Adds the decal to the end of the surface's list.
+================
+*/
+void R_PlaceDecal(msurface_t *surf, int texture, float scale, float s, float t)
 {
-	int decalCount;
-	decal_t *reuse = R_DecalGetClosest(surf, &decalCount, s, t);
-	if (decalCount < 4)
+	int		decalCount;
+	decal_t	*reuse = R_DecalGetClosest(surf, &decalCount, s, t);
+
+	if (decalCount < MAX_OVERLAP_DECALS)
 		reuse = NULL;
 
 	decal_t *decal = R_AllocateDecal(reuse);
@@ -373,9 +452,15 @@ int R_PlaceDecal(msurface_t *surf, int texture, float scale, float s, float t)
 
 	decal->psurface = surf;
 	decal->scale = scale;
-	return 0;
 }
 
+/*
+================
+R_DrawDecals
+
+Draws the decals of the surfaces in decal_list.
+================
+*/
 void R_DrawDecals(void)
 {
 	if (!decal_list_count)
@@ -392,12 +477,13 @@ void R_DrawDecals(void)
 	else
 		glPolygonOffset(1.0f, 4.0f);
 
-	float clipA[64][VERTEXSIZE];
-	float clipB[64][VERTEXSIZE];
+	float clipA[MAX_DECALCLIPVERT][VERTEXSIZE];
+	float clipB[MAX_DECALCLIPVERT][VERTEXSIZE];
 
-	for (int surfaceIndex = 0; surfaceIndex < decal_list_count; ++surfaceIndex)
+	for (int i = 0; i < decal_list_count; ++i)
 	{
-		msurface_t *surf = decal_list[surfaceIndex];
+		msurface_t *surf = decal_list[i];
+
 		for (decal_t *decal = surf->pdecals; decal; decal = decal->pnext)
 		{
 			texture_t *decalTexture = (texture_t *)Draw_GetDecal(decal->texture);
@@ -406,22 +492,23 @@ void R_DrawDecals(void)
 			glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, (float)GL_CLAMP);
 			glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, (float)GL_CLAMP);
 
-			texture_t *baseTexture = surf->texinfo->texture;
-			const float scaleS = (float)baseTexture->width * decal->scale / (float)decalTexture->width;
-			const float scaleT = (float)baseTexture->height * decal->scale / (float)decalTexture->height;
+			texture_t	*base = surf->texinfo->texture;
+			const float	scaleS = (float)base->width * decal->scale / (float)decalTexture->width;
+			const float	scaleT = (float)base->height * decal->scale / (float)decalTexture->height;
 
-			GLfloat *v = (GLfloat *)((byte *)surf->polys + 16);
-			const int numVerts = surf->polys->numverts;
+			GLfloat		*v = surf->polys->verts[0];
+			const int	numVerts = surf->polys->numverts;
 
-			for (int i = 0; i < numVerts; ++i, v += VERTEXSIZE)
+			// surface texture coordinates to decal texture coordinates
+			for (int j = 0; j < numVerts; ++j, v += VERTEXSIZE)
 			{
-				clipA[i][0] = v[0];
-				clipA[i][1] = v[1];
-				clipA[i][2] = v[2];
-				clipA[i][3] = (v[3] - decal->dx) * scaleS;
-				clipA[i][4] = (v[4] - decal->dy) * scaleT;
-				clipA[i][5] = 0.0f;
-				clipA[i][6] = 0.0f;
+				clipA[j][0] = v[0];
+				clipA[j][1] = v[1];
+				clipA[j][2] = v[2];
+				clipA[j][3] = (v[3] - decal->dx) * scaleS;
+				clipA[j][4] = (v[4] - decal->dy) * scaleT;
+				clipA[j][5] = 0.0f;
+				clipA[j][6] = 0.0f;
 			}
 
 			int count = SHClip(clipA[0], numVerts, clipB[0], CLIP_LEFT);
@@ -432,10 +519,10 @@ void R_DrawDecals(void)
 			if (count)
 			{
 				glBegin(GL_POLYGON);
-				for (int i = 0; i < count; ++i)
+				for (int j = 0; j < count; ++j)
 				{
-					glTexCoord2f(clipA[i][3], clipA[i][4]);
-					glVertex3fv(clipA[i]);
+					glTexCoord2f(clipA[j][3], clipA[j][4]);
+					glVertex3fv(clipA[j]);
 				}
 				glEnd();
 			}
@@ -453,44 +540,50 @@ void R_DrawDecals(void)
 	decal_list_count = 0;
 }
 
+/*
+================
+R_DecalShoot
+
+Puts a decal at position on the brush model of entity entityIndex.
+================
+*/
 void R_DecalShoot(int texture, int entityIndex, vec3_t position, int flags)
 {
-	entity_t *entity = &cl_entities[entityIndex];
-	model_t *model = *(model_t **)((byte *)entity + 168);
+	entity_t	*entity = &cl_entities[entityIndex];
+	model_t		*model = entity->model;
 
 	VectorCopy(position, g_decal_origin);
 
 	texture_t *decalData = (texture_t *)Draw_GetDecal(texture);
-	if (entity && model && model->type == mod_brush && decalData)
+	if (model && model->type == mod_brush && decalData)
 	{
 		mnode_t *node = model->nodes;
+
 		if (entityIndex)
 		{
-			float *ent = (float *)entity;
-
-			g_decal_origin[0] = position[0] + model->hulls[0].clip_mins[0] + ent[26];
-			g_decal_origin[1] = position[1] + model->hulls[0].clip_mins[1] + ent[27];
-			g_decal_origin[2] = position[2] + model->hulls[0].clip_mins[2] + ent[28];
+			g_decal_origin[0] = position[0] + model->hulls[0].clip_mins[0] + entity->origin[0];
+			g_decal_origin[1] = position[1] + model->hulls[0].clip_mins[1] + entity->origin[1];
+			g_decal_origin[2] = position[2] + model->hulls[0].clip_mins[2] + entity->origin[2];
 
 			if (model->firstmodelsurface)
 			{
-				g_decal_origin[0] = position[0] + ent[2];
-				g_decal_origin[1] = position[1] + ent[3];
-				g_decal_origin[2] = position[2] + ent[4];
+				g_decal_origin[0] = position[0] + entity->baseline.origin[0];
+				g_decal_origin[1] = position[1] + entity->baseline.origin[1];
+				g_decal_origin[2] = position[2] + entity->baseline.origin[2];
 
-				g_decal_origin[0] -= ent[26];
-				g_decal_origin[1] -= ent[27];
-				g_decal_origin[2] -= ent[28];
+				g_decal_origin[0] -= entity->origin[0];
+				g_decal_origin[1] -= entity->origin[1];
+				g_decal_origin[2] -= entity->origin[2];
 
 				node = &model->nodes[model->hulls[0].firstclipnode];
 			}
 
-			if (ent[35] != 0.0f || ent[36] != 0.0f || ent[37] != 0.0f)
+			// into the rotated model's space
+			if (entity->angles[0] != 0.0f || entity->angles[1] != 0.0f || entity->angles[2] != 0.0f)
 			{
-				vec3_t forward;
-				vec3_t right;
-				vec3_t up;
-				AngleVectors(ent + 35, forward, right, up);
+				vec3_t	forward, right, up;
+
+				AngleVectors(entity->angles, forward, right, up);
 
 				const float x = g_decal_origin[0];
 				const float y = g_decal_origin[1];

@@ -13,16 +13,10 @@
 *
 ****/
 
+// nullsubs.h -- functions with empty bodies
+
 #ifndef NULLSUBS_H
 #define NULLSUBS_H
-
-/*
- * Declarations for stub functions that exist as empty/null functions in the
- * original enginegl.exe (IDA nullsub_*).
- *
- * IMPORTANT: Do not add inline stub implementations here. Several real
- * functions exist elsewhere, and an inline stub would silently shadow them.
- */
 
 void VID_HandlePause(void);
 void VID_HandlePause2(void);
@@ -62,4 +56,4 @@ void CL_Stub(void);
 
 void IN_ClearStates(void);
 
-#endif /* NULLSUBS_H */
+#endif // NULLSUBS_H

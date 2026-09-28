@@ -12,9 +12,29 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-#include <stdlib.h>
-#include <string.h>
+
+// cl_input.c  -- builds an intended movement command to send to the server
+
 #include "quakedef.h"
+
+#define PLAYER_DUCKING_MULTIPLIER	0.333f	// movement speed while ducked
+
+/*
+===============================================================================
+
+KEY BUTTONS
+
+Continuous button event tracking is complicated by the fact that two different
+input sources (say, mouse button 1 and the control key) can both press the
+same button, but the button should only be released when both of the
+pressing key have been released.
+
+When a key event issues a button command (+forward, +attack, etc), it appends
+its key number as a parameter to the command so it can be matched up with
+the release.
+
+===============================================================================
+*/
 
 static kbutton_t in_attack2;
 static kbutton_t in_lookdown;
@@ -39,8 +59,6 @@ static kbutton_t in_klook;
 static int in_cancel;
 static int in_impulse;
 
-extern float cl_viewangles[3];
-
 cvar_t cl_upspeed = { "cl_upspeed", "200" };
 cvar_t cl_forwardspeed = { "cl_forwardspeed", "200" };
 cvar_t cl_backspeed = { "cl_backspeed", "200" };
@@ -52,17 +70,17 @@ cvar_t cl_anglespeedkey = { "cl_anglespeedkey", "1.5" };
 
 void KeyDown(kbutton_t *b)
 {
-	int k;
-	const char *c;
+	int			k;
+	const char	*c;
 
 	c = Cmd_Argv(1);
 	if (c[0])
 		k = atoi(c);
 	else
-		k = -1;
+		k = -1;		// typed manually at the console for continuous down
 
 	if (b->down[0] == k || b->down[1] == k)
-		return;
+		return;		// repeating key
 
 	if (!b->down[0])
 		b->down[0] = k;
@@ -74,24 +92,26 @@ void KeyDown(kbutton_t *b)
 		return;
 	}
 
-	if (b->state & 1)
-		return;
-	b->state |= 1 + 2;
+	if (b->state & KB_DOWN)
+		return;		// still down
+	b->state |= KB_DOWN | KB_IMPULSEDOWN;
 }
 
 void KeyUp(kbutton_t *b)
 {
-	int k;
-	const char *c;
+	int			k;
+	const char	*c;
 
 	c = Cmd_Argv(1);
 	if (c[0])
-		k = atoi(c);
-	else
 	{
+		k = atoi(c);
+	}
+	else
+	{	// typed manually at the console, assume for unsticking, so clear all
 		b->down[0] = 0;
 		b->down[1] = 0;
-		b->state = 4;
+		b->state = KB_IMPULSEUP;
 		return;
 	}
 
@@ -100,16 +120,16 @@ void KeyUp(kbutton_t *b)
 	else if (b->down[1] == k)
 		b->down[1] = 0;
 	else
-		return;
+		return;		// key up without corresponding down (menu pass through)
 
 	if (b->down[0] || b->down[1])
-		return;
+		return;		// some other key is still holding it down
 
-	if (!(b->state & 1))
-		return;
+	if (!(b->state & KB_DOWN))
+		return;		// still up (this should not happen)
 
-	b->state &= ~1;
-	b->state |= 4;
+	b->state &= ~KB_DOWN;		// now up
+	b->state |= KB_IMPULSEUP;	// impulse up
 }
 
 void IN_AttackDown(void)
@@ -290,7 +310,7 @@ void IN_MLookDown(void)
 void IN_MLookUp(void)
 {
 	KeyUp(&in_mlook);
-	if (!(in_mlook.state & 1))
+	if (!(in_mlook.state & KB_DOWN))
 		V_StartPitchDrift();
 }
 
@@ -314,107 +334,130 @@ void IN_Impulse(void)
 	in_impulse = atoi(Cmd_Argv(1));
 }
 
+/*
+===============
+CL_KeyState
+
+Returns 0.25 if a key was pressed and released during the frame,
+0.5 if it was pressed and held
+0 if held then released, and
+1.0 if held for the entire time
+===============
+*/
 float CL_KeyState(kbutton_t *key)
 {
-	float val;
-	int impulsedown;
-	int impulseup;
-	int down;
+	float	val;
+	int		impulsedown, impulseup, down;
 
-	impulsedown = key->state & 2;
-	impulseup = key->state & 4;
-	down = key->state & 1;
+	impulsedown = key->state & KB_IMPULSEDOWN;
+	impulseup = key->state & KB_IMPULSEUP;
+	down = key->state & KB_DOWN;
 
-	val = 0.0f;
+	val = 0;
 
 	if (impulsedown && !impulseup)
 	{
 		if (down)
-			val = 0.5f;
+			val = 0.5f;		// pressed and held this frame
 		else
-			val = 0.0f;
+			val = 0;
 	}
 	else if (impulseup && !impulsedown)
 	{
 		if (down)
-			val = 0.0f;
+			val = 0;
 		else
-			val = 0.0f;
+			val = 0;		// released this frame
 	}
 	else if (!impulsedown && !impulseup)
 	{
 		if (down)
-			val = 1.0f;
+			val = 1.0f;		// held the entire frame
 		else
-			val = 0.0f;
+			val = 0;		// up the entire frame
 	}
 	else
 	{
-
 		if (down)
-			val = 0.75f;
+			val = 0.75f;	// released and re-pressed this frame
 		else
-			val = 0.25f;
+			val = 0.25f;	// pressed and released this frame
 	}
 
-	key->state = down;
+	key->state = down;		// clear impulses
 
 	return val;
 }
 
+//==========================================================================
+
+/*
+================
+CL_AdjustAngles
+
+Moves the local angle positions
+================
+*/
 void CL_AdjustAngles(void)
 {
-	float speed;
-	float up;
-	float down;
+	float	speed;
+	float	up, down;
 
-	speed = (float)host_frametime;
-	if (in_speed.state & 1)
+	speed = host_frametime;
+	if (in_speed.state & KB_DOWN)
 		speed *= cl_anglespeedkey.value;
 
-	if (!(in_strafe.state & 1))
+	if (!(in_strafe.state & KB_DOWN))
 	{
-		cl_viewangles[1] -= CL_KeyState(&in_right) * cl_yawspeed.value * speed;
-		cl_viewangles[1] += CL_KeyState(&in_left) * cl_yawspeed.value * speed;
-		cl_viewangles[1] = anglemod(cl_viewangles[1]);
+		cl_viewangles[YAW] -= CL_KeyState(&in_right) * cl_yawspeed.value * speed;
+		cl_viewangles[YAW] += CL_KeyState(&in_left) * cl_yawspeed.value * speed;
+		cl_viewangles[YAW] = anglemod(cl_viewangles[YAW]);
 	}
 
-	if (in_klook.state & 1)
+	if (in_klook.state & KB_DOWN)
 	{
 		V_StopPitchDrift();
-		cl_viewangles[0] -= CL_KeyState(&in_forward) * cl_pitchspeed.value * speed;
-		cl_viewangles[0] += CL_KeyState(&in_back) * cl_pitchspeed.value * speed;
+		cl_viewangles[PITCH] -= CL_KeyState(&in_forward) * cl_pitchspeed.value * speed;
+		cl_viewangles[PITCH] += CL_KeyState(&in_back) * cl_pitchspeed.value * speed;
 	}
 
 	up = CL_KeyState(&in_lookup);
 	down = CL_KeyState(&in_lookdown);
 
-	cl_viewangles[0] -= cl_pitchspeed.value * speed * up;
-	cl_viewangles[0] += cl_pitchspeed.value * speed * down;
+	cl_viewangles[PITCH] -= cl_pitchspeed.value * speed * up;
+	cl_viewangles[PITCH] += cl_pitchspeed.value * speed * down;
 
-	if (up != 0.0f || down != 0.0f)
+	if (up || down)
 		V_StopPitchDrift();
 
-	if (cl_viewangles[0] > 80.0f)
-		cl_viewangles[0] = 80.0f;
-	if (cl_viewangles[0] < -70.0f)
-		cl_viewangles[0] = -70.0f;
+	if (cl_viewangles[PITCH] > 80)
+		cl_viewangles[PITCH] = 80;
+	if (cl_viewangles[PITCH] < -70)
+		cl_viewangles[PITCH] = -70;
 
-	if (cl_viewangles[2] > 50.0f)
-		cl_viewangles[2] = 50.0f;
-	if (cl_viewangles[2] < -50.0f)
-		cl_viewangles[2] = -50.0f;
+	if (cl_viewangles[ROLL] > 50)
+		cl_viewangles[ROLL] = 50;
+	if (cl_viewangles[ROLL] < -50)
+		cl_viewangles[ROLL] = -50;
 }
 
+/*
+================
+CL_BaseMove
+
+Send the intended movement message to the server
+================
+*/
 void CL_BaseMove(usercmd_t *cmd)
 {
-	if (cls.signon != 4)
+	if (cls.signon != SIGNONS)
 		return;
 
 	CL_AdjustAngles();
+
 	memset(cmd, 0, sizeof(*cmd));
 
-	if (in_strafe.state & 1)
+	if (in_strafe.state & KB_DOWN)
 	{
 		cmd->sidemove += cl_sidespeed.value * CL_KeyState(&in_right);
 		cmd->sidemove -= cl_sidespeed.value * CL_KeyState(&in_left);
@@ -426,114 +469,150 @@ void CL_BaseMove(usercmd_t *cmd)
 	cmd->upmove += cl_upspeed.value * CL_KeyState(&in_up);
 	cmd->upmove -= cl_upspeed.value * CL_KeyState(&in_down);
 
-	if (!(in_klook.state & 1))
+	if (!(in_klook.state & KB_DOWN))
 	{
 		cmd->forwardmove += cl_forwardspeed.value * CL_KeyState(&in_forward);
 		cmd->forwardmove -= cl_backspeed.value * CL_KeyState(&in_back);
 	}
 
-	if (in_speed.state & 1)
+//
+// adjust for speed key
+//
+	if (in_speed.state & KB_DOWN)
 	{
 		cmd->forwardmove *= cl_movespeedkey.value;
 		cmd->sidemove *= cl_movespeedkey.value;
 		cmd->upmove *= cl_movespeedkey.value;
 	}
 
-	if (in_duck.state & 1)
+	if (in_duck.state & KB_DOWN)
 	{
-		cmd->forwardmove *= 0.333f;
-		cmd->sidemove *= 0.333f;
-		cmd->upmove *= 0.333f;
+		cmd->forwardmove *= PLAYER_DUCKING_MULTIPLIER;
+		cmd->sidemove *= PLAYER_DUCKING_MULTIPLIER;
+		cmd->upmove *= PLAYER_DUCKING_MULTIPLIER;
 	}
 
 	cmd->lightlevel = (byte)cl_lightlevel;
 }
 
-int CL_SendMove(usercmd_t *cmd)
+/*
+==============
+CL_SendMove
+==============
+*/
+void CL_SendMove(usercmd_t *cmd)
 {
-	sizebuf_t msg;
-	byte msgdata[128];
-	int buttons;
-	int result;
-	static usercmd_t lastcmd;
-	static int movemessages;
+	sizebuf_t			buf;
+	byte				data[128];
+	int					bits;
+	static usercmd_t	lastcmd;
+	static int			movemessages;
 
-	result = 0;
 	memcpy(&lastcmd, cmd, sizeof(lastcmd));
 
-	memset(&msg, 0, sizeof(msg));
-	msg.data = msgdata;
-	msg.maxsize = sizeof(msgdata);
-	msg.cursize = 0;
+	memset(&buf, 0, sizeof(buf));
+	buf.data = data;
+	buf.maxsize = sizeof(data);
+	buf.cursize = 0;
 
-	MSG_WriteByte(&msg, 3);
-	MSG_WriteFloat(&msg, (float)cl_mtime[0]);
+//
+// send the movement message
+//
+	MSG_WriteByte(&buf, clc_move);
+	MSG_WriteFloat(&buf, cl_mtime[0]);	// so server can get ping times
 
-	MSG_WriteAngle(&msg, cl_viewangles[0]);
-	MSG_WriteAngle(&msg, cl_viewangles[1]);
-	MSG_WriteAngle(&msg, cl_viewangles[2]);
+	MSG_WriteAngle(&buf, cl_viewangles[0]);
+	MSG_WriteAngle(&buf, cl_viewangles[1]);
+	MSG_WriteAngle(&buf, cl_viewangles[2]);
 
-	MSG_WriteShort(&msg, (int)cmd->forwardmove);
-	MSG_WriteShort(&msg, (int)cmd->sidemove);
-	MSG_WriteShort(&msg, (int)cmd->upmove);
+	MSG_WriteShort(&buf, cmd->forwardmove);
+	MSG_WriteShort(&buf, cmd->sidemove);
+	MSG_WriteShort(&buf, cmd->upmove);
 
-	buttons = 0;
-	if ((in_attack.state & 3) != 0)
-		buttons |= 0x0001;
-	in_attack.state &= ~2;
-	if ((in_duck.state & 3) != 0)
-		buttons |= 0x0004;
-	in_duck.state &= ~2;
-	if ((in_jump.state & 3) != 0)
-		buttons |= 0x0002;
-	in_jump.state &= ~2;
-	if ((in_forward.state & 3) != 0)
-		buttons |= 0x0008;
-	in_forward.state &= ~2;
-	if ((in_back.state & 3) != 0)
-		buttons |= 0x0010;
-	in_back.state &= ~2;
-	if ((in_use.state & 3) != 0)
-		buttons |= 0x0020;
-	in_use.state &= ~2;
+//
+// send button bits
+//
+	bits = 0;
+
+	if (in_attack.state & (KB_DOWN | KB_IMPULSEDOWN))
+		bits |= IN_ATTACK;
+	in_attack.state &= ~KB_IMPULSEDOWN;
+
+	if (in_duck.state & (KB_DOWN | KB_IMPULSEDOWN))
+		bits |= IN_DUCK;
+	in_duck.state &= ~KB_IMPULSEDOWN;
+
+	if (in_jump.state & (KB_DOWN | KB_IMPULSEDOWN))
+		bits |= IN_JUMP;
+	in_jump.state &= ~KB_IMPULSEDOWN;
+
+	if (in_forward.state & (KB_DOWN | KB_IMPULSEDOWN))
+		bits |= IN_FORWARD;
+	in_forward.state &= ~KB_IMPULSEDOWN;
+
+	if (in_back.state & (KB_DOWN | KB_IMPULSEDOWN))
+		bits |= IN_BACK;
+	in_back.state &= ~KB_IMPULSEDOWN;
+
+	if (in_use.state & (KB_DOWN | KB_IMPULSEDOWN))
+		bits |= IN_USE;
+	in_use.state &= ~KB_IMPULSEDOWN;
+
 	if (in_cancel)
-		buttons |= 0x0040;
-	if ((in_left.state & 3) != 0)
-		buttons |= 0x0080;
-	in_left.state &= ~2;
-	if ((in_right.state & 3) != 0)
-		buttons |= 0x0100;
-	in_right.state &= ~2;
-	if ((in_moveleft.state & 3) != 0)
-		buttons |= 0x0200;
-	in_moveleft.state &= ~2;
-	if ((in_moveright.state & 3) != 0)
-		buttons |= 0x0400;
-	in_moveright.state &= ~2;
-	if ((in_attack2.state & 3) != 0)
-		buttons |= 0x0800;
-	in_attack2.state &= ~2;
+		bits |= IN_CANCEL;
 
-	MSG_WriteShort(&msg, buttons);
+	if (in_left.state & (KB_DOWN | KB_IMPULSEDOWN))
+		bits |= IN_LEFT;
+	in_left.state &= ~KB_IMPULSEDOWN;
 
-	MSG_WriteByte(&msg, in_impulse);
+	if (in_right.state & (KB_DOWN | KB_IMPULSEDOWN))
+		bits |= IN_RIGHT;
+	in_right.state &= ~KB_IMPULSEDOWN;
+
+	if (in_moveleft.state & (KB_DOWN | KB_IMPULSEDOWN))
+		bits |= IN_MOVELEFT;
+	in_moveleft.state &= ~KB_IMPULSEDOWN;
+
+	if (in_moveright.state & (KB_DOWN | KB_IMPULSEDOWN))
+		bits |= IN_MOVERIGHT;
+	in_moveright.state &= ~KB_IMPULSEDOWN;
+
+	if (in_attack2.state & (KB_DOWN | KB_IMPULSEDOWN))
+		bits |= IN_ATTACK2;
+	in_attack2.state &= ~KB_IMPULSEDOWN;
+
+	MSG_WriteShort(&buf, bits);
+
+	MSG_WriteByte(&buf, in_impulse);
 	in_impulse = 0;
 
-	MSG_WriteByte(&msg, cmd->lightlevel);
+	MSG_WriteByte(&buf, cmd->lightlevel);
 
-	if (!cls.demoplayback && ++movemessages > 2)
+//
+// deliver the message
+//
+	if (cls.demoplayback)
+		return;
+
+//
+// always dump the first two messages, because they may contain leftover inputs
+// from the last level
+//
+	if (++movemessages <= 2)
+		return;
+
+	if (NET_SendUnreliableMessage(cls.netcon, &buf) == -1)
 	{
-		result = NET_SendUnreliableMessage(cls.netcon, &msg);
-		if (result == -1)
-		{
-			Con_Printf("CL_SendMove: lost server connection\n");
-			return CL_Disconnect();
-		}
+		Con_Printf("CL_SendMove: lost server connection\n");
+		CL_Disconnect();
 	}
-
-	return result;
 }
 
+/*
+============
+CL_InitInput
+============
+*/
 void CL_InitInput(void)
 {
 	Cmd_AddCommand("+moveup", IN_UpDown);
@@ -612,5 +691,5 @@ void CL_InitInput(void)
 
 int CL_CheckConnectionState(void)
 {
-	return -(cls.state == 0);
+	return (cls.state == ca_dedicated) ? -1 : 0;
 }

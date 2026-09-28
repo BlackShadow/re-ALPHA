@@ -12,9 +12,12 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
+// cd_win.c -- CD audio through the Windows MCI interface
+
 #include "quakedef.h"
-#include <windows.h>
-#include <mmsystem.h>
+#include "winquake.h"
+
+#define MAX_CD_TRACKS	100
 
 static qboolean	cdValid = false;
 static qboolean	cdPlaying = false;
@@ -27,11 +30,13 @@ static byte		cdMaxTrack;
 static float	cdVolume;
 
 static UINT		wDeviceID;
-static byte		remap[100];
+static byte		remap[MAX_CD_TRACKS];
 
-extern HWND		mainwindow;
-extern cvar_t	bgmvolume;
-
+/*
+============
+CDAudio_GetAudioDiskInfo
+============
+*/
 static int CDAudio_GetAudioDiskInfo(void)
 {
 	MCIERROR	mciError;
@@ -73,6 +78,11 @@ static int CDAudio_GetAudioDiskInfo(void)
 	return 0;
 }
 
+/*
+============
+CDAudio_Stop
+============
+*/
 void CDAudio_Stop(void)
 {
 	MCIERROR mciError;
@@ -88,6 +98,11 @@ void CDAudio_Stop(void)
 	cdPlaying = false;
 }
 
+/*
+============
+CDAudio_Pause
+============
+*/
 void CDAudio_Pause(void)
 {
 	MCIERROR			mciError;
@@ -105,6 +120,11 @@ void CDAudio_Pause(void)
 	cdPlaying = false;
 }
 
+/*
+============
+CDAudio_Resume
+============
+*/
 void CDAudio_Resume(void)
 {
 	MCIERROR		mciError;
@@ -124,6 +144,11 @@ void CDAudio_Resume(void)
 		cdPlaying = true;
 }
 
+/*
+============
+CDAudio_Play
+============
+*/
 void CDAudio_Play(byte track, qboolean looping)
 {
 	MCIERROR			mciError;
@@ -199,6 +224,13 @@ void CDAudio_Play(byte track, qboolean looping)
 		CDAudio_Pause();
 }
 
+/*
+============
+CDAudio_MessageHandler
+
+Handles MM_MCINOTIFY; returns 0 when the message was ours.
+============
+*/
 LONG CDAudio_MessageHandler(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	if (lParam != wDeviceID)
@@ -233,6 +265,13 @@ LONG CDAudio_MessageHandler(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
+/*
+============
+CDAudio_Update
+
+bgmvolume works as an on/off switch for the CD.
+============
+*/
 void CDAudio_Update(void)
 {
 	if (!cdEnabled)
@@ -255,6 +294,11 @@ void CDAudio_Update(void)
 	}
 }
 
+/*
+============
+CDAudio_Eject
+============
+*/
 static void CDAudio_Eject(void)
 {
 	MCIERROR mciError;
@@ -264,6 +308,11 @@ static void CDAudio_Eject(void)
 		Con_DPrintf("MCI_SET_DOOR_OPEN failed (%i)\n", mciError);
 }
 
+/*
+============
+CDAudio_CloseDoor
+============
+*/
 static void CDAudio_CloseDoor(void)
 {
 	MCIERROR mciError;
@@ -273,6 +322,11 @@ static void CDAudio_CloseDoor(void)
 		Con_DPrintf("MCI_SET_DOOR_CLOSED failed (%i)\n", mciError);
 }
 
+/*
+============
+CD_f
+============
+*/
 static void CD_f(void)
 {
 	char	*command;
@@ -303,7 +357,7 @@ static void CD_f(void)
 		cdEnabled = true;
 		if (cdPlaying)
 			CDAudio_Stop();
-		for (i = 0; i < 100; i++)
+		for (i = 0; i < MAX_CD_TRACKS; i++)
 			remap[i] = i;
 		CDAudio_GetAudioDiskInfo();
 		return;
@@ -319,7 +373,7 @@ static void CD_f(void)
 		}
 		else
 		{
-			for (i = 1; i < 100; i++)
+			for (i = 1; i < MAX_CD_TRACKS; i++)
 			{
 				if (remap[i] != i)
 					Con_Printf("  %u -> %u\n", i, remap[i]);
@@ -395,6 +449,11 @@ static void CD_f(void)
 	}
 }
 
+/*
+============
+CDAudio_Init
+============
+*/
 int CDAudio_Init(void)
 {
 	MCIERROR		mciError;
@@ -430,7 +489,7 @@ int CDAudio_Init(void)
 		return -1;
 	}
 
-	for (i = 0; i < 100; i++)
+	for (i = 0; i < MAX_CD_TRACKS; i++)
 		remap[i] = i;
 
 	cdInitialized = true;
@@ -449,6 +508,11 @@ int CDAudio_Init(void)
 	return 0;
 }
 
+/*
+============
+CDAudio_Shutdown
+============
+*/
 void CDAudio_Shutdown(void)
 {
 	if (!cdInitialized)

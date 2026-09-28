@@ -13,26 +13,26 @@
 *
 ****/
 
+// console.h -- the drop down console and the notify lines
+
 #ifndef CONSOLE_H
 #define CONSOLE_H
 
-// =============================================================================
-// Console functions
-// =============================================================================
+extern int	con_totallines;
+extern int	con_backscroll;
+extern int	con_forcedup;	// console is full screen: no level running
+extern int	con_initialized;
 
 void Con_Init(void);
+void Con_CheckResize(void);
+void Con_DrawConsole(int lines, qboolean drawinput);
+void Con_Print(const char *txt);
 void Con_Printf(const char *fmt, ...);
 void Con_DPrintf(const char *fmt, ...);
 void Con_SafePrintf(const char *fmt, ...);
-void Con_Print(const char *txt);
-void Con_ToggleConsole_f(void);
 void Con_Clear_f(void);
-void Con_ClearNotify(void);
 void Con_DrawNotify(void);
-void Con_DrawConsole(int lines, qboolean drawinput);
-void Con_CheckResize(void);
-
-extern int con_initialized;
-extern int con_forcedup;
+void Con_ClearNotify(void);
+void Con_ToggleConsole_f(void);
 
 #endif // CONSOLE_H

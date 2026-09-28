@@ -12,101 +12,131 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
+// gl_refrag.c
 
 #include "quakedef.h"
 
-extern model_t		*cl_worldmodel;
-extern efrag_t		*cl_free_efrags;
+/*
+===============================================================================
 
-extern vec3_t		r_emins;
-extern vec3_t		r_emaxs;
-extern mnode_t		*r_pefragtopnode;
-extern efrag_t		**r_lastlink;
-extern entity_t		*r_addent;
+					ENTITY FRAGMENT FUNCTIONS
 
+===============================================================================
+*/
+
+/*
+================
+R_RemoveEfrags
+
+Call when removing an object from the world or moving it to another position
+================
+*/
 void R_RemoveEfrags(entity_t *ent)
 {
-	efrag_t *efrag = ent->efrag;
-	while (efrag)
+	efrag_t		*ef, *old, **prev;
+
+	ef = ent->efrag;
+	while (ef)
 	{
-		efrag_t **leaf_link = &efrag->leaf->efrags;
-		while (*leaf_link && *leaf_link != efrag)
-		{
-			leaf_link = &(*leaf_link)->leafnext;
-		}
+		prev = &ef->leaf->efrags;
+		while (*prev && *prev != ef)
+			prev = &(*prev)->leafnext;
 
-		if (*leaf_link == efrag)
-			*leaf_link = efrag->leafnext;
+		if (*prev == ef)
+			*prev = ef->leafnext;
 
-		efrag_t *next = efrag->entnext;
-		efrag->entnext = cl_free_efrags;
-		cl_free_efrags = efrag;
-		efrag = next;
+		old = ef;
+		ef = ef->entnext;
+
+		// put it on the free list
+		old->entnext = cl_free_efrags;
+		cl_free_efrags = old;
 	}
 
 	ent->efrag = NULL;
 }
 
+/*
+===================
+R_SplitEntityOnNode
+===================
+*/
 void R_SplitEntityOnNode(mnode_t *node)
 {
-	mnode_t *current = node;
-	if (current->contents == CONTENTS_SOLID)
+	efrag_t		*ef;
+	int			sides;
+
+	if (node->contents == CONTENTS_SOLID)
 		return;
 
-	while (current->contents >= 0)
+	while (node->contents >= 0)
 	{
-		mplane_t *plane = current->plane;
-		int sides;
+		// NODE_MIXED
+		mplane_t	*splitplane = node->plane;
 
-		if (plane->type < 3)
+		if (splitplane->type < PLANE_ANYX)
 		{
+			// axial plane
 			sides = 1;
-			if (r_emins[plane->type] < plane->dist)
-				sides = (r_emaxs[plane->type] > plane->dist) + 2;
+			if (r_emins[splitplane->type] < splitplane->dist)
+				sides = (r_emaxs[splitplane->type] > splitplane->dist) + 2;
 		}
 		else
 		{
-			sides = BoxOnPlaneSide(r_emins, r_emaxs, plane);
+			sides = BoxOnPlaneSide(r_emins, r_emaxs, splitplane);
 		}
 
 		if (sides == 3 && !r_pefragtopnode)
-			r_pefragtopnode = current;
+			r_pefragtopnode = node;		// this is the first splitter of this bmodel
 
+		// recurse down the contacted sides
 		if (sides & 1)
-			R_SplitEntityOnNode(current->children[0]);
+			R_SplitEntityOnNode(node->children[0]);
 
 		if (!(sides & 2))
 			return;
 
-		current = current->children[1];
-		if (current->contents == CONTENTS_SOLID)
+		node = node->children[1];
+		if (node->contents == CONTENTS_SOLID)
 			return;
 	}
 
+	// add an efrag if the node is a leaf
 	if (!r_pefragtopnode)
-		r_pefragtopnode = current;
+		r_pefragtopnode = node;
 
-	efrag_t *efrag = cl_free_efrags;
-	if (!efrag)
+	// grab an efrag off the free list
+	ef = cl_free_efrags;
+	if (!ef)
 	{
 		Con_Printf("Too many efrags!\n");
-		return;
+		return;		// no free fragments...
 	}
 
-	cl_free_efrags = efrag->entnext;
+	cl_free_efrags = ef->entnext;
 
-	efrag->entity = r_addent;
-	*r_lastlink = efrag;
-	r_lastlink = &efrag->entnext;
-	efrag->entnext = NULL;
+	ef->entity = r_addent;
 
-	efrag->leaf = (mleaf_t *)current;
-	efrag->leafnext = efrag->leaf->efrags;
-	efrag->leaf->efrags = efrag;
+	// add the entity link
+	*r_lastlink = ef;
+	r_lastlink = &ef->entnext;
+	ef->entnext = NULL;
+
+	// set the leaf links
+	ef->leaf = (mleaf_t *)node;
+	ef->leafnext = ef->leaf->efrags;
+	ef->leaf->efrags = ef;
 }
 
+/*
+===========
+R_AddEfrags
+===========
+*/
 void R_AddEfrags(entity_t *ent)
 {
+	model_t		*entmodel;
+
 	if (!ent->model)
 		return;
 
@@ -114,14 +144,17 @@ void R_AddEfrags(entity_t *ent)
 	r_lastlink = &ent->efrag;
 	r_pefragtopnode = NULL;
 
-	r_emins[0] = ent->origin[0] + ent->model->mins[0];
-	r_emins[1] = ent->origin[1] + ent->model->mins[1];
-	r_emins[2] = ent->origin[2] + ent->model->mins[2];
+	entmodel = ent->model;
 
-	r_emaxs[0] = ent->origin[0] + ent->model->maxs[0];
-	r_emaxs[1] = ent->origin[1] + ent->model->maxs[1];
-	r_emaxs[2] = ent->origin[2] + ent->model->maxs[2];
+	r_emins[0] = ent->origin[0] + entmodel->mins[0];
+	r_emins[1] = ent->origin[1] + entmodel->mins[1];
+	r_emins[2] = ent->origin[2] + entmodel->mins[2];
+
+	r_emaxs[0] = ent->origin[0] + entmodel->maxs[0];
+	r_emaxs[1] = ent->origin[1] + entmodel->maxs[1];
+	r_emaxs[2] = ent->origin[2] + entmodel->maxs[2];
 
 	R_SplitEntityOnNode(cl_worldmodel->nodes);
+
 	ent->topnode = r_pefragtopnode;
 }

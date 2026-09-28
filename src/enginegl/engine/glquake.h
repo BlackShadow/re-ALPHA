@@ -13,30 +13,21 @@
 *
 ****/
 
-// glquake.h -- OpenGL definitions for Half-Life Alpha 0.52
-// NOTE: This is a skeleton header derived from reverse engineering.
-// OpenGL-specific types and declarations will be filled during translation.
+// glquake.h -- OpenGL renderer definitions
 
 #ifndef GLQUAKE_H
 #define GLQUAKE_H
 
-// Some OpenGL headers on Windows can be missing newer constants when building
-// against older SDKs.
+// some OpenGL headers on Windows lack newer constants
 #ifndef GL_COMBINE
 #define GL_COMBINE 0x8570
 #endif
 
-// =============================================================================
-// Disable MSVC data conversion warnings for OpenGL
-// =============================================================================
+// disable data conversion warnings
 
-#pragma warning(disable : 4244) // float/ double conversion
-#pragma warning(disable : 4136) // X86
-#pragma warning(disable : 4051) // ALPHA
-
-// =============================================================================
-// Windows and OpenGL includes
-// =============================================================================
+#pragma warning(disable : 4244)	// MIPS
+#pragma warning(disable : 4136)	// X86
+#pragma warning(disable : 4051)	// ALPHA
 
 #ifdef _WIN32
 #include <windows.h>
@@ -45,34 +36,26 @@
 #include <GL/gl.h>
 #include <GL/glu.h>
 
-// =============================================================================
-// OpenGL renderer interface
-// =============================================================================
-
-// NOTE: To be filled from reverse engineering
-
-// Rendering functions
 void GL_BeginRendering(int *x, int *y, int *width, int *height);
 void GL_EndRendering(void);
+void VID_GetWindowSize(int *x, int *y, int *width, int *height);
 
-// Video system (gl_vidnt.c)
+// gl_vidnt.c
 int VID_Init(void);
 BOOL VID_WriteBuffer(const char *filename);
 void VID_Shutdown(void);
 BOOL VID_TakeSnapshot(const char *filename);
+void VID_ShiftPalette(void);
 
-// Sky polygon clipping (gl_warp.c)
-int SetupSkyPolygonClipping(int param1, int param2, int param3);
+// gl_warp.c
+int SetupSkyPolygonClipping(int r, int g, int b);
 void EmitWaterPolys(msurface_t *fa, int direction);
 void EmitSkyPolys(msurface_t *fa);
-void R_DrawSkyChain(msurface_t *surface);
+void R_DrawSkyChain(msurface_t *s);
 void R_DrawSkyBox(void);
-int InitSkyPolygonBounds(void);
+void InitSkyPolygonBounds(void);
 void GL_SubdivideSurface(msurface_t *fa);
-
-// =============================================================================
-// OpenGL extension function pointers (Windows)
-// =============================================================================
+void R_LoadSkys(void);
 
 #ifdef _WIN32
 
@@ -84,99 +67,93 @@ typedef void (APIENTRY *COLORPOINTERPTR)(GLint size, GLenum type, GLsizei stride
 typedef void (APIENTRY *TEXTUREPOINTERPTR)(GLint size, GLenum type, GLsizei stride, const GLvoid *pointer);
 typedef void (APIENTRY *VERTEXPOINTERPTR)(GLint size, GLenum type, GLsizei stride, const GLvoid *pointer);
 
-extern BINDTEXFUNCPTR bindTexFunc;
-extern DELTEXFUNCPTR delTexFunc;
-extern TEXSUBIMAGEPTR TexSubImage2DFunc;
-extern ARRAYELEMENTPTR ArrayElementFunc;
-extern COLORPOINTERPTR ColorPointerFunc;
-extern TEXTUREPOINTERPTR TexturePointerFunc;
-extern VERTEXPOINTERPTR VertexPointerFunc;
+extern BINDTEXFUNCPTR		bindTexFunc;
+extern DELTEXFUNCPTR		delTexFunc;
+extern TEXSUBIMAGEPTR		TexSubImage2DFunc;
+extern ARRAYELEMENTPTR		ArrayElementFunc;
+extern COLORPOINTERPTR		ColorPointerFunc;
+extern TEXTUREPOINTERPTR	TexturePointerFunc;
+extern VERTEXPOINTERPTR		VertexPointerFunc;
 
 #endif // _WIN32
 
-// =============================================================================
-// OpenGL state and globals
-// =============================================================================
+extern int		texture_extension_number;
 
-extern int texture_extension_number;
-extern int texture_mode;
+extern float	gldepthmin, gldepthmax;
 
-extern float gldepthmin, gldepthmax;
+extern int		solidskytexture;
+extern int		alphaskytexture;
+extern float	speedscale;		// for top sky and bottom sky
+extern byte		g_WaterColor[4];
 
-// Sky texture ids (defined in gl_warp.c)
-extern int solidskytexture;
-extern int alphaskytexture;
+extern float	turbsin[256];
 
-// Render modes
-#define GL_RGB_FORMAT 3
-#define GL_RGBA_FORMAT 4
+#define GL_RGB_FORMAT	3
+#define GL_RGBA_FORMAT	4
 
-extern int gl_lightmap_format;
-extern int gl_solid_format;
-extern int gl_alpha_format;
+extern int		gl_lightmap_format;
+extern int		gl_solid_format;
+extern int		gl_alpha_format;
 
-extern int gl_filter_min, gl_filter_max;
+extern int		gl_filter_min, gl_filter_max;
 
-// =============================================================================
-// Texture management
-// =============================================================================
+// gl_texloader.c
+extern byte				*targa_rgba;
+extern unsigned short	targa_width, targa_height;
+void LoadTGA(FILE *fin);
 
-#define MAX_GLTEXTURES  1024
+#define MAX_GLTEXTURES	1024
 
 typedef struct
 {
-	int     texnum;
-	char    identifier[64];
-	int     width;
-	int     height;
-	int     mipmap;
+	int		texnum;
+	char	identifier[64];
+	int		width, height;
+	int		mipmap;
 } gltexture_t;
 
-extern gltexture_t gltextures[MAX_GLTEXTURES];
-extern int numgltextures;
+extern gltexture_t	gltextures[MAX_GLTEXTURES];
+extern int			numgltextures;
+
+// GL_LoadTexture alpha: false, true (index 255 is transparent) or
+// TEX_ALPHA_DECAL (the index is the alpha, the color is palette entry 255)
+#define TEX_ALPHA_DECAL	2
 
 void GL_Upload32(unsigned *data, int width, int height, qboolean mipmap, qboolean alpha);
 void GL_Upload8(byte *data, int width, int height, qboolean mipmap, qboolean alpha, byte *palette);
-int GL_LoadTexture(char *identifier, int width, int height, byte *data, int mode, int alpha, byte *palette);
+int GL_LoadTexture(char *identifier, int width, int height, byte *data, int mipmap, int alpha, byte *palette);
 int GL_FindTexture(char *identifier);
 void GL_Bind(int texnum);
-void GL_SelectTexture(int unit); // For multitexture
+void GL_SelectTexture(int unit);
 void GL_MakeAliasModelDisplayLists(model_t *m, aliashdr_t *hdr);
-
-// =============================================================================
-// Video definition structure
-// =============================================================================
 
 typedef unsigned char pixel_t;
 
 typedef struct viddef_s
 {
-	pixel_t     *buffer; // invisible buffer
-	pixel_t     *colormap; // 256 * VID_GRADES size
-	unsigned short *colormap16; // 256 * VID_GRADES size
-	int         fullbright; // index of first fullbright color
-	int         bits;
-	int         is15bit;
-	unsigned    rowbytes; // may be > width if displayed in a window
-	unsigned    width;
-	unsigned    height;
-	float       aspect; // width/ height -- < 0 is taller than wide
-	int         numpages;
-	int         recalc_refdef; // if true, recalc vid-based stuff
-	pixel_t     *conbuffer;
-	int         conrowbytes;
-	unsigned    conwidth;
-	unsigned    conheight;
-	int         maxwarpwidth;
-	int         maxwarpheight;
-	pixel_t     *direct; // direct drawing (software)
+	pixel_t			*buffer;		// invisible buffer
+	pixel_t			*colormap;		// 256 * VID_GRADES size
+	unsigned short	*colormap16;	// 256 * VID_GRADES size
+	int				fullbright;		// index of first fullbright color
+	int				bits;
+	int				is15bit;
+	unsigned		rowbytes;		// may be > width if displayed in a window
+	unsigned		width;
+	unsigned		height;
+	float			aspect;			// width / height -- < 0 is taller than wide
+	int				numpages;
+	int				recalc_refdef;	// if true, recalc vid-based stuff
+	pixel_t			*conbuffer;
+	int				conrowbytes;
+	unsigned		conwidth;
+	unsigned		conheight;
+	int				maxwarpwidth;
+	int				maxwarpheight;
+	pixel_t			*direct;		// direct drawing to framebuffer, if not NULL
 } viddef_t;
 
-extern viddef_t vid;
-
-// =============================================================================
-// OpenGL vertex structure
-// =============================================================================
+extern viddef_t	vid;	// global video state
+extern cvar_t	_windowed_mouse;
 
 typedef struct
 {
@@ -185,131 +162,108 @@ typedef struct
 	float	r, g, b;
 } glvert_t;
 
-// =============================================================================
-// OpenGL viewport globals
-// =============================================================================
+extern int		glx, gly, glwidth, glheight;
 
-extern int glx, gly, glwidth, glheight;
+extern int		vid_skip_swap;	// don't draw or swap buffers
 
-// =============================================================================
-// OpenGL renderer constants
-// =============================================================================
+#define ALIAS_BASE_SIZE_RATIO	(1.0f / 11)
+#define MAX_LBM_HEIGHT			480
 
-#define ALIAS_BASE_SIZE_RATIO		1.0
-#define MAX_LBM_HEIGHT				480
-#define TILE_SIZE					128
-#define SKYSHIFT					7
-#define SKYSIZE						(1 << SKYSHIFT)
-#define SKYMASK						(SKYSIZE - 1)
-#define BACKFACE_EPSILON			0.01
+#define TILE_SIZE		128
 
-// =============================================================================
-// Particle system types
-// =============================================================================
+#define SKYSHIFT		7
+#define SKYSIZE			(1 << SKYSHIFT)
+#define SKYMASK			(SKYSIZE - 1)
 
-// Half-Life extended particle types (base ptype_t defined in render.h)
-// These extend the base Quake particle types with HL-specific ones
-#define pt_vox_grav      ((ptype_t)8)
-#define pt_vox_slowgrav  ((ptype_t)9)
-#define pt_blur          ((ptype_t)10)
-#define pt_clientcustom  ((ptype_t)11)
+#define BACKFACE_EPSILON	0.01
 
-// =============================================================================
-// OpenGL renderer cvars
-// =============================================================================
+#define BLOCK_WIDTH		128		// lightmap block size
+#define BLOCK_HEIGHT	128
 
-extern cvar_t r_norefresh;
-extern cvar_t r_drawentities;
-extern cvar_t r_drawviewmodel;
-extern cvar_t r_drawworld;
-extern cvar_t r_speeds;
-extern cvar_t r_timegraph;
-extern cvar_t r_fullbright;
-extern cvar_t r_lightmap;
-extern cvar_t r_shadows;
-extern cvar_t r_drawflat;
-extern cvar_t r_flowmap;
-extern cvar_t r_mirroralpha;
-extern cvar_t r_wateralpha;
-extern cvar_t r_dynamic;
-extern cvar_t r_novis;
-extern cvar_t r_fastturb;
-extern cvar_t r_decals;
+#define VIRTUAL_WIDTH	320		// 2D drawing is done on a 320x200 screen
+#define VIRTUAL_HEIGHT	200
 
-extern cvar_t r_part_explode;
-extern cvar_t r_part_trails;
-extern cvar_t r_part_sparks;
-extern cvar_t r_part_gunshots;
-extern cvar_t r_part_blood;
-extern cvar_t r_part_telesplash;
+extern cvar_t	r_norefresh;
+extern cvar_t	r_drawentities;
+extern cvar_t	r_drawviewmodel;
+extern cvar_t	r_drawworld;
+extern cvar_t	r_speeds;
+extern cvar_t	r_timegraph;
+extern cvar_t	r_fullbright;
+extern cvar_t	r_lightmap;
+extern cvar_t	r_shadows;
+extern cvar_t	r_drawflat;
+extern cvar_t	r_flowmap;
+extern cvar_t	r_mirroralpha;
+extern cvar_t	r_wateralpha;
+extern cvar_t	r_dynamic;
+extern cvar_t	r_novis;
+extern cvar_t	r_fastturb;
+extern cvar_t	r_decals;
 
-extern cvar_t gl_clear;
-extern cvar_t gl_cull;
-extern cvar_t gl_texsort;
-extern cvar_t gl_smoothmodels;
-extern cvar_t gl_affinemodels;
-extern cvar_t gl_flashblend;
-extern cvar_t gl_polyblend;
-extern cvar_t gl_keeptjunctions;
-extern cvar_t gl_max_size;
-extern cvar_t gl_playermip;
-extern cvar_t gl_nocolors;
-extern cvar_t gl_reporttjunctions;
-extern cvar_t gl_wateramp;
-extern cvar_t gl_ztrick;
+extern cvar_t	r_part_explode;
+extern cvar_t	r_part_trails;
+extern cvar_t	r_part_sparks;
+extern cvar_t	r_part_gunshots;
+extern cvar_t	r_part_blood;
+extern cvar_t	r_part_telesplash;
 
-// =============================================================================
-// OpenGL renderer state
-// =============================================================================
+extern cvar_t	gl_clear;
+extern cvar_t	gl_cull;
+extern cvar_t	gl_texsort;
+extern cvar_t	gl_smoothmodels;
+extern cvar_t	gl_affinemodels;
+extern cvar_t	gl_flashblend;
+extern cvar_t	gl_polyblend;
+extern cvar_t	gl_keeptjunctions;
+extern cvar_t	gl_max_size;
+extern cvar_t	gl_playermip;
+extern cvar_t	gl_nocolors;
+extern cvar_t	gl_reporttjunctions;
+extern cvar_t	gl_wateramp;
+extern cvar_t	gl_ztrick;
 
-extern struct edict_s *r_worldentity;
+extern struct edict_s	*r_worldentity;
 
-extern int r_framecount;
-extern int r_visframecount;
+extern entity_t	*currententity;
 
-extern int currenttexture;
-extern int particletexture;
-extern int playertextures;
+extern int		r_framecount;
+extern int		r_visframecount;
 
-extern int skytexturenum;
-extern int mirrortexturenum;
+extern int		currenttexture;
+extern int		particletexture;
+extern int		playertextures;
 
-extern qboolean mirror;
-extern mplane_t *mirror_plane;
+extern int		skytexturenum;
+extern int		mirrortexturenum;
 
-extern float r_world_matrix[16];
-extern float r_base_world_matrix[16];
+extern qboolean	mirror;
+extern mplane_t	*mirror_plane;
 
-// =============================================================================
-// Vendor/ version strings
-// =============================================================================
+extern float	r_world_matrix[16];
+extern float	r_base_world_matrix[16];
 
-extern const char *gl_vendor;
-extern const char *gl_renderer;
-extern const char *gl_version;
-extern const char *gl_extensions;
+extern const char	*gl_vendor;
+extern const char	*gl_renderer;
+extern const char	*gl_version;
+extern const char	*gl_extensions;
 
-// =============================================================================
-// Multitexture support (SGIS extension)
-// =============================================================================
-
-#define TEXTURE0_SGIS   0x835E
-#define TEXTURE1_SGIS   0x835F
+// multitexture
+#define TEXTURE0_SGIS	0x835E
+#define TEXTURE1_SGIS	0x835F
 
 #ifndef _WIN32
-#define APIENTRY /* */
+#define APIENTRY	/* */
 #endif
 
 typedef void (APIENTRY *lpMTexFUNC)(GLenum, GLfloat, GLfloat);
 typedef void (APIENTRY *lpSelTexFUNC)(GLenum);
 
-extern lpMTexFUNC qglMTexCoord2fSGIS;
-extern lpSelTexFUNC qglSelectTextureSGIS;
-extern qboolean gl_mtexable;
+extern lpMTexFUNC	qglMTexCoord2fSGIS;
+extern lpSelTexFUNC	qglSelectTextureSGIS;
+extern qboolean		gl_mtexable;
 
 void GL_DisableMultitexture(void);
 void GL_EnableMultitexture(void);
-
-// =============================================================================
 
 #endif // GLQUAKE_H

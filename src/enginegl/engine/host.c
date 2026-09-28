@@ -13,29 +13,19 @@
 *
 ****/
 
+// host.c -- coordinates spawning and killing of local servers
+
 #include "quakedef.h"
 #include "nullsubs.h"
 
-#define cls_signon		cls.signon
-#define cls_state		cls.state
-#define cls_demonum		cls.demonum
-#define cls_demos		cls.demos
-#define cls_netchan		cls.netchan
-#define cls_demoplayback cls.demoplayback
-#define cls_demorecording cls.demorecording
-#define cl_nointerp		cl.nointerp
-#define svs_clients		svs.clients
-#define svs_maxclients	svs.maxclients
-#define svs_maxclientslimit svs.maxclientslimit
-
-#include "server.h"
-
-#define SAVEGAME_VERSION    16
+#define MAX_HOST_CLIENTS		16	// -dedicated / -listen player limit
+#define DEFAULT_HOST_CLIENTS	8	// -dedicated / -listen without a count
+#define MIN_CLIENT_SLOTS		4	// client_t structs always allocated
 
 jmp_buf host_abortserver;
 
-cvar_t host_framerate = {"host_framerate", "0", false, false};
-cvar_t host_speeds = {"host_speeds", "0", false, false};
+cvar_t host_framerate = {"host_framerate", "0", false, false};	// set for slow motion
+cvar_t host_speeds = {"host_speeds", "0", false, false};		// set for running times
 cvar_t sys_ticrate = {"sys_ticrate", "0.05", false, false};
 cvar_t serverprofile = {"serverprofile", "0", false, false};
 cvar_t fraglimit = {"fraglimit", "0", false, true};
@@ -43,31 +33,18 @@ cvar_t timelimit = {"timelimit", "0", false, true};
 cvar_t teamplay = {"teamplay", "0", false, true};
 cvar_t samelevel = {"samelevel", "0", false, false};
 cvar_t noexit = {"noexit", "0", false, true};
-cvar_t skill = {"skill", "1", false, false};
-cvar_t deathmatch = {"deathmatch", "0", false, false};
-cvar_t coop = {"coop", "0", false, false};
+cvar_t skill = {"skill", "1", false, false};				// 0 - 3
+cvar_t deathmatch = {"deathmatch", "0", false, false};		// 0, 1, or 2
+cvar_t coop = {"coop", "0", false, false};					// 0 or 1
 cvar_t pausable = {"pausable", "1", false, false};
 cvar_t developer = {"developer", "0", false, false};
 
-extern int current_skill;
-extern int scr_disabled_for_loading;
-extern byte *host_colormap;
-
-#define SAVEGAME_MAGIC      0x56414853
-
-extern int cl_stats_monsters;
-extern int cl_stats_totalmonsters;
-
-extern void Mod_Print(void);
-extern void SV_SaveSpawnparms(void);
-extern void SV_ClearServerState(void);
-extern void V_CalcRefdef(void);
-extern int R_InitBrushLighting(void);
-extern int scr_copyeverything;
-
-char *Host_GetConsoleCommands(void);
-
-void Host_FindMaxClients(void)
+/*
+================
+Host_FindMaxClients
+================
+*/
+static void Host_FindMaxClients(void)
 {
 	int i;
 
@@ -78,7 +55,7 @@ void Host_FindMaxClients(void)
 	{
 		cls.state = ca_dedicated;
 		if (i == (com_argc - 1))
-			svs.maxclients = 8;
+			svs.maxclients = DEFAULT_HOST_CLIENTS;
 		else
 			svs.maxclients = Q_atoi(com_argv[i + 1]);
 	}
@@ -90,23 +67,23 @@ void Host_FindMaxClients(void)
 	i = COM_CheckParm("-listen");
 	if (i)
 	{
-		if (!cls.state)
+		if (cls.state == ca_dedicated)
 			Sys_Error("Only one of -dedicated or -listen can be specified");
 
 		if (i == (com_argc - 1))
-			svs.maxclients = 8;
+			svs.maxclients = DEFAULT_HOST_CLIENTS;
 		else
 			svs.maxclients = Q_atoi(com_argv[i + 1]);
 	}
 
 	if (svs.maxclients < 1)
-		svs.maxclients = 8;
-	else if (svs.maxclients > 16)
-		svs.maxclients = 16;
+		svs.maxclients = DEFAULT_HOST_CLIENTS;
+	else if (svs.maxclients > MAX_HOST_CLIENTS)
+		svs.maxclients = MAX_HOST_CLIENTS;
 
 	svs.maxclientslimit = svs.maxclients;
-	if (svs.maxclients < 4)
-		svs.maxclientslimit = 4;
+	if (svs.maxclients < MIN_CLIENT_SLOTS)
+		svs.maxclientslimit = MIN_CLIENT_SLOTS;
 
 	svs.clients = Hunk_AllocName(svs.maxclientslimit * sizeof(*svs.clients), "clients");
 
@@ -116,7 +93,12 @@ void Host_FindMaxClients(void)
 		Cvar_SetValue("deathmatch", 1.0f);
 }
 
-void Host_InitLocal(void)
+/*
+================
+Host_InitLocal
+================
+*/
+static void Host_InitLocal(void)
 {
 	Host_InitCommands();
 
@@ -139,11 +121,18 @@ void Host_InitLocal(void)
 	Host_FindMaxClients();
 }
 
-void Host_WriteConfiguration(void)
+/*
+===============
+Host_WriteConfiguration
+
+Writes key bindings and archived cvars to config.cfg
+===============
+*/
+static void Host_WriteConfiguration(void)
 {
 	FILE *f;
 
-	if (cls_state == ca_dedicated || !host_initialized)
+	if (cls.state == ca_dedicated || !host_initialized)
 		return;
 
 	f = fopen(va("%s/config.cfg", com_gamedir), "w");
@@ -159,48 +148,92 @@ void Host_WriteConfiguration(void)
 	fclose(f);
 }
 
-void Host_ServerFrame(void)
-{
+/*
+===================
+Host_GetConsoleCommands
 
+Add them exactly as if they had been typed at the console
+===================
+*/
+static void Host_GetConsoleCommands(void)
+{
+	char *cmd;
+
+	while (1)
+	{
+		cmd = Sys_ConsoleInput();
+		if (!cmd)
+			break;
+		Cbuf_AddText(cmd);
+	}
+}
+
+/*
+==================
+Host_ServerFrame
+==================
+*/
+static void Host_ServerFrame(void)
+{
 	pr_global_struct->frametime = (float)host_frametime;
 
+	// clear the general datagram
 	SV_ClearDatagram();
+
+	// check for new clients
 	SV_CheckForNewClients();
+
+	// read client messages
 	SV_RunClients();
 
-	if (!sv.paused && (svs.maxclients > 1 || !key_dest))
+	// move things around and think; always pause in single player if in console or menus
+	if (!sv.paused && (svs.maxclients > 1 || key_dest == key_game))
 		SV_Physics();
 
+	// send all messages to the clients
 	SV_SendClientMessages();
 }
 
+/*
+==================
+Host_ClientFrame
+==================
+*/
 void Host_ClientFrame(void)
 {
-
 }
 
-//=========================================================
-// Host_ClientCommands_Null - empty stub
-//=========================================================
+/*
+==================
+Host_ClientCommands_Null
+==================
+*/
 void Host_ClientCommands_Null(void)
 {
 }
 
-qboolean Host_FilterTime(float time)
+/*
+===================
+Host_FilterTime
+
+Returns false if the time is too short to run a frame
+===================
+*/
+static qboolean Host_FilterTime(float time)
 {
 	double newtime;
 
 	newtime = realtime + time;
 
-	if (cls_demoplayback)
+	if (cls.demoplayback)
 	{
 		realtime = newtime;
 	}
 	else
 	{
 		realtime = newtime;
-		if (newtime - oldrealtime < 0.01388888888888889)
-			return 0;
+		if (newtime - oldrealtime < 1.0 / 72)
+			return false;	// framerate is too high
 	}
 
 	host_frametime = realtime - oldrealtime;
@@ -208,6 +241,7 @@ qboolean Host_FilterTime(float time)
 
 	if (host_framerate.value <= 0.0)
 	{
+		// don't allow really long or short frames
 		if (host_frametime > 0.1)
 			host_frametime = 0.1;
 		if (host_frametime < 0.001)
@@ -218,9 +252,16 @@ qboolean Host_FilterTime(float time)
 		host_frametime = host_framerate.value;
 	}
 
-	return 1;
+	return true;
 }
 
+/*
+==================
+Host_Frame
+
+Runs all active servers
+==================
+*/
 void Host_Frame(float time)
 {
 	static double time1 = 0;
@@ -229,26 +270,35 @@ void Host_Frame(float time)
 	int pass1, pass2, pass3;
 
 	if (setjmp(host_abortserver))
-		return;
+		return;		// something bad happened, or the server disconnected
 
+	// keep the random time dependent
 	rand();
 
+	// decide the simulation time
 	if (!Host_FilterTime(time))
-		return;
+		return;		// don't run too fast, or packets will flood out
 
+	// get new key events
 	Sys_SendKeyEvents();
 
 	V_CalcRefdef();
+
+	// process console commands
 	Cbuf_Execute();
 
 	NET_Poll();
 
+	// if running the server locally, make intentions now
 	Host_GetConsoleCommands();
 
 	if (sv.active)
 	{
 		CL_SendCmd();
 		Host_ServerFrame();
+
+		// if running the server remotely, send intentions now after
+		// the incoming messages have been read
 		if (!sv.active)
 			CL_SendCmd();
 	}
@@ -257,11 +307,13 @@ void Host_Frame(float time)
 		CL_SendCmd();
 	}
 
+	// fetch results from server
 	if (cls.state == ca_connected)
 		CL_ReadFromServer();
 
 	CAM_Think();
 
+	// update video
 	if (host_speeds.value)
 		time1 = Sys_FloatTime();
 
@@ -273,7 +325,8 @@ void Host_Frame(float time)
 	if (host_speeds.value)
 		time2 = Sys_FloatTime();
 
-	if (cls_signon == SIGNONS)
+	// update audio
+	if (cls.signon == SIGNONS)
 	{
 		S_Update(r_origin, vpn, vright, vup);
 		CL_DecayLights();
@@ -298,6 +351,11 @@ void Host_Frame(float time)
 	host_framecount++;
 }
 
+/*
+====================
+Host_Init
+====================
+*/
 void Host_Init(quakeparms_t *parms)
 {
 	if (standard_quake)
@@ -312,7 +370,7 @@ void Host_Init(quakeparms_t *parms)
 
 	if (parms->memsize < minimum_memory)
 		Sys_Error("Only %4.1f megs of memory available, can't execute game",
-			parms->memsize / (float)0x100000);
+			parms->memsize / (float)(1024 * 1024));
 
 	Memory_Init(parms->membase, parms->memsize);
 	Cbuf_Init();
@@ -334,7 +392,7 @@ void Host_Init(quakeparms_t *parms)
 
 	R_InitNoTexture();
 
-	if (cls_state != 0)
+	if (cls.state != ca_dedicated)
 	{
 		host_basepal = COM_LoadHunkFile("gfx/palette.lmp");
 		if (!host_basepal)
@@ -346,7 +404,7 @@ void Host_Init(quakeparms_t *parms)
 		VID_Init();
 		Draw_Init();
 		SCR_Init();
-		R_InitBrushLighting();
+		R_Init();
 		S_Init();
 		CDAudio_Init();
 		HUD_Init();
@@ -359,23 +417,32 @@ void Host_Init(quakeparms_t *parms)
 	Hunk_AllocName(0, "-MARK-");
 	host_hunklevel = Hunk_LowMark();
 
-	host_initialized = 1;
+	host_initialized = true;
 
 	Sys_Printf("========Half-Life Initialized=========\n");
 }
 
+/*
+===============
+Host_Shutdown
+
+FIXME: this is a callback from Sys_Quit and Sys_Error. It would be better
+to run quit through here before the final handoff to the sys code.
+===============
+*/
 void Host_Shutdown(void)
 {
-	static qboolean isdown = 0;
+	static qboolean isdown = false;
 
 	if (isdown)
 	{
 		printf("recursive shutdown\n");
 		return;
 	}
-	isdown = 1;
+	isdown = true;
 
-	scr_disabled_for_loading = 1;
+	// keep Con_Printf from trying to update the screen
+	scr_disabled_for_loading = true;
 
 	Host_WriteConfiguration();
 
@@ -384,21 +451,28 @@ void Host_Shutdown(void)
 	S_Shutdown();
 	IN_Shutdown();
 
-	if (cls_state != 0)
+	if (cls.state != ca_dedicated)
 		VID_Shutdown();
 }
 
+/*
+================
+Host_Error
+
+This shuts down both the client and server
+================
+*/
 void Host_Error(const char *error, ...)
 {
 	va_list argptr;
 	char string[1024];
-	static qboolean inerror = 0;
+	static qboolean inerror = false;
 
 	if (inerror)
 		Sys_Error("Host_Error: recursively entered");
-	inerror = 1;
+	inerror = true;
 
-	SCR_EndLoadingPlaque();
+	SCR_EndLoadingPlaque();		// reenable screen updates
 
 	va_start(argptr, error);
 	vsprintf(string, error, argptr);
@@ -407,19 +481,24 @@ void Host_Error(const char *error, ...)
 	Con_Printf("Host_Error: %s\n", string);
 
 	if (sv.active)
-		Host_ShutdownServer(0);
+		Host_ShutdownServer(false);
 
-	if (cls_state == 0)
-		Sys_Error("Host_Error: %s\n", string);
+	if (cls.state == ca_dedicated)
+		Sys_Error("Host_Error: %s\n", string);	// dedicated servers exit
 
 	CL_Disconnect();
-	cls_demonum = -1;
+	cls.demonum = -1;
 
-	inerror = 0;
+	inerror = false;
 
 	longjmp(host_abortserver, 1);
 }
 
+/*
+================
+Host_EndGame
+================
+*/
 void Host_EndGame(const char *message, ...)
 {
 	va_list argptr;
@@ -432,12 +511,12 @@ void Host_EndGame(const char *message, ...)
 	Con_DPrintf("Host_EndGame: %s\n", string);
 
 	if (sv.active)
-		Host_ShutdownServer(0);
+		Host_ShutdownServer(false);
 
-	if (cls_state == 0)
-		Sys_Error("Host_EndGame: %s\n", string);
+	if (cls.state == ca_dedicated)
+		Sys_Error("Host_EndGame: %s\n", string);	// dedicated servers exit
 
-	if (cls_demonum != -1)
+	if (cls.demonum != -1)
 		CL_NextDemo();
 	else
 		CL_Disconnect();
@@ -445,10 +524,17 @@ void Host_EndGame(const char *message, ...)
 	longjmp(host_abortserver, 1);
 }
 
+/*
+==================
+Host_ShutdownServer
+
+This only happens at the end of a game, not between levels
+==================
+*/
 void Host_ShutdownServer(qboolean crash)
 {
 	int i;
-	int blocked;
+	int count;
 	server_client_t *client;
 	double start;
 	sizebuf_t buf;
@@ -457,16 +543,18 @@ void Host_ShutdownServer(qboolean crash)
 	if (!sv.active)
 		return;
 
-	sv.active = 0;
+	sv.active = false;
 
-	if (cls_state == 2)
+	// stop all client sounds immediately
+	if (cls.state == ca_connected)
 		CL_Disconnect_f();
 
+	// flush any pending messages - like the score!!!
 	start = Sys_FloatTime();
 
 	do
 	{
-		blocked = 0;
+		count = 0;
 		for (i = 0, client = svs.clients; i < svs.maxclients; i++, client++)
 		{
 			if (client->active && client->spawned)
@@ -479,21 +567,22 @@ void Host_ShutdownServer(qboolean crash)
 				else
 				{
 					NET_GetMessage(client->netconnection);
-					blocked++;
+					count++;
 				}
 			}
 		}
 	}
-	while (Sys_FloatTime() - start <= 3.0 && blocked);
+	while (Sys_FloatTime() - start <= 3.0 && count);
 
+	// make sure all the clients know we're disconnecting
 	buf.data = message;
-	buf.maxsize = 4;
+	buf.maxsize = sizeof(message);
 	buf.cursize = 0;
-	MSG_WriteByte(&buf, 2);
+	MSG_WriteByte(&buf, svc_disconnect);
 
-	i = NET_SendToAll(&buf, 5);
-	if (i)
-		Con_Printf("Host_ShutdownServer: NET_SendToAll failed for %u clients\n", i);
+	count = NET_SendToAll(&buf, 5);
+	if (count)
+		Con_Printf("Host_ShutdownServer: NET_SendToAll failed for %u clients\n", count);
 
 	for (i = 0, client = svs.clients; i < svs.maxclients; i++, client++)
 	{
@@ -504,11 +593,20 @@ void Host_ShutdownServer(qboolean crash)
 		}
 	}
 
-	memset(&sv, 0, 0x3638);
-	memset(svs.clients, 0, svs_maxclientslimit * sizeof(*svs.clients));
+	// clear structures
+	memset(&sv, 0, sizeof(sv));
+	memset(svs.clients, 0, svs.maxclientslimit * sizeof(*svs.clients));
 }
 
-int Host_ClearMemory(void)
+/*
+================
+Host_ClearMemory
+
+This clears all the memory used by both the client and server, but does
+not reinitialize anything.
+================
+*/
+void Host_ClearMemory(void)
 {
 	Con_DPrintf("Clearing memory\n");
 	S_AmbientOn_Null();
@@ -516,9 +614,9 @@ int Host_ClearMemory(void)
 	if (host_hunklevel)
 		Hunk_FreeToLowMark(host_hunklevel);
 
-	cls_signon = 0;
-	memset(&sv, 0, 0x3638);
-	memset(&cl, 0, 0xBF8);
+	cls.signon = 0;
+	memset(&sv, 0, sizeof(sv));
+	memset(&cl, 0, sizeof(cl));
 
 	memset(cl_model_precache, 0, sizeof(cl_model_precache));
 	memset(cl_sound_precache, 0, sizeof(cl_sound_precache));
@@ -528,21 +626,4 @@ int Host_ClearMemory(void)
 	cl_oldtime = 0.0;
 	cl_mtime[0] = 0.0;
 	cl_mtime[1] = 0.0;
-
-	return 0;
-}
-
-char *Host_GetConsoleCommands(void)
-{
-	char *cmd;
-
-	while (1)
-	{
-		cmd = Sys_ConsoleInput();
-		if (!cmd)
-			break;
-		Cbuf_AddText(cmd);
-	}
-
-	return cmd;
 }

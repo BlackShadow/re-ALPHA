@@ -12,204 +12,204 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
+// r_part.c
 
 #include "quakedef.h"
-#include "glquake.h"
-#include <math.h>
 
-int					free_particles;
-particle_t			*active_particles;
-particle_t			*active_tracer_particles;
-int					max_particles;
-particle_t			*particle_pool;
-int					particletexture;
-extern vec3_t		r_origin;
-extern vec3_t		vpn;
-extern vec3_t		vup;
-extern vec3_t		vright;
-int					ramp1[8] = { 0x6F, 0x6D, 0x6B, 0x69, 0x67, 0x65, 0x63, 0x61 };
-int					ramp2[8] = { 0x6F, 0x6E, 0x6D, 0x6C, 0x6B, 0x6A, 0x68, 0x66 };
-int					ramp3[8] = { 0x6D, 0x6B, 6, 5, 4, 3, 0, 0 };
-int					ramp4[9] = { 0xFE, 0xFD, 0xFC, 0x6F, 0x6E, 0x6D, 0x6C, 0x67, 0x60 };
-extern mplane_t		frustum[4];
+#define MAX_PARTICLES			8192	// default max # of particles at one time
+#define ABSOLUTE_MIN_PARTICLES	512		// no fewer than this no matter what's
+										//  on the command line
 
-extern cvar_t tracerLength;
-extern cvar_t tracerRed;
-extern cvar_t tracerGreen;
-extern cvar_t tracerBlue;
-extern cvar_t tracerAlpha;
+#define NUMVERTEXNORMALS		162
 
-static vec3_t avelocities[162];
+particle_t	*free_particles;
+particle_t	*active_particles;
+particle_t	*active_tracer_particles;
+int			max_particles;
+particle_t	*particle_pool;
+int			particletexture;
 
-static const vec3_t r_avertexnormals[162] = {
-	{ -0.5257310271263123f, 0.0f, 0.8506510257720947f },
-	{ -0.44286298751831055f, 0.2388560026884079f, 0.864188015460968f },
-	{ -0.2952420115470886f, 0.0f, 0.9554229974746704f },
-	{ -0.30901700258255005f, 0.5f, 0.80901700258255f },
-	{ -0.16245999932289124f, 0.26286599040031433f, 0.9510560035705566f },
-	{ 0.0f, 0.0f, 1.0f },
-	{ 0.0f, 0.8506510257720947f, 0.5257310271263123f },
-	{ -0.1476210057735443f, 0.7165669798851013f, 0.6817179918289185f },
-	{ 0.1476210057735443f, 0.7165669798851013f, 0.6817179918289185f },
-	{ 0.0f, 0.5257310271263123f, 0.8506510257720947f },
-	{ 0.30901700258255005f, 0.5f, 0.80901700258255f },
-	{ 0.5257310271263123f, 0.0f, 0.8506510257720947f },
-	{ 0.2952420115470886f, 0.0f, 0.9554229974746704f },
-	{ 0.44286298751831055f, 0.2388560026884079f, 0.864188015460968f },
-	{ 0.16245999932289124f, 0.26286599040031433f, 0.9510560035705566f },
-	{ -0.6817179918289185f, 0.1476210057735443f, 0.7165669798851013f },
-	{ -0.80901700258255f, 0.30901700258255005f, 0.5f },
-	{ -0.587785005569458f, 0.4253250062465668f, 0.6881909966468811f },
-	{ -0.8506510257720947f, 0.5257310271263123f, 0.0f },
-	{ -0.864188015460968f, 0.44286298751831055f, 0.2388560026884079f },
-	{ -0.7165669798851013f, 0.6817179918289185f, 0.1476210057735443f },
-	{ -0.6881909966468811f, 0.587785005569458f, 0.4253250062465668f },
-	{ -0.5f, 0.80901700258255f, 0.30901700258255005f },
-	{ -0.2388560026884079f, 0.864188015460968f, 0.44286298751831055f },
-	{ -0.4253250062465668f, 0.6881909966468811f, 0.587785005569458f },
-	{ -0.7165669798851013f, 0.6817179918289185f, -0.1476210057735443f },
-	{ -0.5f, 0.80901700258255f, -0.30901700258255005f },
-	{ -0.5257310271263123f, 0.8506510257720947f, 0.0f },
-	{ 0.0f, 0.8506510257720947f, -0.5257310271263123f },
-	{ -0.2388560026884079f, 0.864188015460968f, -0.44286298751831055f },
-	{ 0.0f, 0.9554229974746704f, -0.2952420115470886f },
-	{ -0.26286599040031433f, 0.9510560035705566f, -0.16245999932289124f },
-	{ 0.0f, 1.0f, 0.0f },
-	{ 0.0f, 0.9554229974746704f, 0.2952420115470886f },
-	{ -0.26286599040031433f, 0.9510560035705566f, 0.16245999932289124f },
-	{ 0.2388560026884079f, 0.864188015460968f, 0.44286298751831055f },
-	{ 0.26286599040031433f, 0.9510560035705566f, 0.16245999932289124f },
-	{ 0.5f, 0.80901700258255f, 0.30901700258255005f },
-	{ 0.2388560026884079f, 0.864188015460968f, -0.44286298751831055f },
-	{ 0.26286599040031433f, 0.9510560035705566f, -0.16245999932289124f },
-	{ 0.5f, 0.80901700258255f, -0.30901700258255005f },
-	{ 0.8506510257720947f, 0.5257310271263123f, 0.0f },
-	{ 0.7165669798851013f, 0.6817179918289185f, 0.1476210057735443f },
-	{ 0.7165669798851013f, 0.6817179918289185f, -0.1476210057735443f },
-	{ 0.5257310271263123f, 0.8506510257720947f, 0.0f },
-	{ 0.4253250062465668f, 0.6881909966468811f, 0.587785005569458f },
-	{ 0.864188015460968f, 0.44286298751831055f, 0.2388560026884079f },
-	{ 0.6881909966468811f, 0.587785005569458f, 0.4253250062465668f },
-	{ 0.80901700258255f, 0.30901700258255005f, 0.5f },
-	{ 0.6817179918289185f, 0.1476210057735443f, 0.7165669798851013f },
-	{ 0.587785005569458f, 0.4253250062465668f, 0.6881909966468811f },
-	{ 0.9554229974746704f, 0.2952420115470886f, 0.0f },
-	{ 1.0f, 0.0f, 0.0f },
-	{ 0.9510560035705566f, 0.16245999932289124f, 0.26286599040031433f },
-	{ 0.8506510257720947f, -0.5257310271263123f, 0.0f },
-	{ 0.9554229974746704f, -0.2952420115470886f, 0.0f },
-	{ 0.864188015460968f, -0.44286298751831055f, 0.2388560026884079f },
-	{ 0.9510560035705566f, -0.16245999932289124f, 0.26286599040031433f },
-	{ 0.80901700258255f, -0.30901700258255005f, 0.5f },
-	{ 0.6817179918289185f, -0.1476210057735443f, 0.7165669798851013f },
-	{ 0.8506510257720947f, 0.0f, 0.5257310271263123f },
-	{ 0.864188015460968f, 0.44286298751831055f, -0.2388560026884079f },
-	{ 0.80901700258255f, 0.30901700258255005f, -0.5f },
-	{ 0.9510560035705566f, 0.16245999932289124f, -0.26286599040031433f },
-	{ 0.5257310271263123f, 0.0f, -0.8506510257720947f },
-	{ 0.6817179918289185f, 0.1476210057735443f, -0.7165669798851013f },
-	{ 0.6817179918289185f, -0.1476210057735443f, -0.7165669798851013f },
-	{ 0.8506510257720947f, 0.0f, -0.5257310271263123f },
-	{ 0.80901700258255f, -0.30901700258255005f, -0.5f },
-	{ 0.864188015460968f, -0.44286298751831055f, -0.2388560026884079f },
-	{ 0.9510560035705566f, -0.16245999932289124f, -0.26286599040031433f },
-	{ 0.1476210057735443f, 0.7165669798851013f, -0.6817179918289185f },
-	{ 0.30901700258255005f, 0.5f, -0.80901700258255f },
-	{ 0.4253250062465668f, 0.6881909966468811f, -0.587785005569458f },
-	{ 0.44286298751831055f, 0.2388560026884079f, -0.864188015460968f },
-	{ 0.587785005569458f, 0.4253250062465668f, -0.6881909966468811f },
-	{ 0.6881909966468811f, 0.587785005569458f, -0.4253250062465668f },
-	{ -0.1476210057735443f, 0.7165669798851013f, -0.6817179918289185f },
-	{ -0.30901700258255005f, 0.5f, -0.80901700258255f },
-	{ 0.0f, 0.5257310271263123f, -0.8506510257720947f },
-	{ -0.5257310271263123f, 0.0f, -0.8506510257720947f },
-	{ -0.44286298751831055f, 0.2388560026884079f, -0.864188015460968f },
-	{ -0.2952420115470886f, 0.0f, -0.9554229974746704f },
-	{ -0.16245999932289124f, 0.26286599040031433f, -0.9510560035705566f },
-	{ 0.0f, 0.0f, -1.0f },
-	{ 0.2952420115470886f, 0.0f, -0.9554229974746704f },
-	{ 0.16245999932289124f, 0.26286599040031433f, -0.9510560035705566f },
-	{ -0.44286298751831055f, -0.2388560026884079f, -0.864188015460968f },
-	{ -0.30901700258255005f, -0.5f, -0.80901700258255f },
-	{ -0.16245999932289124f, -0.26286599040031433f, -0.9510560035705566f },
-	{ 0.0f, -0.8506510257720947f, -0.5257310271263123f },
-	{ -0.1476210057735443f, -0.7165669798851013f, -0.6817179918289185f },
-	{ 0.1476210057735443f, -0.7165669798851013f, -0.6817179918289185f },
-	{ 0.0f, -0.5257310271263123f, -0.8506510257720947f },
-	{ 0.30901700258255005f, -0.5f, -0.80901700258255f },
-	{ 0.44286298751831055f, -0.2388560026884079f, -0.864188015460968f },
-	{ 0.16245999932289124f, -0.26286599040031433f, -0.9510560035705566f },
-	{ 0.2388560026884079f, -0.864188015460968f, -0.44286298751831055f },
-	{ 0.5f, -0.80901700258255f, -0.30901700258255005f },
-	{ 0.4253250062465668f, -0.6881909966468811f, -0.587785005569458f },
-	{ 0.7165669798851013f, -0.6817179918289185f, -0.1476210057735443f },
-	{ 0.6881909966468811f, -0.587785005569458f, -0.4253250062465668f },
-	{ 0.587785005569458f, -0.4253250062465668f, -0.6881909966468811f },
-	{ 0.0f, -0.9554229974746704f, -0.2952420115470886f },
-	{ 0.0f, -1.0f, 0.0f },
-	{ 0.26286599040031433f, -0.9510560035705566f, -0.16245999932289124f },
-	{ 0.0f, -0.8506510257720947f, 0.5257310271263123f },
-	{ 0.0f, -0.9554229974746704f, 0.2952420115470886f },
-	{ 0.2388560026884079f, -0.864188015460968f, 0.44286298751831055f },
-	{ 0.26286599040031433f, -0.9510560035705566f, 0.16245999932289124f },
-	{ 0.5f, -0.80901700258255f, 0.30901700258255005f },
-	{ 0.7165669798851013f, -0.6817179918289185f, 0.1476210057735443f },
-	{ 0.5257310271263123f, -0.8506510257720947f, 0.0f },
-	{ -0.2388560026884079f, -0.864188015460968f, -0.44286298751831055f },
-	{ -0.5f, -0.80901700258255f, -0.30901700258255005f },
-	{ -0.26286599040031433f, -0.9510560035705566f, -0.16245999932289124f },
-	{ -0.8506510257720947f, -0.5257310271263123f, 0.0f },
-	{ -0.7165669798851013f, -0.6817179918289185f, -0.1476210057735443f },
-	{ -0.7165669798851013f, -0.6817179918289185f, 0.1476210057735443f },
-	{ -0.5257310271263123f, -0.8506510257720947f, 0.0f },
-	{ -0.5f, -0.80901700258255f, 0.30901700258255005f },
-	{ -0.2388560026884079f, -0.864188015460968f, 0.44286298751831055f },
-	{ -0.26286599040031433f, -0.9510560035705566f, 0.16245999932289124f },
-	{ -0.864188015460968f, -0.44286298751831055f, 0.2388560026884079f },
-	{ -0.80901700258255f, -0.30901700258255005f, 0.5f },
-	{ -0.6881909966468811f, -0.587785005569458f, 0.4253250062465668f },
-	{ -0.6817179918289185f, -0.1476210057735443f, 0.7165669798851013f },
-	{ -0.44286298751831055f, -0.2388560026884079f, 0.864188015460968f },
-	{ -0.587785005569458f, -0.4253250062465668f, 0.6881909966468811f },
-	{ -0.30901700258255005f, -0.5f, 0.80901700258255f },
-	{ -0.1476210057735443f, -0.7165669798851013f, 0.6817179918289185f },
-	{ -0.4253250062465668f, -0.6881909966468811f, 0.587785005569458f },
-	{ -0.16245999932289124f, -0.26286599040031433f, 0.9510560035705566f },
-	{ 0.44286298751831055f, -0.2388560026884079f, 0.864188015460968f },
-	{ 0.16245999932289124f, -0.26286599040031433f, 0.9510560035705566f },
-	{ 0.30901700258255005f, -0.5f, 0.80901700258255f },
-	{ 0.1476210057735443f, -0.7165669798851013f, 0.6817179918289185f },
-	{ 0.0f, -0.5257310271263123f, 0.8506510257720947f },
-	{ 0.4253250062465668f, -0.6881909966468811f, 0.587785005569458f },
-	{ 0.587785005569458f, -0.4253250062465668f, 0.6881909966468811f },
-	{ 0.6881909966468811f, -0.587785005569458f, 0.4253250062465668f },
-	{ -0.9554229974746704f, 0.2952420115470886f, 0.0f },
-	{ -0.9510560035705566f, 0.16245999932289124f, 0.26286599040031433f },
-	{ -1.0f, 0.0f, 0.0f },
-	{ -0.8506510257720947f, 0.0f, 0.5257310271263123f },
-	{ -0.9554229974746704f, -0.2952420115470886f, 0.0f },
-	{ -0.9510560035705566f, -0.16245999932289124f, 0.26286599040031433f },
-	{ -0.864188015460968f, 0.44286298751831055f, -0.2388560026884079f },
-	{ -0.9510560035705566f, 0.16245999932289124f, -0.26286599040031433f },
-	{ -0.80901700258255f, 0.30901700258255005f, -0.5f },
-	{ -0.864188015460968f, -0.44286298751831055f, -0.2388560026884079f },
-	{ -0.9510560035705566f, -0.16245999932289124f, -0.26286599040031433f },
-	{ -0.80901700258255f, -0.30901700258255005f, -0.5f },
-	{ -0.6817179918289185f, 0.1476210057735443f, -0.7165669798851013f },
-	{ -0.6817179918289185f, -0.1476210057735443f, -0.7165669798851013f },
-	{ -0.8506510257720947f, 0.0f, -0.5257310271263123f },
-	{ -0.6881909966468811f, 0.587785005569458f, -0.4253250062465668f },
-	{ -0.587785005569458f, 0.4253250062465668f, -0.6881909966468811f },
-	{ -0.4253250062465668f, 0.6881909966468811f, -0.587785005569458f },
-	{ -0.4253250062465668f, -0.6881909966468811f, -0.587785005569458f },
-	{ -0.587785005569458f, -0.4253250062465668f, -0.6881909966468811f },
-	{ -0.6881909966468811f, -0.587785005569458f, -0.4253250062465668f },
+int			ramp1[8] = { 0x6F, 0x6D, 0x6B, 0x69, 0x67, 0x65, 0x63, 0x61 };
+int			ramp2[8] = { 0x6F, 0x6E, 0x6D, 0x6C, 0x6B, 0x6A, 0x68, 0x66 };
+int			ramp3[8] = { 0x6D, 0x6B, 6, 5, 4, 3, 0, 0 };
+int			ramp4[9] = { 0xFE, 0xFD, 0xFC, 0x6F, 0x6E, 0x6D, 0x6C, 0x67, 0x60 };
+
+static vec3_t	avelocities[NUMVERTEXNORMALS];
+
+static const vec3_t r_avertexnormals[NUMVERTEXNORMALS] = {
+	{ -0.525731f, 0.000000f, 0.850651f },
+	{ -0.442863f, 0.238856f, 0.864188f },
+	{ -0.295242f, 0.000000f, 0.955423f },
+	{ -0.309017f, 0.500000f, 0.809017f },
+	{ -0.162460f, 0.262866f, 0.951056f },
+	{ 0.000000f, 0.000000f, 1.000000f },
+	{ 0.000000f, 0.850651f, 0.525731f },
+	{ -0.147621f, 0.716567f, 0.681718f },
+	{ 0.147621f, 0.716567f, 0.681718f },
+	{ 0.000000f, 0.525731f, 0.850651f },
+	{ 0.309017f, 0.500000f, 0.809017f },
+	{ 0.525731f, 0.000000f, 0.850651f },
+	{ 0.295242f, 0.000000f, 0.955423f },
+	{ 0.442863f, 0.238856f, 0.864188f },
+	{ 0.162460f, 0.262866f, 0.951056f },
+	{ -0.681718f, 0.147621f, 0.716567f },
+	{ -0.809017f, 0.309017f, 0.500000f },
+	{ -0.587785f, 0.425325f, 0.688191f },
+	{ -0.850651f, 0.525731f, 0.000000f },
+	{ -0.864188f, 0.442863f, 0.238856f },
+	{ -0.716567f, 0.681718f, 0.147621f },
+	{ -0.688191f, 0.587785f, 0.425325f },
+	{ -0.500000f, 0.809017f, 0.309017f },
+	{ -0.238856f, 0.864188f, 0.442863f },
+	{ -0.425325f, 0.688191f, 0.587785f },
+	{ -0.716567f, 0.681718f, -0.147621f },
+	{ -0.500000f, 0.809017f, -0.309017f },
+	{ -0.525731f, 0.850651f, 0.000000f },
+	{ 0.000000f, 0.850651f, -0.525731f },
+	{ -0.238856f, 0.864188f, -0.442863f },
+	{ 0.000000f, 0.955423f, -0.295242f },
+	{ -0.262866f, 0.951056f, -0.162460f },
+	{ 0.000000f, 1.000000f, 0.000000f },
+	{ 0.000000f, 0.955423f, 0.295242f },
+	{ -0.262866f, 0.951056f, 0.162460f },
+	{ 0.238856f, 0.864188f, 0.442863f },
+	{ 0.262866f, 0.951056f, 0.162460f },
+	{ 0.500000f, 0.809017f, 0.309017f },
+	{ 0.238856f, 0.864188f, -0.442863f },
+	{ 0.262866f, 0.951056f, -0.162460f },
+	{ 0.500000f, 0.809017f, -0.309017f },
+	{ 0.850651f, 0.525731f, 0.000000f },
+	{ 0.716567f, 0.681718f, 0.147621f },
+	{ 0.716567f, 0.681718f, -0.147621f },
+	{ 0.525731f, 0.850651f, 0.000000f },
+	{ 0.425325f, 0.688191f, 0.587785f },
+	{ 0.864188f, 0.442863f, 0.238856f },
+	{ 0.688191f, 0.587785f, 0.425325f },
+	{ 0.809017f, 0.309017f, 0.500000f },
+	{ 0.681718f, 0.147621f, 0.716567f },
+	{ 0.587785f, 0.425325f, 0.688191f },
+	{ 0.955423f, 0.295242f, 0.000000f },
+	{ 1.000000f, 0.000000f, 0.000000f },
+	{ 0.951056f, 0.162460f, 0.262866f },
+	{ 0.850651f, -0.525731f, 0.000000f },
+	{ 0.955423f, -0.295242f, 0.000000f },
+	{ 0.864188f, -0.442863f, 0.238856f },
+	{ 0.951056f, -0.162460f, 0.262866f },
+	{ 0.809017f, -0.309017f, 0.500000f },
+	{ 0.681718f, -0.147621f, 0.716567f },
+	{ 0.850651f, 0.000000f, 0.525731f },
+	{ 0.864188f, 0.442863f, -0.238856f },
+	{ 0.809017f, 0.309017f, -0.500000f },
+	{ 0.951056f, 0.162460f, -0.262866f },
+	{ 0.525731f, 0.000000f, -0.850651f },
+	{ 0.681718f, 0.147621f, -0.716567f },
+	{ 0.681718f, -0.147621f, -0.716567f },
+	{ 0.850651f, 0.000000f, -0.525731f },
+	{ 0.809017f, -0.309017f, -0.500000f },
+	{ 0.864188f, -0.442863f, -0.238856f },
+	{ 0.951056f, -0.162460f, -0.262866f },
+	{ 0.147621f, 0.716567f, -0.681718f },
+	{ 0.309017f, 0.500000f, -0.809017f },
+	{ 0.425325f, 0.688191f, -0.587785f },
+	{ 0.442863f, 0.238856f, -0.864188f },
+	{ 0.587785f, 0.425325f, -0.688191f },
+	{ 0.688191f, 0.587785f, -0.425325f },
+	{ -0.147621f, 0.716567f, -0.681718f },
+	{ -0.309017f, 0.500000f, -0.809017f },
+	{ 0.000000f, 0.525731f, -0.850651f },
+	{ -0.525731f, 0.000000f, -0.850651f },
+	{ -0.442863f, 0.238856f, -0.864188f },
+	{ -0.295242f, 0.000000f, -0.955423f },
+	{ -0.162460f, 0.262866f, -0.951056f },
+	{ 0.000000f, 0.000000f, -1.000000f },
+	{ 0.295242f, 0.000000f, -0.955423f },
+	{ 0.162460f, 0.262866f, -0.951056f },
+	{ -0.442863f, -0.238856f, -0.864188f },
+	{ -0.309017f, -0.500000f, -0.809017f },
+	{ -0.162460f, -0.262866f, -0.951056f },
+	{ 0.000000f, -0.850651f, -0.525731f },
+	{ -0.147621f, -0.716567f, -0.681718f },
+	{ 0.147621f, -0.716567f, -0.681718f },
+	{ 0.000000f, -0.525731f, -0.850651f },
+	{ 0.309017f, -0.500000f, -0.809017f },
+	{ 0.442863f, -0.238856f, -0.864188f },
+	{ 0.162460f, -0.262866f, -0.951056f },
+	{ 0.238856f, -0.864188f, -0.442863f },
+	{ 0.500000f, -0.809017f, -0.309017f },
+	{ 0.425325f, -0.688191f, -0.587785f },
+	{ 0.716567f, -0.681718f, -0.147621f },
+	{ 0.688191f, -0.587785f, -0.425325f },
+	{ 0.587785f, -0.425325f, -0.688191f },
+	{ 0.000000f, -0.955423f, -0.295242f },
+	{ 0.000000f, -1.000000f, 0.000000f },
+	{ 0.262866f, -0.951056f, -0.162460f },
+	{ 0.000000f, -0.850651f, 0.525731f },
+	{ 0.000000f, -0.955423f, 0.295242f },
+	{ 0.238856f, -0.864188f, 0.442863f },
+	{ 0.262866f, -0.951056f, 0.162460f },
+	{ 0.500000f, -0.809017f, 0.309017f },
+	{ 0.716567f, -0.681718f, 0.147621f },
+	{ 0.525731f, -0.850651f, 0.000000f },
+	{ -0.238856f, -0.864188f, -0.442863f },
+	{ -0.500000f, -0.809017f, -0.309017f },
+	{ -0.262866f, -0.951056f, -0.162460f },
+	{ -0.850651f, -0.525731f, 0.000000f },
+	{ -0.716567f, -0.681718f, -0.147621f },
+	{ -0.716567f, -0.681718f, 0.147621f },
+	{ -0.525731f, -0.850651f, 0.000000f },
+	{ -0.500000f, -0.809017f, 0.309017f },
+	{ -0.238856f, -0.864188f, 0.442863f },
+	{ -0.262866f, -0.951056f, 0.162460f },
+	{ -0.864188f, -0.442863f, 0.238856f },
+	{ -0.809017f, -0.309017f, 0.500000f },
+	{ -0.688191f, -0.587785f, 0.425325f },
+	{ -0.681718f, -0.147621f, 0.716567f },
+	{ -0.442863f, -0.238856f, 0.864188f },
+	{ -0.587785f, -0.425325f, 0.688191f },
+	{ -0.309017f, -0.500000f, 0.809017f },
+	{ -0.147621f, -0.716567f, 0.681718f },
+	{ -0.425325f, -0.688191f, 0.587785f },
+	{ -0.162460f, -0.262866f, 0.951056f },
+	{ 0.442863f, -0.238856f, 0.864188f },
+	{ 0.162460f, -0.262866f, 0.951056f },
+	{ 0.309017f, -0.500000f, 0.809017f },
+	{ 0.147621f, -0.716567f, 0.681718f },
+	{ 0.000000f, -0.525731f, 0.850651f },
+	{ 0.425325f, -0.688191f, 0.587785f },
+	{ 0.587785f, -0.425325f, 0.688191f },
+	{ 0.688191f, -0.587785f, 0.425325f },
+	{ -0.955423f, 0.295242f, 0.000000f },
+	{ -0.951056f, 0.162460f, 0.262866f },
+	{ -1.000000f, 0.000000f, 0.000000f },
+	{ -0.850651f, 0.000000f, 0.525731f },
+	{ -0.955423f, -0.295242f, 0.000000f },
+	{ -0.951056f, -0.162460f, 0.262866f },
+	{ -0.864188f, 0.442863f, -0.238856f },
+	{ -0.951056f, 0.162460f, -0.262866f },
+	{ -0.809017f, 0.309017f, -0.500000f },
+	{ -0.864188f, -0.442863f, -0.238856f },
+	{ -0.951056f, -0.162460f, -0.262866f },
+	{ -0.809017f, -0.309017f, -0.500000f },
+	{ -0.681718f, 0.147621f, -0.716567f },
+	{ -0.681718f, -0.147621f, -0.716567f },
+	{ -0.850651f, 0.000000f, -0.525731f },
+	{ -0.688191f, 0.587785f, -0.425325f },
+	{ -0.587785f, 0.425325f, -0.688191f },
+	{ -0.425325f, 0.688191f, -0.587785f },
+	{ -0.425325f, -0.688191f, -0.587785f },
+	{ -0.587785f, -0.425325f, -0.688191f },
+	{ -0.688191f, -0.587785f, -0.425325f },
 };
 
 static int	tracercount;
 
 void R_DrawTracerParticles(void);
 
+/*
+===============
+R_TeleportSplash
+===============
+*/
 void R_TeleportSplash(vec3_t org)
 {
 	int			i, j;
@@ -224,12 +224,12 @@ void R_TeleportSplash(vec3_t org)
 			if (!free_particles)
 				return;
 
-			p = (particle_t *)free_particles;
-			free_particles = (int)p->next;
+			p = free_particles;
+			free_particles = p->next;
 			p->next = active_particles;
 			active_particles = p;
 
-			p->die = (float)cl_time + 6.0f + (rand() & 0x1F) * 0.02f;
+			p->die = (float)cl_time + 6.0f + (rand() & 31) * 0.02f;
 			p->type = pt_static;
 			p->color = (float)(6 * ((rand() & 7) + 25));
 
@@ -243,12 +243,17 @@ void R_TeleportSplash(vec3_t org)
 
 			VectorSubtract(org, p->org, dir);
 			VectorNormalize(dir);
-			vel = (float)((rand() & 0x3F) + 100);
+			vel = (float)((rand() & 63) + 100);
 			VectorScale(dir, vel, p->vel);
 		}
 	}
 }
 
+/*
+===============
+R_DarkFieldParticles2
+===============
+*/
 void R_DarkFieldParticles2(vec3_t org)
 {
 	int			i, j, k;
@@ -265,8 +270,8 @@ void R_DarkFieldParticles2(vec3_t org)
 				if (!free_particles)
 					return;
 
-				p = (particle_t *)free_particles;
-				free_particles = (int)p->next;
+				p = free_particles;
+				free_particles = p->next;
 				p->next = active_particles;
 				active_particles = p;
 
@@ -283,13 +288,18 @@ void R_DarkFieldParticles2(vec3_t org)
 				p->org[2] = org[2] + (float)k + (rand() & 3);
 
 				VectorNormalize(dir);
-				vel = (float)((rand() & 0x3F) + 50);
+				vel = (float)((rand() & 63) + 50);
 				VectorScale(dir, vel, p->vel);
 			}
 		}
 	}
 }
 
+/*
+===============
+R_BeamParticles
+===============
+*/
 void R_BeamParticles(vec3_t start, vec3_t end)
 {
 	vec3_t		vec;
@@ -306,8 +316,8 @@ void R_BeamParticles(vec3_t start, vec3_t end)
 		if (!free_particles)
 			break;
 
-		p = (particle_t *)free_particles;
-		free_particles = (int)p->next;
+		p = free_particles;
+		free_particles = p->next;
 		p->next = active_particles;
 		active_particles = p;
 
@@ -321,29 +331,34 @@ void R_BeamParticles(vec3_t start, vec3_t end)
 	}
 }
 
+/*
+===============
+R_SparkStreaks
+===============
+*/
 void R_SparkStreaks(vec3_t pos, vec3_t dir, int color, int speed)
 {
-	int i;
-	float zBias;
+	int		i;
+	float	zBias;
 
 	VectorNormalize(dir);
 
 	zBias = 0.05f;
 	for (i = 0; i < 100; ++i)
 	{
-		vec3_t velDir;
-		particle_t *p;
+		vec3_t		velDir;
+		particle_t	*p;
 
 		if (!free_particles)
 			return;
 
-		p = (particle_t *)free_particles;
-		free_particles = (int)p->next;
+		p = free_particles;
+		free_particles = p->next;
 		p->next = active_particles;
 		active_particles = p;
 
 		p->die = (float)cl_time + 2.0f;
-		p->type = (ptype_t)9;
+		p->type = pt_vox_grav;
 		p->color = (float)(rand() % 10 + color);
 		VectorCopy(pos, p->org);
 
@@ -354,27 +369,27 @@ void R_SparkStreaks(vec3_t pos, vec3_t dir, int color, int speed)
 		VectorScale(velDir, (float)speed, p->vel);
 	}
 
-	zBias = 0.075000003f;
+	zBias = 0.075f;
 	for (i = 0; i < speed / 5; ++i)
 	{
-		vec3_t velDir;
-		float randNorm;
-		float randSpeed;
-		float dirScale;
-		float velScale;
-		int j;
-		particle_t *p;
+		vec3_t		velDir;
+		float		randNorm;
+		float		randSpeed;
+		float		dirScale;
+		float		velScale;
+		int			j;
+		particle_t	*p;
 
 		if (!free_particles)
 			return;
 
-		p = (particle_t *)free_particles;
-		free_particles = (int)p->next;
+		p = free_particles;
+		free_particles = p->next;
 		p->next = active_particles;
 		active_particles = p;
 
 		p->die = (float)cl_time + 3.0f;
-		p->type = (ptype_t)8;
+		p->type = pt_vox_slowgrav;
 		p->color = (float)(rand() % 10 + color);
 		VectorCopy(pos, p->org);
 
@@ -389,19 +404,20 @@ void R_SparkStreaks(vec3_t pos, vec3_t dir, int color, int speed)
 		VectorScale(velDir, dirScale, velDir);
 		VectorScale(velDir, randSpeed, p->vel);
 
+		// two more sparks along the same streak
 		velScale = randSpeed;
 		for (j = 0; j < 2; ++j)
 		{
 			if (!free_particles)
 				return;
 
-			p = (particle_t *)free_particles;
-			free_particles = (int)p->next;
+			p = free_particles;
+			free_particles = p->next;
 			p->next = active_particles;
 			active_particles = p;
 
 			p->die = (float)cl_time + 3.0f;
-			p->type = (ptype_t)8;
+			p->type = pt_vox_slowgrav;
 			p->color = (float)(rand() % 10 + color);
 
 			p->org[0] = (float)(rand() & 2) + pos[0] - 1.0f;
@@ -416,6 +432,11 @@ void R_SparkStreaks(vec3_t pos, vec3_t dir, int color, int speed)
 	}
 }
 
+/*
+===============
+R_StreakSplash
+===============
+*/
 void R_StreakSplash(vec3_t pos, vec3_t dir, int color, int speed)
 {
 	int			i, j;
@@ -431,7 +452,6 @@ void R_StreakSplash(vec3_t pos, vec3_t dir, int color, int speed)
 
 	for (i = 0; i < waveCount; i++)
 	{
-
 		basePos[0] = (float)(rand() & 6) + pos[0] - 3.0f;
 		basePos[1] = (float)(rand() & 6) + pos[1] - 3.0f;
 		basePos[2] = (float)(rand() & 6) + pos[2] - 3.0f;
@@ -444,13 +464,14 @@ void R_StreakSplash(vec3_t pos, vec3_t dir, int color, int speed)
 		{
 			if (!free_particles)
 				return;
-			p = (particle_t *)free_particles;
-			free_particles = (int)p->next;
+
+			p = free_particles;
+			free_particles = p->next;
 			p->next = active_particles;
 			active_particles = p;
 
 			p->die = (float)cl_time + 1.5f;
-			p->type = (ptype_t)9;
+			p->type = pt_vox_grav;
 			p->color = (float)(rand() % 10 + color);
 
 			p->org[0] = (float)((rand() & 2) - 1) * 0.5f + basePos[0];
@@ -464,6 +485,13 @@ void R_StreakSplash(vec3_t pos, vec3_t dir, int color, int speed)
 	}
 }
 
+/*
+===============
+R_RocketTrail
+
+A type of 128 or more draws the trail denser.
+===============
+*/
 void R_RocketTrail(vec3_t start, vec3_t end, int type)
 {
 	vec3_t		vec;
@@ -489,8 +517,8 @@ void R_RocketTrail(vec3_t start, vec3_t end, int type)
 		if (!free_particles)
 			return;
 
-		p = (particle_t *)free_particles;
-		free_particles = (int)p->next;
+		p = free_particles;
+		free_particles = p->next;
 		p->next = active_particles;
 		active_particles = p;
 
@@ -499,7 +527,7 @@ void R_RocketTrail(vec3_t start, vec3_t end, int type)
 
 		switch (type)
 		{
-		case 0:
+		case 0:	// rocket trail
 			p->ramp = (float)(rand() & 3);
 			p->color = (float)ramp3[(int)p->ramp];
 			p->type = pt_fire;
@@ -507,7 +535,7 @@ void R_RocketTrail(vec3_t start, vec3_t end, int type)
 				p->org[j] = start[j] + (float)(rand() % 6 - 3);
 			break;
 
-		case 1:
+		case 1:	// smoke smoke
 			p->ramp = (float)((rand() & 3) + 2);
 			p->color = (float)ramp3[(int)p->ramp];
 			p->type = pt_fire;
@@ -515,7 +543,7 @@ void R_RocketTrail(vec3_t start, vec3_t end, int type)
 				p->org[j] = start[j] + (float)(rand() % 6 - 3);
 			break;
 
-		case 2:
+		case 2:	// blood
 			p->type = pt_grav;
 			p->color = (float)(67 + (rand() & 3));
 			for (j = 0; j < 3; j++)
@@ -523,7 +551,7 @@ void R_RocketTrail(vec3_t start, vec3_t end, int type)
 			break;
 
 		case 3:
-		case 5:
+		case 5:	// tracer
 			p->die = (float)cl_time + 0.5f;
 			p->type = pt_static;
 			if (type == 3)
@@ -547,7 +575,7 @@ void R_RocketTrail(vec3_t start, vec3_t end, int type)
 			}
 			break;
 
-		case 4:
+		case 4:	// slight blood
 			p->type = pt_grav;
 			p->color = (float)(67 + (rand() & 3));
 			for (j = 0; j < 3; j++)
@@ -555,12 +583,12 @@ void R_RocketTrail(vec3_t start, vec3_t end, int type)
 			len -= 3.0f;
 			break;
 
-		case 6:
+		case 6:	// voor trail
 			p->color = (float)(152 + (rand() & 3));
 			p->type = pt_static;
 			p->die = (float)cl_time + 0.3f;
 			for (j = 0; j < 3; j++)
-				p->org[j] = start[j] + (float)((rand() & 0xF) - 8);
+				p->org[j] = start[j] + (float)((rand() & 15) - 8);
 			break;
 		}
 
@@ -568,6 +596,13 @@ void R_RocketTrail(vec3_t start, vec3_t end, int type)
 	}
 }
 
+/*
+===============
+R_CullParticle
+
+True when the point is outside the view frustum
+===============
+*/
 int R_CullParticle(vec3_t point)
 {
 	int		i;
@@ -582,6 +617,11 @@ int R_CullParticle(vec3_t point)
 	return 0;
 }
 
+/*
+===============
+R_DrawParticles
+===============
+*/
 void R_DrawParticles(void)
 {
 	particle_t	*p;
@@ -621,13 +661,13 @@ void R_DrawParticles(void)
 
 		if (p->die < cl_time)
 		{
-
 			*pp = p->next;
-			p->next = (particle_t *)free_particles;
-			free_particles = (int)p;
+			p->next = free_particles;
+			free_particles = p;
 			continue;
 		}
 
+		// hack a scale up to keep particles from disapearing
 		scale = (p->org[0] - r_origin[0]) * vpn[0] +
 				(p->org[1] - r_origin[1]) * vpn[1] +
 				(p->org[2] - r_origin[2]) * vpn[2];
@@ -636,9 +676,9 @@ void R_DrawParticles(void)
 		else
 			scale = 1.0f;
 
-	*(int *)color = *(int *)(host_basepal + 3 * (int)p->color);
-	color[3] = 255;
-	glColor3ubv(color);
+		memcpy(color, host_basepal + 3 * (int)p->color, sizeof(color));
+		color[3] = 255;
+		glColor3ubv(color);
 
 		glTexCoord2f(0.0f, 0.0f);
 		glVertex3fv(p->org);
@@ -708,11 +748,11 @@ void R_DrawParticles(void)
 			p->vel[2] -= grav * 5.0f;
 			break;
 
-		case (ptype_t)8:
+		case pt_vox_slowgrav:
 			p->vel[2] -= grav * 4.0f;
 			break;
 
-		case (ptype_t)9:
+		case pt_vox_grav:
 			p->vel[2] -= grav * 8.0f;
 			break;
 		}
@@ -729,11 +769,18 @@ void R_DrawParticles(void)
 	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 }
 
+/*
+===============
+R_DrawTracerParticles
+
+Additive streaks, stretched along their velocity
+===============
+*/
 void R_DrawTracerParticles(void)
 {
-	particle_t *p;
-	float frametime;
-	vec3_t up, right;
+	particle_t	*p;
+	float		frametime;
+	vec3_t		up, right;
 
 	if (!active_tracer_particles)
 		return;
@@ -750,24 +797,24 @@ void R_DrawTracerParticles(void)
 	{
 		p = active_tracer_particles;
 		active_tracer_particles = p->next;
-		p->next = (particle_t *)free_particles;
-		free_particles = (int)p;
+		p->next = free_particles;
+		free_particles = p;
 	}
 
 	glBegin(GL_QUADS);
 
 	for (p = active_tracer_particles; p; p = p->next)
 	{
-		float scale;
-		vec3_t base;
-		vec3_t corner_right;
+		float	scale;
+		vec3_t	base;
+		vec3_t	corner_right;
 
 		while (p->next && p->next->die < (float)cl_time)
 		{
 			particle_t *expired = p->next;
 			p->next = expired->next;
-			expired->next = (particle_t *)free_particles;
-			free_particles = (int)expired;
+			expired->next = free_particles;
+			free_particles = expired;
 		}
 
 		scale = (p->org[0] - r_origin[0]) * vpn[0] +
@@ -808,36 +855,34 @@ void R_DrawTracerParticles(void)
 	glCullFace(GL_FRONT);
 }
 
-int R_InitParticles(void)
+/*
+===============
+R_InitParticles
+===============
+*/
+void R_InitParticles(void)
 {
-	int particleCount;
-	void *hunk_res;
-	particle_t *p;
-	int i;
-
-	extern char *Cvar_VariableString(const char *var_name);
-	extern int atoi(const char *str);
+	int			i;
+	particle_t	*p;
+	int			particleCount;
 
 	const char *particleCountStr = Cvar_VariableString("particles");
 	if (particleCountStr && particleCountStr[0])
 	{
 		particleCount = atoi(particleCountStr);
-		if (particleCount < 512)
-			particleCount = 512;
+		if (particleCount < ABSOLUTE_MIN_PARTICLES)
+			particleCount = ABSOLUTE_MIN_PARTICLES;
 	}
 	else
 	{
-		particleCount = 8192;
+		particleCount = MAX_PARTICLES;
 	}
 
-	extern int max_particles;
-	extern particle_t *particle_pool;
 	max_particles = particleCount;
 
-	hunk_res = Hunk_AllocName(sizeof(particle_t) * particleCount, "particles");
-	particle_pool = (particle_t *)hunk_res;
+	particle_pool = Hunk_AllocName(sizeof(particle_t) * particleCount, "particles");
 
-	free_particles = (int)particle_pool;
+	free_particles = particle_pool;
 	p = particle_pool;
 	for (i = 0; i < particleCount - 1; i++)
 	{
@@ -845,16 +890,19 @@ int R_InitParticles(void)
 		p++;
 	}
 	p->next = NULL;
-
-	return (int)hunk_res;
 }
 
+/*
+===============
+R_DarkFieldParticles
+===============
+*/
 void R_DarkFieldParticles(vec3_t org)
 {
-	int i, j, k;
-	particle_t *p;
-	vec3_t dir;
-	float vel;
+	int			i, j, k;
+	particle_t	*p;
+	vec3_t		dir;
+	float		vel;
 
 	for (i = -16; i < 16; i += 8)
 	{
@@ -865,8 +913,8 @@ void R_DarkFieldParticles(vec3_t org)
 				if (!free_particles)
 					return;
 
-				p = (particle_t *)free_particles;
-				free_particles = (int)p->next;
+				p = free_particles;
+				free_particles = p->next;
 				p->next = active_particles;
 				active_particles = p;
 
@@ -883,53 +931,56 @@ void R_DarkFieldParticles(vec3_t org)
 				p->org[2] = org[2] + (float)k + (rand() & 3);
 
 				VectorNormalize(dir);
-				vel = (float)((rand() & 0x3F) + 50);
+				vel = (float)((rand() & 63) + 50);
 				VectorScale(dir, vel, p->vel);
 			}
 		}
 	}
 }
 
+/*
+===============
+R_EntityParticles
+===============
+*/
 void R_EntityParticles(entity_t *ent)
 {
-	const double time = cl_time;
-	float *ent_f;
-	int i;
-	particle_t *p;
+	const double	time = cl_time;
+	int				i;
+	particle_t		*p;
 
 	if (avelocities[0][0] == 0.0f)
 	{
-		float *v = (float *)avelocities;
-		float *end = v + (162 * 3);
+		float	*v = (float *)avelocities;
+		float	*end = v + NUMVERTEXNORMALS * 3;
 
 		for (; v < end; ++v)
-			*v = (float)(rand() & 0xFF) * 0.01f;
+			*v = (float)(rand() & 255) * 0.01f;
 	}
 
-	ent_f = (float *)ent;
-
-	for (i = 0; i < 162; i++)
+	for (i = 0; i < NUMVERTEXNORMALS; i++)
 	{
 		if (!free_particles)
 			break;
 
 		{
-			const double yaw = (double)avelocities[i][0] * time;
-			const float cy = (float)cos(yaw);
-			const float sy = (float)sin(yaw);
-			const double pitch = (double)avelocities[i][1] * time;
-			const float cp = (float)cos(pitch);
-			const float sp = (float)sin(pitch);
-			const double roll = (double)avelocities[i][2] * time;
-			const float forward_x = sp * sy;
-			const float forward_y = sp * cy;
-			const float forward_z = -cp;
+			const double	yaw = (double)avelocities[i][0] * time;
+			const float		cy = (float)cos(yaw);
+			const float		sy = (float)sin(yaw);
+			const double	pitch = (double)avelocities[i][1] * time;
+			const float		cp = (float)cos(pitch);
+			const float		sp = (float)sin(pitch);
+			const double	roll = (double)avelocities[i][2] * time;
+			const float		forward_x = sp * sy;
+			const float		forward_y = sp * cy;
+			const float		forward_z = -cp;
 
+			// the roll is computed but not used
 			(void)cos(roll);
 			(void)sin(roll);
 
-			p = (particle_t *)free_particles;
-			free_particles = (int)p->next;
+			p = free_particles;
+			free_particles = p->next;
 			p->next = active_particles;
 			active_particles = p;
 
@@ -937,22 +988,24 @@ void R_EntityParticles(entity_t *ent)
 			p->color = 96.0f;
 			p->type = pt_explode;
 
-			p->org[0] = forward_x * 16.0f + r_avertexnormals[i][0] * 64.0f + ent_f[26];
-			p->org[1] = forward_y * 16.0f + r_avertexnormals[i][1] * 64.0f + ent_f[27];
-			p->org[2] = forward_z * 16.0f + r_avertexnormals[i][2] * 64.0f + ent_f[28];
+			p->org[0] = forward_x * 16.0f + r_avertexnormals[i][0] * 64.0f + ent->origin[0];
+			p->org[1] = forward_y * 16.0f + r_avertexnormals[i][1] * 64.0f + ent->origin[1];
+			p->org[2] = forward_z * 16.0f + r_avertexnormals[i][2] * 64.0f + ent->origin[2];
 		}
 	}
 }
 
+/*
+===============
+R_ClearParticles
+===============
+*/
 void R_ClearParticles(void)
 {
-	extern int max_particles;
-	extern particle_t *particle_pool;
+	int			i;
+	particle_t	*p;
 
-	int i;
-	particle_t *p;
-
-	free_particles = (int)particle_pool;
+	free_particles = particle_pool;
 	active_particles = NULL;
 	active_tracer_particles = NULL;
 
@@ -966,29 +1019,33 @@ void R_ClearParticles(void)
 		p->next = NULL;
 }
 
+/*
+===============
+R_ReadPointFile_f
+===============
+*/
 void R_ReadPointFile_f(void)
 {
-	extern char loadname[32];
-	char filename[256];
-	FILE *f;
-	int x, y, z;
-	int count = 0;
-	particle_t *p;
+	char		name[256];
+	FILE		*f;
+	int			x, y, z;
+	int			c = 0;
+	particle_t	*p;
 
-	sprintf(filename, "maps/%s.pts", loadname);
+	sprintf(name, "maps/%s.pts", loadname);
 
-	f = fopen(filename, "r");
+	f = fopen(name, "r");
 	if (!f)
 	{
-		Con_Printf("Couldn't open %s\n", filename);
+		Con_Printf("Couldn't open %s\n", name);
 		return;
 	}
 
-	Con_Printf("Reading %s...\n", filename);
+	Con_Printf("Reading %s...\n", name);
 
 	while (fscanf(f, "%d %d %d\n", &x, &y, &z) == 3)
 	{
-		count++;
+		c++;
 
 		if (!free_particles)
 		{
@@ -996,13 +1053,13 @@ void R_ReadPointFile_f(void)
 			break;
 		}
 
-		p = (particle_t *)free_particles;
-		free_particles = *(int *)(free_particles + 16);
-		*(int *)((int)p + 16) = (int)active_particles;
+		p = free_particles;
+		free_particles = p->next;
+		p->next = active_particles;
 		active_particles = p;
 
 		p->die = cl_time + 99999.0f;
-		p->type = 0;
+		p->type = pt_static;
 		p->color = 15.0f;
 
 		p->org[0] = (float)x;
@@ -1015,26 +1072,28 @@ void R_ReadPointFile_f(void)
 	}
 
 	fclose(f);
-	Con_Printf("%d points read\n", count);
+	Con_Printf("%d points read\n", c);
 }
 
+/*
+===============
+R_ParseParticleEffect
+
+Parse an effect out of the server message
+===============
+*/
 void R_ParseParticleEffect(void)
 {
-	extern float MSG_ReadCoord(void);
-	extern int MSG_ReadChar(void);
-	extern int MSG_ReadByte(void);
-
-	vec3_t org, velocity;
-	int count;
-	int color;
+	vec3_t		org, dir;
+	int			i, count, color;
 
 	org[0] = MSG_ReadCoord();
 	org[1] = MSG_ReadCoord();
 	org[2] = MSG_ReadCoord();
 
-	velocity[0] = (float)MSG_ReadChar() * 0.0625f;
-	velocity[1] = (float)MSG_ReadChar() * 0.0625f;
-	velocity[2] = (float)MSG_ReadChar() * 0.0625f;
+	dir[0] = (float)MSG_ReadChar() * (1.0f / 16);
+	dir[1] = (float)MSG_ReadChar() * (1.0f / 16);
+	dir[2] = (float)MSG_ReadChar() * (1.0f / 16);
 
 	count = MSG_ReadByte();
 	if (count == 255)
@@ -1042,18 +1101,25 @@ void R_ParseParticleEffect(void)
 
 	color = MSG_ReadByte();
 
-	R_RunParticleEffect(org, velocity, color, count);
+	R_RunParticleEffect(org, dir, color, count);
 }
 
+/*
+===============
+R_ParticleStatic
+
+Adds a tracer particle
+===============
+*/
 void R_ParticleStatic(vec3_t *pos, vec3_t *vel, float die)
 {
-	particle_t *p;
+	particle_t	*p;
 
 	if (!free_particles)
 		return;
 
-	p = (particle_t *)free_particles;
-	free_particles = *(int *)(free_particles + 16);
+	p = free_particles;
+	free_particles = p->next;
 	p->next = active_tracer_particles;
 	active_tracer_particles = p;
 
@@ -1070,18 +1136,23 @@ void R_ParticleStatic(vec3_t *pos, vec3_t *vel, float die)
 	p->vel[2] = vel[0][2];
 }
 
-void __cdecl R_ParticleExplosion(float *org)
+/*
+===============
+R_ParticleExplosion
+===============
+*/
+void R_ParticleExplosion(vec3_t org)
 {
-	int i;
-	particle_t *p;
+	int			i;
+	particle_t	*p;
 
 	for (i = 0; i < 1024; ++i)
 	{
 		if (!free_particles)
 			break;
 
-		p = (particle_t *)free_particles;
-		free_particles = (int)p->next;
+		p = free_particles;
+		free_particles = p->next;
 		p->next = active_particles;
 		active_particles = p;
 
@@ -1090,9 +1161,10 @@ void __cdecl R_ParticleExplosion(float *org)
 		p->ramp = (float)(rand() & 3);
 
 		p->type = pt_explode;
-		if ((i & 1) == 0)
+		if (!(i & 1))
 			p->type = pt_explode2;
 
+		// a random direction inside a sphere
 		do
 		{
 			p->vel[0] = (float)(rand() % 1024 - 512);
@@ -1100,7 +1172,7 @@ void __cdecl R_ParticleExplosion(float *org)
 			p->vel[2] = (float)(rand() % 1024 - 512);
 		} while (p->vel[0] * p->vel[0] +
 				 p->vel[1] * p->vel[1] +
-				 p->vel[2] * p->vel[2] > 262144.0);
+				 p->vel[2] * p->vel[2] > 512.0 * 512.0);
 
 		p->org[0] = org[0] + p->vel[0] / 4.0;
 		p->org[1] = org[1] + p->vel[1] / 4.0;
@@ -1108,28 +1180,31 @@ void __cdecl R_ParticleExplosion(float *org)
 	}
 }
 
-void __cdecl R_ParticleExplosion2(float *org, int m, int n)
+/*
+===============
+R_ParticleExplosion2
+===============
+*/
+void R_ParticleExplosion2(vec3_t org, int colorStart, int colorLength)
 {
-	int i;
-	particle_t *p;
-	int count;
-
-	count = 0;
+	int			i;
+	particle_t	*p;
+	int			colorMod = 0;
 
 	for (i = 0; i < 512; ++i)
 	{
 		if (!free_particles)
 			break;
 
-		p = (particle_t *)free_particles;
-		free_particles = (int)p->next;
+		p = free_particles;
+		free_particles = p->next;
 		p->next = active_particles;
 		active_particles = p;
 
 		p->die = (float)cl_time + 0.3;
 		p->type = pt_blob;
-		p->color = (float)(count % n + m);
-		count++;
+		p->color = (float)(colorMod % colorLength + colorStart);
+		colorMod++;
 
 		p->org[0] = (float)(rand() % 32 - 16) + org[0];
 		p->vel[0] = (float)(rand() % 512 - 256);
@@ -1140,26 +1215,30 @@ void __cdecl R_ParticleExplosion2(float *org, int m, int n)
 	}
 }
 
-void __cdecl R_BlobExplosion(float *org)
+/*
+===============
+R_BlobExplosion
+===============
+*/
+void R_BlobExplosion(vec3_t org)
 {
-	int i;
-	particle_t *p;
+	int			i;
+	particle_t	*p;
 
 	for (i = 0; i < 1024; ++i)
 	{
 		if (!free_particles)
 			break;
 
-		p = (particle_t *)free_particles;
-		free_particles = (int)p->next;
+		p = free_particles;
+		free_particles = p->next;
 		p->next = active_particles;
 		active_particles = p;
 
 		p->die = (float)cl_time + (double)(rand() & 8) * 0.05 + 1.0;
 
-		if ((i & 1) != 0)
+		if (i & 1)
 		{
-
 			p->type = pt_blob;
 			p->color = (float)(rand() % 6 + 66);
 
@@ -1173,7 +1252,6 @@ void __cdecl R_BlobExplosion(float *org)
 		}
 		else
 		{
-
 			p->type = pt_blob2;
 			p->color = (float)(rand() % 6 + 150);
 
@@ -1188,35 +1266,39 @@ void __cdecl R_BlobExplosion(float *org)
 	}
 }
 
+/*
+===============
+R_RunParticleEffect
+
+A count of 1024 is a rocket explosion.
+===============
+*/
 void R_RunParticleEffect(vec3_t org, vec3_t dir, int color, int count)
 {
-	int i;
-	particle_t *p;
+	int			i;
+	particle_t	*p;
 
 	for (i = 0; i < count; ++i)
 	{
 		if (!free_particles)
 			break;
 
-		p = (particle_t *)free_particles;
-		free_particles = (int)p->next;
+		p = free_particles;
+		free_particles = p->next;
 		p->next = active_particles;
 		active_particles = p;
 
 		if (count == 1024)
 		{
+			// rocket explosion
 			p->die = (float)cl_time + 5.0f;
 			p->color = (float)ramp2[0];
 			p->ramp = (float)(rand() & 3);
 
-			if ((i & 1) != 0)
-			{
+			if (i & 1)
 				p->type = pt_explode;
-			}
 			else
-			{
 				p->type = pt_explode2;
-			}
 
 			p->org[0] = (float)(rand() % 32 - 16) + org[0];
 			p->org[1] = (float)(rand() % 32 - 16) + org[1];
@@ -1230,11 +1312,11 @@ void R_RunParticleEffect(vec3_t org, vec3_t dir, int color, int count)
 		{
 			p->die = (float)cl_time + (float)((double)(rand() % 5) * 0.1);
 			p->type = pt_grav;
-			p->color = (float)(color ^ (((unsigned char)color ^ (unsigned char)rand()) & 7));
+			p->color = (float)((color & ~7) + (rand() & 7));
 
-			p->org[0] = (float)((rand() & 0xF) - 8) + org[0];
-			p->org[1] = (float)((rand() & 0xF) - 8) + org[1];
-			p->org[2] = (float)((rand() & 0xF) - 8) + org[2];
+			p->org[0] = (float)((rand() & 15) - 8) + org[0];
+			p->org[1] = (float)((rand() & 15) - 8) + org[1];
+			p->org[2] = (float)((rand() & 15) - 8) + org[2];
 
 			p->vel[0] = dir[0] * 15.0f;
 			p->vel[1] = dir[1] * 15.0f;
@@ -1243,18 +1325,23 @@ void R_RunParticleEffect(vec3_t org, vec3_t dir, int color, int count)
 	}
 }
 
+/*
+===============
+R_SparkShower
+===============
+*/
 void R_SparkShower(vec3_t org)
 {
-	int i;
-	particle_t *p;
+	int			i;
+	particle_t	*p;
 
 	for (i = 0; i < 15; ++i)
 	{
 		if (!free_particles)
 			break;
 
-		p = (particle_t *)free_particles;
-		free_particles = (int)p->next;
+		p = free_particles;
+		free_particles = p->next;
 		p->next = active_particles;
 		active_particles = p;
 
@@ -1262,9 +1349,9 @@ void R_SparkShower(vec3_t org)
 		p->org[1] = org[1];
 		p->org[2] = org[2];
 
-		p->vel[0] = (float)((rand() & 0x1F) - 16);
-		p->vel[1] = (float)((rand() & 0x1F) - 16);
-		p->vel[2] = (float)(rand() & 0x3F);
+		p->vel[0] = (float)((rand() & 31) - 16);
+		p->vel[1] = (float)((rand() & 31) - 16);
+		p->vel[2] = (float)(rand() & 63);
 
 		p->ramp = 0.0f;
 		p->color = 254.0f;
@@ -1273,38 +1360,43 @@ void R_SparkShower(vec3_t org)
 	}
 }
 
-void __cdecl R_LavaSplash(float *org)
+/*
+===============
+R_LavaSplash
+===============
+*/
+void R_LavaSplash(vec3_t org)
 {
-	int x, y;
-	particle_t *p;
-	vec3_t dir;
+	int			i, j;
+	particle_t	*p;
+	vec3_t		dir;
 
-	for (y = -128; y < 128; y += 8)
+	for (i = -128; i < 128; i += 8)
 	{
-		for (x = -128; x < 128; x += 8)
+		for (j = -128; j < 128; j += 8)
 		{
 			if (!free_particles)
 				return;
 
-			p = (particle_t *)free_particles;
-			free_particles = (int)p->next;
+			p = free_particles;
+			free_particles = p->next;
 			p->next = active_particles;
 			active_particles = p;
 
-			p->die = (float)cl_time + (float)(rand() & 0x1F) * 0.02f + 2.0f;
+			p->die = (float)cl_time + (float)(rand() & 31) * 0.02f + 2.0f;
 			p->color = (float)((rand() & 7) + 224);
 			p->type = pt_slowgrav;
 
-			dir[0] = (float)(x + (rand() & 7));
-			dir[1] = (float)(y + (rand() & 7));
+			dir[0] = (float)(j + (rand() & 7));
+			dir[1] = (float)(i + (rand() & 7));
 			dir[2] = 255.0f;
 
 			p->org[0] = org[0] + dir[0];
 			p->org[1] = org[1] + dir[1];
-			p->org[2] = org[2] + (float)(rand() & 0x3F);
+			p->org[2] = org[2] + (float)(rand() & 63);
 
 			VectorNormalize(dir);
-			VectorScale(dir, (float)((rand() & 0x3F) + 50), p->vel);
+			VectorScale(dir, (float)((rand() & 63) + 50), p->vel);
 		}
 	}
 }

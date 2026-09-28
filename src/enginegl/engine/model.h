@@ -1,38 +1,51 @@
+/***
+*
+*	Copyright (c) 1996-1997, Valve LLC. All rights reserved.
+*
+*	This product contains software technology licensed from Id
+*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc.
+*	All Rights Reserved.
+*
+*   This source code contains proprietary and confidential information of
+*   Valve LLC and its suppliers.  Access to this code is restricted to
+*   persons who have executed a written SDK license with Valve.  Any access,
+*   use or distribution of this code by or to any unlicensed person is illegal.
+*
+****/
+// model.h
 
 #ifndef MODEL_H
 #define MODEL_H
 
 #include "bspfile.h"
 
-// Forward definition
+/*
+
+d*_t structures are on-disk representations
+m*_t structures are in-memory
+
+*/
+
 struct decal_s;
 struct msurface_s;
 
-// =============================================================================
-// Entity effect flags (trail/ rotate etc)
-// =============================================================================
+// entity effects
+#define EF_ROCKET	1		// leave a trail
+#define EF_GRENADE	2		// leave a trail
+#define EF_GIB		4		// leave a trail
+#define EF_ROTATE	8		// rotate (bonus items)
+#define EF_TRACER	16		// green split trail
+#define EF_ZOMGIB	32		// small blood trail
+#define EF_TRACER2	64		// orange split trail + rotate
+#define EF_TRACER3	128		// purple trail
 
-#define EF_ROCKET   1 // leave a trail
-#define EF_GRENADE  2 // leave a trail
-#define EF_GIB      4 // leave a trail
-#define EF_ROTATE   8 // rotate (bonus items)
-#define EF_TRACER   16 // green split trail
-#define EF_ZOMGIB   32 // small blood trail
-#define EF_TRACER2  64 // orange split trail + rotate
-#define EF_TRACER3  128 // purple trail
+/*
+==============================================================================
 
-// =============================================================================
-// Runtime model structures
-// =============================================================================
+BRUSH MODELS
 
-#define MAX_MIPS    4
-
-typedef struct
-{
-	int			width, height;
-	int			mips[MAX_MIPS][2]; // offsets
-	char		name[16];
-} miptex_runtime_t; // Miptex in memory (slightly unrelated to disk format)
+==============================================================================
+*/
 
 typedef struct texture_s
 {
@@ -60,21 +73,24 @@ typedef struct
 
 #define TEX_SPECIAL	1
 
-// Plane types (mplane_t::type)
-#define PLANE_X 0
-#define PLANE_Y 1
-#define PLANE_Z 2
+// mplane_t type
+#define PLANE_X		0
+#define PLANE_Y		1
+#define PLANE_Z		2
+#define PLANE_ANYX	3
+#define PLANE_ANYY	4
+#define PLANE_ANYZ	5
 
 #include "render.h"
 
 typedef struct hull_s
 {
-	dclipnode_t *clipnodes;
-	mplane_t    *planes;
-	int         firstclipnode;
-	int         lastclipnode;
-	vec3_t      clip_mins;
-	vec3_t      clip_maxs;
+	dclipnode_t	*clipnodes;
+	mplane_t	*planes;
+	int			firstclipnode;
+	int			lastclipnode;
+	vec3_t		clip_mins;
+	vec3_t		clip_maxs;
 } hull_t;
 
 typedef struct mvertex_s
@@ -84,8 +100,8 @@ typedef struct mvertex_s
 
 typedef struct medge_s
 {
-	unsigned short v[2];
-	unsigned int cachededgeoffset;
+	unsigned short	v[2];
+	unsigned int	cachededgeoffset;
 } medge_t;
 
 typedef struct glpoly_s
@@ -93,17 +109,17 @@ typedef struct glpoly_s
 	struct glpoly_s	*next;
 	struct glpoly_s	*chain;
 	int				numverts;
-	int				flags; // for SURF_UNDERWATER
-	float			verts[4][VERTEXSIZE]; // variable sized (xyz s1 t1 s2 t2)
+	int				flags;					// for SURF_UNDERWATER
+	float			verts[4][VERTEXSIZE];	// variable sized (xyz s1 t1 s2 t2)
 } glpoly_t;
 
 typedef struct mnode_s
 {
 // common with leaf
-	int			contents; // 0, to differentiate from leafs
-	int			visframe; // node needs to be traversed if current
+	int			contents;		// 0, to differentiate from leafs
+	int			visframe;		// node needs to be traversed if current
 
-	float		minmaxs[6]; // mins[3], maxs[3]
+	float		minmaxs[6];		// for bounding box culling
 
 	struct mnode_s	*parent;
 
@@ -118,10 +134,10 @@ typedef struct mnode_s
 typedef struct mleaf_s
 {
 // common with node
-	int			contents; // -1, to differentiate from nodes
-	int			visframe; // node needs to be traversed if current
+	int			contents;		// will be a negative contents number
+	int			visframe;		// node needs to be traversed if current
 
-	float		minmaxs[6]; // mins[3], maxs[3]
+	float		minmaxs[6];		// for bounding box culling
 
 	struct mnode_s	*parent;
 
@@ -131,26 +147,26 @@ typedef struct mleaf_s
 
 	struct msurface_s **firstmarksurface;
 	int			nummarksurfaces;
-	int			key; // BSP sequence number for leaf
+	int			key;			// BSP sequence number for leaf's contents
 	byte		ambient_sound_level[NUM_AMBIENTS];
 } mleaf_t;
 
 typedef struct msurface_s
 {
-	int			visframe; // should be drawn when node is crossed
+	int			visframe;		// should be drawn when node is crossed
 
 	mplane_t	*plane;
 	int			flags;
 
-	int			firstedge; // look up in model->surfedges[], negative = backwards
+	int			firstedge;		// look up in model->surfedges[], negative = backwards
 	int			numedges;
 
 	short		texturemins[2];
 	short		extents[2];
 
-	int			light_s, light_t; // gl lightmap coordinates
+	int			light_s, light_t;	// gl lightmap coordinates
 
-	glpoly_t	*polys; // multiple if warped
+	glpoly_t	*polys;			// multiple if warped
 	struct msurface_s	*texturechain;
 
 	mtexinfo_t	*texinfo;
@@ -161,24 +177,27 @@ typedef struct msurface_s
 
 	int			lightmaptexturenum;
 	byte		styles[MAXLIGHTMAPS];
-	int			cached_light[MAXLIGHTMAPS]; // values currently used in lightmap
-	int			cached_dlight; // dynamic lighting currently used involved
+	int			cached_light[MAXLIGHTMAPS];	// values currently used in lightmap
+	int			cached_dlight;				// true if dynamic light in cache
 
-	byte		*samples; // [numstyles*surfsize]
-	struct decal_s *pdecals; // Decals on this surface
+	byte		*samples;		// [numstyles*surfsize]
+	struct decal_s	*pdecals;	// decals on this surface
 } msurface_t;
 
-typedef enum {
-	mod_brush,
-	mod_sprite,
-	mod_alias,
-	mod_studio
-} modtype_t;
+/*
+==============================================================================
+
+WHOLE MODEL
+
+==============================================================================
+*/
+
+typedef enum {mod_brush, mod_sprite, mod_alias, mod_studio} modtype_t;
 
 typedef struct model_s
 {
 	char		name[MAX_QPATH];
-	int			needload; // bmodels and sprites don't load instantly
+	int			needload;		// bmodels and sprites don't cache normally
 
 	modtype_t	type;
 	int			numframes;
@@ -186,13 +205,21 @@ typedef struct model_s
 
 	int			flags;
 
-// Volume occupied by the model graphics
+//
+// volume occupied by the model graphics
+//
 	vec3_t		mins, maxs;
 	float		radius;
 
-	int			pad0[7];
+//
+// solid volume for clipping
+//
+	qboolean	clipbox;
+	vec3_t		clipmins, clipmaxs;
 
-// Brush model data
+//
+// brush model
+//
 	int			firstmodelsurface;
 	int			nummodelsurfaces;
 
@@ -238,10 +265,13 @@ typedef struct model_s
 	byte		*lightdata;
 	char		*entities;
 
-	cache_user_t cache;
+//
+// additional model data
+//
+	cache_user_t	cache;		// only access through Mod_Extradata
 } model_t;
 
-// Flags for msurface_t
+// msurface_t flags
 #define SURF_PLANEBACK		2
 #define SURF_DRAWSKY		4
 #define SURF_DRAWSPRITE		8
@@ -253,9 +283,17 @@ typedef struct model_s
 
 #define MAXLIGHTMAPS	4
 
-// =============================================================================
-// Alias Model runtime structures
-// =============================================================================
+/*
+==============================================================================
+
+ALIAS MODELS
+
+==============================================================================
+*/
+
+#define MAXALIASVERTS	1024
+#define MAXALIASFRAMES	256
+#define MAX_SKINS		32
 
 typedef struct
 {
@@ -270,7 +308,7 @@ typedef struct
 	float		interval;
 	trivertx_t	bboxmin;
 	trivertx_t	bboxmax;
-	int			pad;
+	int			frame;
 	char		name[16];
 } maliasframedesc_t;
 
@@ -295,15 +333,20 @@ typedef struct aliashdr_s
 	int				poseverts;
 	int				posedata;
 	int				commands;
-	int				gl_texturenum[32];
-	maliasframedesc_t frames[1]; // variable sized
+	int				gl_texturenum[MAX_SKINS];
+	maliasframedesc_t	frames[1];	// variable sized
 } aliashdr_t;
 
-// Sprite structures moved to render.h
+// sprite models are in render.h
 
-// =============================================================================
-// Function Prototypes
-// =============================================================================
+//===================================================================
+
+extern model_t	*loadmodel;
+extern char		loadname[32];	// for hunk tags
+
+extern int			g_stverts[];	// onseam, s, t per vertex (gl_mesh.c)
+extern mtriangle_t	g_triangles[];
+extern trivertx_t	*g_poseverts[MAXALIASFRAMES];
 
 void		Mod_Init(void);
 void		Mod_ClearAll(void);

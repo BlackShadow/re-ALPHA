@@ -12,46 +12,22 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
+
+// cvar.c -- dynamic variable tracking
+
 #include "quakedef.h"
 
 cvar_t	*cvar_vars;
 char	*cvar_null_string = "";
 
+/*
+============
+Cvar_FindVar
+============
+*/
 cvar_t *Cvar_FindVar(const char *var_name)
 {
 	cvar_t	*var;
-
-#ifdef _DEBUG
-	if (!var_name)
-	{
-		extern char __ImageBase;
-
-		void *returnAddress;
-		const char *logPath;
-		FILE *log;
-		unsigned int imageBase;
-		unsigned int retAddr;
-		unsigned int idaAddr;
-
-		returnAddress = _ReturnAddress();
-		imageBase = (unsigned int)(size_t)&__ImageBase;
-		retAddr = (unsigned int)(size_t)returnAddress;
-		idaAddr = 0x400000u + (retAddr - imageBase);
-
-		logPath = getenv("QSTRCMP_LOG");
-		if (!logPath || !*logPath)
-			logPath = "qstrcmp_null.log";
-
-		log = fopen(logPath, "a");
-		if (log)
-		{
-			fprintf(log, "Cvar_FindVar NULL: ret=%p base=%08X ida=%08X\n", returnAddress, imageBase, idaAddr);
-			fclose(log);
-		}
-
-		__debugbreak();
-	}
-#endif
 
 	for (var = cvar_vars; var; var = var->next)
 	{
@@ -62,6 +38,11 @@ cvar_t *Cvar_FindVar(const char *var_name)
 	return NULL;
 }
 
+/*
+============
+Cvar_VariableValue
+============
+*/
 float Cvar_VariableValue(const char *var_name)
 {
 	cvar_t	*var;
@@ -73,6 +54,11 @@ float Cvar_VariableValue(const char *var_name)
 	return Q_atof(var->string);
 }
 
+/*
+============
+Cvar_VariableString
+============
+*/
 char *Cvar_VariableString(const char *var_name)
 {
 	cvar_t	*var;
@@ -84,6 +70,11 @@ char *Cvar_VariableString(const char *var_name)
 	return var->string;
 }
 
+/*
+============
+Cvar_CompleteVariable
+============
+*/
 char *Cvar_CompleteVariable(const char *partial)
 {
 	cvar_t	*cvar;
@@ -102,6 +93,11 @@ char *Cvar_CompleteVariable(const char *partial)
 	return NULL;
 }
 
+/*
+============
+Cvar_Set
+============
+*/
 void Cvar_Set(const char *var_name, const char *value)
 {
 	cvar_t		*var;
@@ -129,6 +125,11 @@ void Cvar_Set(const char *var_name, const char *value)
 	}
 }
 
+/*
+============
+Cvar_SetValue
+============
+*/
 void Cvar_SetValue(const char *var_name, float value)
 {
 	char	val[32];
@@ -137,77 +138,59 @@ void Cvar_SetValue(const char *var_name, float value)
 	Cvar_Set(var_name, val);
 }
 
+/*
+============
+Cvar_RegisterVariable
+
+Adds a freestanding variable to the variable list.
+============
+*/
 void Cvar_RegisterVariable(cvar_t *variable)
 {
 	char	*oldstr;
 
-#ifdef _DEBUG
-	if (!variable || !variable->name)
-	{
-		extern char __ImageBase;
-
-		void *returnAddress;
-		const char *logPath;
-		FILE *log;
-		unsigned int imageBase;
-		unsigned int retAddr;
-		unsigned int idaAddr;
-
-		returnAddress = _ReturnAddress();
-		imageBase = (unsigned int)(size_t)&__ImageBase;
-		retAddr = (unsigned int)(size_t)returnAddress;
-		idaAddr = 0x400000u + (retAddr - imageBase);
-
-		logPath = getenv("QSTRCMP_LOG");
-		if (!logPath || !*logPath)
-			logPath = "qstrcmp_null.log";
-
-		log = fopen(logPath, "a");
-		if (log)
-		{
-			fprintf(log,
-				"Cvar_RegisterVariable NULL name: var=%p name=%p ret=%p base=%08X ida=%08X\n",
-				(const void *)variable,
-				(variable ? (const void *)variable->name : NULL),
-				returnAddress,
-				imageBase,
-				idaAddr);
-			fclose(log);
-		}
-
-		__debugbreak();
-	}
-#endif
-
+	// first check to see if it has allready been defined
 	if (Cvar_FindVar(variable->name))
 	{
 		Con_Printf("Can't register variable %s, allready defined\n", variable->name);
 		return;
 	}
 
+	// check for overlap with a command
 	if (Cmd_Exists(variable->name))
 	{
 		Con_Printf("Cvar_RegisterVariable: %s is a command\n", variable->name);
 		return;
 	}
 
+	// copy the value off, because future sets will Z_Free it
 	oldstr = variable->string;
 	variable->string = Z_Malloc(Q_strlen(variable->string) + 1);
 	Q_strcpy(variable->string, oldstr);
 	variable->value = Q_atof(variable->string);
 
+	// link the variable in
 	variable->next = cvar_vars;
 	cvar_vars = variable;
 }
 
+/*
+============
+Cvar_Command
+
+Handles variable inspection and changing from the console
+============
+*/
 qboolean Cvar_Command(void)
 {
 	cvar_t	*v;
 
+	// check variables
 	v = Cvar_FindVar(Cmd_Argv(0));
 	if (!v)
 		return false;
 
+	// perform a variable print or set
 	if (Cmd_Argc() == 1)
 	{
 		Con_Printf("\"%s\" is \"%s\"\n", v->name, v->string);
@@ -218,6 +201,14 @@ qboolean Cvar_Command(void)
 	return true;
 }
 
+/*
+============
+Cvar_WriteVariables
+
+Writes lines containing "variable value" for all variables
+with the archive flag set to true.
+============
+*/
 void Cvar_WriteVariables(FILE *f)
 {
 	cvar_t	*var;
@@ -229,7 +220,12 @@ void Cvar_WriteVariables(FILE *f)
 	}
 }
 
-void Cvar_Set_f(void)
+/*
+============
+Cvar_Set_f
+============
+*/
+static void Cvar_Set_f(void)
 {
 	if (Cmd_Argc() != 3)
 	{
@@ -239,7 +235,12 @@ void Cvar_Set_f(void)
 	Cvar_Set(Cmd_Argv(1), Cmd_Argv(2));
 }
 
-void Cvar_Toggle_f(void)
+/*
+============
+Cvar_Toggle_f
+============
+*/
+static void Cvar_Toggle_f(void)
 {
 	int		v;
 
@@ -252,10 +253,15 @@ void Cvar_Toggle_f(void)
 	v = Cvar_VariableValue(Cmd_Argv(1));
 	v = !v;
 
-	Cvar_SetValue(Cmd_Argv(1), (float)v);
+	Cvar_SetValue(Cmd_Argv(1), v);
 }
 
-void Cvar_Inc_f(void)
+/*
+============
+Cvar_Inc_f
+============
+*/
+static void Cvar_Inc_f(void)
 {
 	float	v;
 
@@ -266,11 +272,16 @@ void Cvar_Inc_f(void)
 	}
 
 	v = Cvar_VariableValue(Cmd_Argv(1));
-	v = v + 1.0f;
+	v += 1.0f;
 
 	Cvar_SetValue(Cmd_Argv(1), v);
 }
 
+/*
+============
+Cvar_Init
+============
+*/
 void Cvar_Init(void)
 {
 	Cmd_AddCommand("set", Cvar_Set_f);

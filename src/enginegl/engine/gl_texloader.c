@@ -12,143 +12,169 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
+// gl_texloader.c -- TGA image loading
 
 #include "quakedef.h"
 
-byte *targa_rgba;
-unsigned short targa_width;
-unsigned short targa_height;
+#define TGA_TYPE_RGB		2		// uncompressed true color
+#define TGA_TYPE_RGB_RLE	10		// run-length encoded true color
 
-static unsigned short TGA_ReadLittleShort(FILE *stream)
+#define TGA_RLE_PACKET		0x80	// packet header: run-length packet flag
+#define TGA_PACKET_SIZE		0x7F	// packet header: pixel count - 1
+
+typedef struct
 {
-	const unsigned short lo = (unsigned char)fgetc(stream);
-	const unsigned short hi = (unsigned char)fgetc(stream);
-	return (unsigned short)(lo | (hi << 8));
+	unsigned char	id_length, colormap_type, image_type;
+	unsigned short	colormap_index, colormap_length;
+	unsigned char	colormap_size;
+	unsigned short	x_origin, y_origin, width, height;
+	unsigned char	pixel_size, attributes;
+} TargaHeader;
+
+byte			*targa_rgba;
+unsigned short	targa_width;
+unsigned short	targa_height;
+
+/*
+=============
+fgetLittleShort
+=============
+*/
+static unsigned short fgetLittleShort(FILE *f)
+{
+	unsigned short	b1, b2;
+
+	b1 = (byte)fgetc(f);
+	b2 = (byte)fgetc(f);
+
+	return (unsigned short)(b1 | (b2 << 8));
 }
 
-void LoadTGA(FILE *stream)
+/*
+=============
+LoadTGA
+
+Reads a 24 or 32 bit TGA into targa_rgba (RGBA, top row first) and closes the file.
+=============
+*/
+void LoadTGA(FILE *fin)
 {
-	unsigned char id_length;
-	unsigned char colormap_type;
-	unsigned char image_type;
-	unsigned short colormap_index;
-	unsigned short colormap_length;
-	unsigned char colormap_size;
-	unsigned short x_origin;
-	unsigned short y_origin;
-	unsigned char pixel_depth;
-	unsigned char image_desc;
+	TargaHeader	header;
+	int			row, column;
+	byte		*pixbuf;
 
-	int x;
-	int y;
+	header.id_length = fgetc(fin);
+	header.colormap_type = fgetc(fin);
+	header.image_type = fgetc(fin);
 
-	id_length = (unsigned char)fgetc(stream);
-	colormap_type = (unsigned char)fgetc(stream);
-	image_type = (unsigned char)fgetc(stream);
-	colormap_index = TGA_ReadLittleShort(stream);
-	colormap_length = TGA_ReadLittleShort(stream);
-	colormap_size = (unsigned char)fgetc(stream);
-	x_origin = TGA_ReadLittleShort(stream);
-	y_origin = TGA_ReadLittleShort(stream);
-	targa_width = TGA_ReadLittleShort(stream);
-	targa_height = TGA_ReadLittleShort(stream);
-	pixel_depth = (unsigned char)fgetc(stream);
-	image_desc = (unsigned char)fgetc(stream);
+	header.colormap_index = fgetLittleShort(fin);
+	header.colormap_length = fgetLittleShort(fin);
+	header.colormap_size = fgetc(fin);
+	header.x_origin = fgetLittleShort(fin);
+	header.y_origin = fgetLittleShort(fin);
+	targa_width = fgetLittleShort(fin);
+	targa_height = fgetLittleShort(fin);
+	header.pixel_size = fgetc(fin);
+	header.attributes = fgetc(fin);
 
-	(void)colormap_index;
-	(void)colormap_length;
-	(void)colormap_size;
-	(void)x_origin;
-	(void)y_origin;
-	(void)image_desc;
-
-	if (image_type != 2 && image_type != 10)
+	if (header.image_type != TGA_TYPE_RGB && header.image_type != TGA_TYPE_RGB_RLE)
 		Sys_Error("LoadTGA: Only type 2 and 10 supported\n");
 
-	if (colormap_type != 0 || (pixel_depth != 24 && pixel_depth != 32))
+	if (header.colormap_type != 0 || (header.pixel_size != 24 && header.pixel_size != 32))
 		Sys_Error("Texture_LoadTGA: Only 24 or 32 bit images supported (no colormaps)\n");
 
-	targa_rgba = (byte *)malloc(4 * (int)targa_width * (int)targa_height);
+	targa_rgba = malloc(4 * targa_width * targa_height);
 
-	if (id_length)
-		fseek(stream, id_length, SEEK_CUR);
+	if (header.id_length)
+		fseek(fin, header.id_length, SEEK_CUR);	// skip TARGA image comment
 
-	if (image_type == 2)
+	if (header.image_type == TGA_TYPE_RGB)
 	{
-		for (y = (int)targa_height - 1; y >= 0; --y)
+		for (row = targa_height - 1; row >= 0; row--)
 		{
-			byte *dst = targa_rgba + 4 * (int)targa_width * y;
-			for (x = 0; x < (int)targa_width; ++x)
+			pixbuf = targa_rgba + 4 * targa_width * row;
+			for (column = 0; column < targa_width; column++)
 			{
-				const unsigned char b = (unsigned char)getc(stream);
-				const unsigned char g = (unsigned char)getc(stream);
-				const unsigned char r = (unsigned char)getc(stream);
-				const unsigned char a = (pixel_depth == 32) ? (unsigned char)getc(stream) : 0xFF;
+				byte	red, green, blue, alphabyte;
 
-				*dst++ = r;
-				*dst++ = g;
-				*dst++ = b;
-				*dst++ = a;
+				blue = getc(fin);
+				green = getc(fin);
+				red = getc(fin);
+				alphabyte = (header.pixel_size == 32) ? (byte)getc(fin) : 255;
+
+				*pixbuf++ = red;
+				*pixbuf++ = green;
+				*pixbuf++ = blue;
+				*pixbuf++ = alphabyte;
 			}
 		}
 
-		fclose(stream);
+		fclose(fin);
 		return;
 	}
 
-	for (y = (int)targa_height - 1; y >= 0; --y)
+	for (row = targa_height - 1; row >= 0; row--)
 	{
-		int cur_x = 0;
-		byte *dst = targa_rgba + 4 * (int)targa_width * y;
+		column = 0;
+		pixbuf = targa_rgba + 4 * targa_width * row;
 
-		while (cur_x < (int)targa_width)
+		while (column < targa_width)
 		{
-			const int packet_header = getc(stream);
-			const int count = (packet_header & 0x7F) + 1;
-			int i;
+			int		packetHeader, packetSize;
+			int		j;
 
-			if (packet_header & 0x80)
+			packetHeader = getc(fin);
+			packetSize = (packetHeader & TGA_PACKET_SIZE) + 1;
+
+			if (packetHeader & TGA_RLE_PACKET)
 			{
-				const unsigned char b = (unsigned char)getc(stream);
-				const unsigned char g = (unsigned char)getc(stream);
-				const unsigned char r = (unsigned char)getc(stream);
-				const unsigned char a = (pixel_depth == 32) ? (unsigned char)getc(stream) : 0xFF;
+				// run-length packet
+				byte	red, green, blue, alphabyte;
 
-				for (i = 0; i < count; ++i)
+				blue = getc(fin);
+				green = getc(fin);
+				red = getc(fin);
+				alphabyte = (header.pixel_size == 32) ? (byte)getc(fin) : 255;
+
+				for (j = 0; j < packetSize; j++)
 				{
-					*dst++ = r;
-					*dst++ = g;
-					*dst++ = b;
-					*dst++ = a;
+					*pixbuf++ = red;
+					*pixbuf++ = green;
+					*pixbuf++ = blue;
+					*pixbuf++ = alphabyte;
 
-					if (++cur_x == (int)targa_width && y > 0)
+					// run spans across rows
+					if (++column == targa_width && row > 0)
 					{
-						--y;
-						cur_x = 0;
-						dst = targa_rgba + 4 * (int)targa_width * y;
+						row--;
+						column = 0;
+						pixbuf = targa_rgba + 4 * targa_width * row;
 					}
 				}
 			}
 			else
 			{
-				for (i = 0; i < count; ++i)
+				// non run-length packet
+				for (j = 0; j < packetSize; j++)
 				{
-					const unsigned char b = (unsigned char)getc(stream);
-					const unsigned char g = (unsigned char)getc(stream);
-					const unsigned char r = (unsigned char)getc(stream);
-					const unsigned char a = (pixel_depth == 32) ? (unsigned char)getc(stream) : 0xFF;
+					byte	red, green, blue, alphabyte;
 
-					*dst++ = r;
-					*dst++ = g;
-					*dst++ = b;
-					*dst++ = a;
+					blue = getc(fin);
+					green = getc(fin);
+					red = getc(fin);
+					alphabyte = (header.pixel_size == 32) ? (byte)getc(fin) : 255;
 
-					if (++cur_x == (int)targa_width)
+					*pixbuf++ = red;
+					*pixbuf++ = green;
+					*pixbuf++ = blue;
+					*pixbuf++ = alphabyte;
+
+					if (++column == targa_width)
 						break;
 				}
 			}
 		}
 	}
 
-	fclose(stream);
+	fclose(fin);
 }
