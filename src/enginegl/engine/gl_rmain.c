@@ -804,11 +804,7 @@ void R_Clear(void)
 	}
 	else
 	{
-		// alternate between the two halves of the depth range instead of clearing it
-		glFinish();
-		if (gl_clear.value != 0.0f)
-			glClear(GL_COLOR_BUFFER_BIT);
-
+		// alternate between the two halves of the depth range
 		ztrick_frame++;
 		if (ztrick_frame & 1)
 		{
@@ -822,6 +818,13 @@ void R_Clear(void)
 			gldepthmax = 0.5f;
 			glDepthFunc(GL_GEQUAL);
 		}
+
+		glClearDepth(gldepthmin == 0.0f ? 1.0 : 0.0);
+		if (gl_clear.value != 0.0f)
+			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		else
+			glClear(GL_DEPTH_BUFFER_BIT);
+		glClearDepth(1.0);
 	}
 
 	glDepthRange(gldepthmin, gldepthmax);

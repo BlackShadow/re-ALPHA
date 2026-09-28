@@ -472,7 +472,7 @@ void R_DrawDecals(void)
 	glDepthMask(GL_FALSE);
 	glEnable(GL_POLYGON_OFFSET_FILL);
 
-	if (r_fullbright.value == 0.0f || gl_ztrick.value < 0.5f)
+	if (gl_ztrick.value == 0.0f || gldepthmin < 0.5f)
 		glPolygonOffset(1.0f, -4.0f);
 	else
 		glPolygonOffset(1.0f, 4.0f);
