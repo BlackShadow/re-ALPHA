@@ -12,58 +12,52 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
-
-// sys.h -- system interface
-// NOTE: This is a skeleton header derived from reverse engineering.
-// Platform-specific functions will be filled during translation.
+// sys.h -- non-portable functions
 
 #ifndef SYS_H
 #define SYS_H
 
 #include <stddef.h>
 
-// =============================================================================
-// System initialization and shutdown
-// =============================================================================
+//
+// file IO
+//
 
-void Sys_Init(void);
-void Sys_Shutdown(void);
-__declspec(noreturn) void Sys_Error(const char *error, ...);
-void Sys_Quit(void);
+// returns the file size
+// return -1 if file is not present
+// the file should be in BINARY mode for stupid OSs that care
+int Sys_FileOpenRead(char *path, int *hndl);
 
-// =============================================================================
-// Console and debug output
-// =============================================================================
-
-int Sys_Printf(char *fmt, ...);
-char *Sys_ConsoleInput(void);
-
-// =============================================================================
-// Timing
-// =============================================================================
-
-void Sys_InitFloatTime(void);
-double Sys_FloatTime(void);
-void Sys_Sleep(void);
-void Sys_SendKeyEvents(void);
-
-// =============================================================================
-// File I/ O
-// =============================================================================
-
-int Sys_FileOpenRead(char *path, int *handle);
 int Sys_FileOpenWrite(char *path);
 void Sys_FileClose(int handle);
 void Sys_FileSeek(int handle, int position);
-size_t Sys_FileRead(int handle, void *dst, size_t count);
-size_t Sys_FileWrite(int handle, void *src, size_t count);
+size_t Sys_FileRead(int handle, void *dest, size_t count);
+size_t Sys_FileWrite(int handle, void *data, size_t count);
 int Sys_FileTime(char *path);
 int Sys_mkdir(char *path);
 
-// Main entry point for Windows
-// Main entry point for Windows
-// defined in sys_win.c
+//
+// system IO
+//
+__declspec(noreturn) void Sys_Error(const char *error, ...);
+// an error will cause the entire program to exit
 
-// =============================================================================
+void Sys_Printf(char *fmt, ...);
+// send text to the console
+
+void Sys_Quit(void);
+
+void Sys_Init(void);
+void Sys_InitFloatTime(void);
+double Sys_FloatTime(void);
+
+char *Sys_ConsoleInput(void);
+
+void Sys_Sleep(void);
+
+void Sys_SendKeyEvents(void);
+// Perform Key_Event () callbacks until the input que is empty
+
+extern char	Buffer[1024];	// scratch text buffer (EngineFprintf)
 
 #endif // SYS_H

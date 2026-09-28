@@ -3,6 +3,7 @@
 
 #include "common.h"
 #include "mathlib.h"
+#include "progdefs.h"
 #include <stddef.h>
 
 // Entity flags (v.flags)
@@ -52,113 +53,116 @@ typedef struct
 	struct edict_s *ent;
 } trace_t;
 
-// Maximum BSP leaves tracked per edict (leafnums[]).
-#define MAX_ENT_LEAFS 16
+// entvars_t.takedamage values
+#define DAMAGE_NO		0
+#define DAMAGE_YES		1
+#define DAMAGE_AIM		2
 
-// Entity variables (edict_t::v)
-// Layout is defined by `progs.dat` fielddefs for this build (entityfields = 132).
+#define MAX_ENT_LEAFS	16
+
+// Entity variables, shared with progs.dat and the game DLL
 typedef struct entvars_s
 {
-	float		modelindex; // 0
-	vec3_t		absmin; // 1..3
-	vec3_t		absmax; // 4..6
-	float		ltime; // 7
-	float		movetype; // 8
-	float		solid; // 9
-	vec3_t		origin; // 10..12
-	vec3_t		oldorigin; // 13..15
-	vec3_t		velocity; // 16..18
-	vec3_t		angles; // 19..21
-	vec3_t		avelocity; // 22..24
-	vec3_t		basevelocity; // 25..27
-	vec3_t		punchangle; // 28..30
-	int			classname; // 31
-	int			model; // 32
-	float		skin; // 33
-	float		body; // 34
-	float		effects; // 35
-	float		gravity; // 36
-	float		friction; // 37
-	float		light_level; // 38
-	int			sequence; // 39
-	float		animtime; // 40
-	float		frame; // 41
-	float		framerate; // 42
-	int			controller; // 43
-	int			blending; // 44
-	vec3_t		mins; // 45..47
-	vec3_t		maxs; // 48..50
-	vec3_t		size; // 51..53
-	int			touch; // 54
-	int			use; // 55
-	int			think; // 56
-	int			blocked; // 57
-	float		nextthink; // 58
-	int			groundentity; // 59
-	float		rendermode; // 60
-	float		renderamt; // 61
-	vec3_t		rendercolor; // 62..64
-	float		renderfx; // 65
-	float		health; // 66
-	float		frags; // 67
-	int			weapon; // 68
-	int			weapons; // 69
-	int			weaponmodel; // 70
-	float		weaponframe; // 71
-	float		currentammo; // 72
-	int			ammo_1; // 73
-	int			ammo_2; // 74
-	int			ammo_3; // 75
-	int			ammo_4; // 76
-	int			items; // 77
-	int			items2; // 78
-	float		takedamage; // 79
-	int			chain; // 80
-	float		deadflag; // 81
-	vec3_t		view_ofs; // 82..84
-	int			button; // 85
-	float		impulse; // 86
-	float		fixangle; // 87
-	vec3_t		v_angle; // 88..90
-	float		idealpitch; // 91
-	float		pitch_speed; // 92
-	int			netname; // 93
-	int			enemy; // 94
-	float		flags; // 95
-	float		colormap; // 96
-	float		team; // 97
-	float		max_health; // 98
-	float		teleport_time; // 99
-	float		armortype; // 100
-	float		armorvalue; // 101
-	float		waterlevel; // 102
-	float		watertype; // 103
-	float		ideal_yaw; // 104
-	float		yaw_speed; // 105
-	int			aiment; // 106
-	int			goalentity; // 107
-	float		spawnflags; // 108
-	int			target; // 109
-	int			targetname; // 110
-	float		dmg_take; // 111
-	float		dmg_save; // 112
-	int			dmg_inflictor; // 113
-	int			owner; // 114
-	vec3_t		movedir; // 115..117
-	int			message; // 118
-	float		sounds; // 119
-	int			noise; // 120
-	int			noise1; // 121
-	int			noise2; // 122
-	int			noise3; // 123
-	float		speed; // 124
-	float		dmg; // 125
-	float		dmgtime; // 126
-	float		air_finished; // 127
-	float		pain_finished; // 128
-	float		radsuit_finished; // 129
-	struct edict_s *pContainingEntity; // 130
-	void		*pSystemGlobals; // 131
+	float		modelindex;
+	vec3_t		absmin;
+	vec3_t		absmax;
+	float		ltime;
+	float		movetype;
+	float		solid;
+	vec3_t		origin;
+	vec3_t		oldorigin;
+	vec3_t		velocity;
+	vec3_t		angles;
+	vec3_t		avelocity;
+	vec3_t		basevelocity;
+	vec3_t		punchangle;
+	string_t	classname;
+	string_t	model;
+	float		skin;
+	float		body;
+	float		effects;
+	float		gravity;
+	float		friction;
+	float		light_level;
+	int			sequence;
+	float		animtime;
+	float		frame;
+	float		framerate;
+	int			controller;
+	int			blending;
+	vec3_t		mins;
+	vec3_t		maxs;
+	vec3_t		size;
+	func_t		touch;
+	func_t		use;
+	func_t		think;
+	func_t		blocked;
+	float		nextthink;
+	int			groundentity;
+	float		rendermode;
+	float		renderamt;
+	vec3_t		rendercolor;
+	float		renderfx;
+	float		health;
+	float		frags;
+	int			weapon;
+	int			weapons;
+	string_t	weaponmodel;
+	float		weaponframe;
+	float		currentammo;
+	int			ammo_1;
+	int			ammo_2;
+	int			ammo_3;
+	int			ammo_4;
+	int			items;
+	int			items2;
+	float		takedamage;
+	int			chain;
+	float		deadflag;
+	vec3_t		view_ofs;
+	int			button;
+	float		impulse;
+	float		fixangle;
+	vec3_t		v_angle;
+	float		idealpitch;
+	float		pitch_speed;
+	string_t	netname;
+	int			enemy;
+	float		flags;
+	float		colormap;
+	float		team;
+	float		max_health;
+	float		teleport_time;
+	float		armortype;
+	float		armorvalue;
+	float		waterlevel;
+	float		watertype;
+	float		ideal_yaw;
+	float		yaw_speed;
+	int			aiment;
+	int			goalentity;
+	float		spawnflags;
+	string_t	target;
+	string_t	targetname;
+	float		dmg_take;
+	float		dmg_save;
+	int			dmg_inflictor;
+	int			owner;
+	vec3_t		movedir;
+	string_t	message;
+	float		sounds;
+	string_t	noise;
+	string_t	noise1;
+	string_t	noise2;
+	string_t	noise3;
+	float		speed;
+	float		dmg;
+	float		dmgtime;
+	float		air_finished;
+	float		pain_finished;
+	float		radsuit_finished;
+	struct edict_s *pContainingEntity;
+	void		*pSystemGlobals;
 } entvars_t;
 
 // Edict structure
@@ -177,34 +181,51 @@ typedef struct edict_s
 	entvars_t	v;					// C exported fields from progs
 } edict_t;
 
-#if defined(_DEBUG)
-void ED_DispatchEnter(void);
-void ED_DispatchExit(void);
-#endif
+// ED_CallDispatch callbacks into the game DLL
+#define DISPATCH_SPAWN		0
+#define DISPATCH_THINK		1
+#define DISPATCH_TOUCH		2
+#define DISPATCH_USE		3
+#define DISPATCH_BLOCKED	4
+#define DISPATCH_KEYVALUE	5
+#define DISPATCH_SAVE		6
 
-// Edict accessors (implemented in pr_edict.c)
+#define EDICT_FROM_AREA(l)	((edict_t *)((byte *)(l) - offsetof(edict_t, area)))
+#define NEXT_EDICT(e)		((edict_t *)((byte *)(e) + pr_edict_size))
+
 edict_t *EDICT_NUM(int n);
-int NUM_FOR_EDICT(void *e);
+int NUM_FOR_EDICT(edict_t *e);
 edict_t *PROG_TO_EDICT(int e);
-int EDICT_TO_PROG(void *e);
+int EDICT_TO_PROG(edict_t *e);
 int EDICT_INDEX(int offset);
 void *EDICT_TO_ENTVAR(edict_t *ent);
 edict_t *ENTVAR_TO_EDICT(void *entvar);
 
 void ED_Init(void);
 edict_t *ED_Alloc(void);
+edict_t *ED_ClearEdict(edict_t *ed);
 void ED_Free(edict_t *ed);
+edict_t *ED_SetEdictPointers(edict_t *e);
+
+void *ED_AllocPrivateData(edict_t *ent, int size);
+void *ED_GetPrivateData(edict_t *ent);
 void ED_FreePrivateData(edict_t *ent);
+
+#if defined(_DEBUG)
+void ED_DispatchEnter(void);
+void ED_DispatchExit(void);
+#endif
+void *ED_GetDispatch(void *ent, int callback_type);
+void *ED_CallDispatch(void *ent, int callback_type, void *param);
+
+void ED_Print(edict_t *ed);
+void ED_Write(savebuf_t *sb, edict_t *ed);
+void ED_WriteGlobals(savebuf_t *sb);
+void ED_PrintNum(int entnum);
 void ED_LoadFromFile(char *data);
 void ED_ParseGlobals(char *data);
 char *ED_ParseEdict(char *data, edict_t *ent);
-void ED_Print(void *ed);
 
-// Link back from link_t::area to owning edict.
-#define EDICT_FROM_AREA(l) ((edict_t *)((byte *)(l) - offsetof(edict_t, area)))
-
-// Iterate edicts in the contiguous edict buffer (stride = pr_edict_size).
-extern int pr_edict_size;
-#define NEXT_EDICT(e) ((edict_t *)((byte *)(e) + pr_edict_size))
+void *GetEdictFieldValue(void *ent, const char *field);
 
 #endif // EDICT_H

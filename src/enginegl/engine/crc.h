@@ -18,11 +18,7 @@
 #ifndef CRC_H
 #define CRC_H
 
-// =============================================================================
-// CRC Function Declarations
-// =============================================================================
-
 void CRC_Init(unsigned short *crcvalue);
-void CRC_ProcessByte(unsigned short *crcvalue, unsigned char data);
+void CRC_ProcessByte(unsigned short *crcvalue, byte data);
 
 #endif // CRC_H

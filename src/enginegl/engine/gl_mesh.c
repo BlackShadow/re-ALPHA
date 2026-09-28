@@ -12,54 +12,68 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
+// gl_mesh.c: triangle model functions
+
 #include "quakedef.h"
 
-model_t *g_aliasmodel;
-aliashdr_t *g_paliashdr;
+/*
+=================================================================
 
-int g_commands[8192];
-int g_numcommands;
+ALIAS MODEL DISPLAY LIST GENERATION
 
-int g_vertexorder[8192];
-int g_numorder;
+=================================================================
+*/
 
-int g_stverts[3 * 1024];
+#define MAX_ALIAS_TRIS	8192
+#define MAX_COMMANDS	8192
+#define MAX_STRIP		1024
 
-#define MAX_ALIAS_TRIS 8192
-mtriangle_t g_triangles[MAX_ALIAS_TRIS];
+model_t		*g_aliasmodel;
+aliashdr_t	*g_paliashdr;
 
-int g_used[MAX_ALIAS_TRIS];
-int g_stripverts[1024];
-int g_striptris[1024];
-int g_stripcount;
+int			g_commands[MAX_COMMANDS];
+int			g_numcommands;
 
-int g_numverts;
-int g_numtris;
+// all frames will have their vertexes rearranged and expanded
+// so they are in the order expected by the command list
+int			g_vertexorder[MAX_COMMANDS];
+int			g_numorder;
 
-extern trivertx_t	*g_poseverts[256];
+int			g_stverts[3 * MAXALIASVERTS];	// onseam, s, t
+mtriangle_t	g_triangles[MAX_ALIAS_TRIS];
 
-static int FanLength(int starttri, int startv);
-static int StripLength(int starttri, int startv);
-static int BuildGLPolyFromEdges(void);
+int			g_used[MAX_ALIAS_TRIS];
 
+int			g_stripverts[MAX_STRIP];
+int			g_striptris[MAX_STRIP];
+int			g_stripcount;
+
+int			g_numverts;
+int			g_numtris;
+
+/*
+================
+FanLength
+================
+*/
 static int FanLength(int starttri, int startv)
 {
-	int fixed;
-	int last;
-	int j;
-	int k;
+	int		m1, m2;
+	int		j;
+	int		k;
 
 	g_used[starttri] = 2;
 
-	fixed = g_triangles[starttri].vertindex[startv % 3];
-	g_stripverts[0] = fixed;
+	m1 = g_triangles[starttri].vertindex[startv % 3];
+	g_stripverts[0] = m1;
 	g_stripverts[1] = g_triangles[starttri].vertindex[(startv + 1) % 3];
-	last = g_triangles[starttri].vertindex[(startv + 2) % 3];
-	g_stripverts[2] = last;
+	m2 = g_triangles[starttri].vertindex[(startv + 2) % 3];
+	g_stripverts[2] = m2;
 
 	g_striptris[0] = starttri;
 	g_stripcount = 1;
 
+	// look for a matching triangle
 	for (int i = 1;; i++)
 	{
 		if (g_paliashdr->numtris <= starttri + 1)
@@ -67,22 +81,26 @@ static int FanLength(int starttri, int startv)
 
 		for (j = starttri + 1; j < g_paliashdr->numtris; j++)
 		{
-			mtriangle_t *check = &g_triangles[j];
+			mtriangle_t	*check = &g_triangles[j];
+
 			if (check->facesfront != g_triangles[starttri].facesfront)
 				continue;
 
 			for (k = 0; k < 3; k++)
 			{
-				if (check->vertindex[k] != fixed)
+				if (check->vertindex[k] != m1)
 					continue;
-				if (check->vertindex[(k + 1) % 3] != last)
+				if (check->vertindex[(k + 1) % 3] != m2)
 					continue;
 
+				// this is the next part of the fan or strip
+
+				// if we can't use this triangle, this tristrip is done
 				if (g_used[j])
 					goto done;
 
-				last = check->vertindex[(k + 2) % 3];
-				g_stripverts[i + 2] = last;
+				m2 = check->vertindex[(k + 2) % 3];
+				g_stripverts[i + 2] = m2;
 				g_striptris[i] = j;
 				++g_stripcount;
 				g_used[j] = 2;
@@ -97,6 +115,7 @@ static int FanLength(int starttri, int startv)
 		;
 	}
 
+	// clear the temp used flags
 	for (j = starttri + 1; j < g_paliashdr->numtris; j++)
 	{
 		if (g_used[j] == 2)
@@ -106,12 +125,16 @@ static int FanLength(int starttri, int startv)
 	return g_stripcount;
 }
 
+/*
+================
+StripLength
+================
+*/
 static int StripLength(int starttri, int startv)
 {
-	int m1;
-	int m2;
-	int j;
-	int k;
+	int		m1, m2;
+	int		j;
+	int		k;
 
 	g_used[starttri] = 2;
 
@@ -125,6 +148,7 @@ static int StripLength(int starttri, int startv)
 	m1 = g_stripverts[2];
 	m2 = g_stripverts[1];
 
+	// look for a matching triangle
 	for (int i = 1;; i++)
 	{
 		if (g_paliashdr->numtris <= starttri + 1)
@@ -132,7 +156,8 @@ static int StripLength(int starttri, int startv)
 
 		for (j = starttri + 1; j < g_paliashdr->numtris; j++)
 		{
-			mtriangle_t *check = &g_triangles[j];
+			mtriangle_t	*check = &g_triangles[j];
+
 			if (check->facesfront != g_triangles[starttri].facesfront)
 				continue;
 
@@ -143,6 +168,9 @@ static int StripLength(int starttri, int startv)
 				if (check->vertindex[(k + 1) % 3] != m2)
 					continue;
 
+				// this is the next part of the fan or strip
+
+				// if we can't use this triangle, this tristrip is done
 				if (g_used[j])
 					goto done;
 
@@ -166,6 +194,7 @@ static int StripLength(int starttri, int startv)
 		;
 	}
 
+	// clear the temp used flags
 	for (j = starttri + 1; j < g_paliashdr->numtris; j++)
 	{
 		if (g_used[j] == 2)
@@ -175,66 +204,80 @@ static int StripLength(int starttri, int startv)
 	return g_stripcount;
 }
 
-static int BuildGLPolyFromEdges(void)
-{
-	int best_len;
-	int best_type;
-	int best_verts[1024];
-	int best_tris[1024];
-	int i;
+/*
+================
+BuildTris
 
+Generate a list of trifans or strips
+for the model, which holds for all frames
+================
+*/
+static void BuildTris(void)
+{
+	int		i;
+	int		bestlen;
+	int		besttype;
+	int		bestverts[MAX_STRIP];
+	int		besttris[MAX_STRIP];
+
+	//
+	// build tristrips
+	//
 	g_numorder = 0;
 	g_numcommands = 0;
 	memset(g_used, 0, sizeof(g_used));
 
 	for (i = 0; i < g_paliashdr->numtris; i++)
 	{
+		// pick an unused triangle and start the trifan
 		if (g_used[i])
 			continue;
 
-		best_len = 0;
-		best_type = 0;
+		bestlen = 0;
+		besttype = 0;
 
 		for (int type = 0; type < 2; type++)
 		{
 			for (int startv = 0; startv < 3; startv++)
 			{
 				int len = (type == 1) ? StripLength(i, startv) : FanLength(i, startv);
-				if (best_len < len)
-				{
-					best_len = len;
-					best_type = type;
 
-					if (len + 2 > 0)
-						memcpy(best_verts, g_stripverts, sizeof(int) * (len + 2));
-					if (len > 0)
-						memcpy(best_tris, g_striptris, sizeof(int) * len);
+				if (bestlen < len)
+				{
+					bestlen = len;
+					besttype = type;
+
+					memcpy(bestverts, g_stripverts, sizeof(int) * (len + 2));
+					memcpy(besttris, g_striptris, sizeof(int) * len);
 				}
 			}
 		}
 
-		for (int j = 0; j < best_len; j++)
-			g_used[best_tris[j]] = 1;
+		// mark the tris on the best strip as used
+		for (int j = 0; j < bestlen; j++)
+			g_used[besttris[j]] = 1;
 
-		if (best_type == 1)
-			g_commands[g_numcommands++] = best_len + 2;
+		if (besttype == 1)
+			g_commands[g_numcommands++] = bestlen + 2;
 		else
-			g_commands[g_numcommands++] = -2 - best_len;
+			g_commands[g_numcommands++] = -2 - bestlen;
 
 		{
-			int facesfront = g_triangles[best_tris[0]].facesfront;
-			int count = best_len + 2;
+			int facesfront = g_triangles[besttris[0]].facesfront;
+			int count = bestlen + 2;
 
 			for (int j = 0; j < count; j++)
 			{
-				int vertindex = best_verts[j];
-				float s = (float)g_stverts[3 * vertindex + 1];
-				float t = (float)g_stverts[3 * vertindex + 2];
+				int		k = bestverts[j];
+				float	s = (float)g_stverts[3 * k + 1];
+				float	t = (float)g_stverts[3 * k + 2];
 
-				g_vertexorder[g_numorder++] = vertindex;
+				// emit a vertex into the reorder buffer
+				g_vertexorder[g_numorder++] = k;
 
-				if (!facesfront && g_stverts[3 * vertindex + 0])
-					s += (float)(g_paliashdr->skinwidth / 2);
+				// emit s/t coords into the commands stream
+				if (!facesfront && g_stverts[3 * k + 0])
+					s += (float)(g_paliashdr->skinwidth / 2);	// on back side
 
 				s = (s + 0.5f) / (float)g_paliashdr->skinwidth;
 				t = (t + 0.5f) / (float)g_paliashdr->skinheight;
@@ -245,77 +288,87 @@ static int BuildGLPolyFromEdges(void)
 		}
 	}
 
-	*(float *)&g_commands[g_numcommands++] = 0.0f;
+	g_commands[g_numcommands++] = 0;		// end of list marker
 
-	Con_Printf("%3i tri %3i vert %3i cmd\n",
-		g_paliashdr->numtris,
-		g_numorder,
-		g_numcommands);
+	Con_Printf("%3i tri %3i vert %3i cmd\n", g_paliashdr->numtris, g_numorder, g_numcommands);
 
 	g_numverts += g_numorder;
 	g_numtris += g_paliashdr->numtris;
-
-	return g_paliashdr->numtris;
 }
 
+/*
+================
+GL_MakeAliasModelDisplayLists
+================
+*/
 void GL_MakeAliasModelDisplayLists(model_t *m, aliashdr_t *hdr)
 {
-	FILE *f;
-	char cache[64];
-	char fullpath[128];
-	int *cmds;
-	trivertx_t *verts;
-	int i;
+	int			i;
+	int			*cmds;
+	trivertx_t	*verts;
+	char		cache[64], fullpath[128];
+	FILE		*f;
 
 	g_aliasmodel = m;
-	g_paliashdr = hdr;
+	g_paliashdr = hdr;	// (aliashdr_t *)Mod_Extradata (m);
 
+	//
+	// look for a cached version
+	//
 	strcpy(cache, "glquake/");
-	COM_StripExtension(m->name + 6, &cache[8]);
+	COM_StripExtension(m->name + strlen("progs/"), cache + strlen("glquake/"));
 	strcat(cache, ".ms2");
 
 	COM_FOpenFile(cache, &f);
 	if (f)
 	{
-		fread(&g_numcommands, 4u, 1u, f);
-		fread(&g_numorder, 4u, 1u, f);
-		fread(g_commands, 4 * g_numcommands, 1u, f);
-		fread(g_vertexorder, 4 * g_numorder, 1u, f);
+		fread(&g_numcommands, sizeof(g_numcommands), 1, f);
+		fread(&g_numorder, sizeof(g_numorder), 1, f);
+		fread(g_commands, g_numcommands * sizeof(g_commands[0]), 1, f);
+		fread(g_vertexorder, g_numorder * sizeof(g_vertexorder[0]), 1, f);
 		fclose(f);
 	}
 	else
 	{
+		//
+		// build it from scratch
+		//
 		Con_Printf("meshing %s...\n", m->name);
-		BuildGLPolyFromEdges();
 
+		BuildTris();		// trifans or lists
+
+		//
+		// save out the cached version
+		//
 		sprintf(fullpath, "%s/%s", com_gamedir, cache);
 		f = fopen(fullpath, "wb");
 		if (f)
 		{
-			fwrite(&g_numcommands, 4u, 1u, f);
-			fwrite(&g_numorder, 4u, 1u, f);
-			fwrite(g_commands, 4 * g_numcommands, 1u, f);
-			fwrite(g_vertexorder, 4 * g_numorder, 1u, f);
+			fwrite(&g_numcommands, sizeof(g_numcommands), 1, f);
+			fwrite(&g_numorder, sizeof(g_numorder), 1, f);
+			fwrite(g_commands, g_numcommands * sizeof(g_commands[0]), 1, f);
+			fwrite(g_vertexorder, g_numorder * sizeof(g_vertexorder[0]), 1, f);
 			fclose(f);
 		}
 	}
 
+	// save the data out
+
 	hdr->poseverts = g_numorder;
 
-	cmds = (int *)Hunk_Alloc(4 * g_numcommands);
-	hdr->commands = (int)((byte *)cmds - (byte *)hdr);
-	memcpy(cmds, g_commands, 4 * g_numcommands);
+	cmds = Hunk_Alloc(g_numcommands * sizeof(int));
+	hdr->commands = (byte *)cmds - (byte *)hdr;
+	memcpy(cmds, g_commands, g_numcommands * sizeof(int));
 
-	verts = (trivertx_t *)Hunk_Alloc(4 * hdr->numposes * hdr->poseverts);
-	hdr->posedata = (int)((byte *)verts - (byte *)hdr);
+	verts = Hunk_Alloc(hdr->numposes * hdr->poseverts * sizeof(trivertx_t));
+	hdr->posedata = (byte *)verts - (byte *)hdr;
 
 	for (i = 0; i < hdr->numposes; i++)
 	{
 		for (int j = 0; j < g_numorder; j++)
 		{
-			int vertindex = g_vertexorder[j];
-			*verts++ = g_poseverts[i][vertindex];
+			int k = g_vertexorder[j];
+			*verts++ = g_poseverts[i][k];
 		}
 	}
 }
-

@@ -12,71 +12,63 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
+// r_efx.c -- efrag storing, tracer cvars and sprite temp entity effects
 
 #include "quakedef.h"
 
-extern struct model_s	*cl_model_precache[256];
-extern double			cl_time;
+cvar_t	tracerSpeed = { "tracerspeed", "3000" };
+cvar_t	tracerOffset = { "traceroffset", "35" };
+cvar_t	tracerLength = { "tracerlength", "1.0" };
+cvar_t	tracerRed = { "tracerred", "0.6" };
+cvar_t	tracerGreen = { "tracergreen", "0.8" };
+cvar_t	tracerBlue = { "tracerblue", "0.1" };
+cvar_t	tracerAlpha = { "traceralpha", "0.2" };
 
-extern void			Cvar_RegisterVariable(cvar_t *variable);
-extern sfx_t		*S_PrecacheSound(const char *sample);
-extern void			R_ParticleStatic(vec3_t *pos, vec3_t *vel, float die);
-extern void			*R_AllocTempEntity(vec_t *origin, model_t *model);
-extern int			R_GetSpriteFrameCount(model_t *model);
-extern void			CL_InitTEnts(void);
+/*
+================
+R_StoreEfrags
 
-cvar_t tracerSpeed = { "tracerspeed", "3000" };
-cvar_t tracerOffset = { "traceroffset", "35" };
-cvar_t tracerLength = { "tracerlength", "1.0" };
-cvar_t tracerRed = { "tracerred", "0.6" };
-cvar_t tracerGreen = { "tracergreen", "0.8" };
-cvar_t tracerBlue = { "tracerblue", "0.1" };
-cvar_t tracerAlpha = { "traceralpha", "0.2" };
-
-extern int r_framecount;
-extern int cl_numvisedicts;
-extern cl_entity_t *cl_visedicts[MAX_VISEDICTS];
-
-void R_StoreEfrags(efrag_t **efrag_list)
+Adds the entities of a leaf to the visible list
+================
+*/
+void R_StoreEfrags(efrag_t **ppefrag)
 {
-	efrag_t *efrag;
-	int frame;
+	efrag_t		*pefrag;
+	int			framecount;
 
-	efrag = *efrag_list;
-	if (!efrag)
+	pefrag = *ppefrag;
+	if (!pefrag)
 		return;
 
-	frame = r_framecount;
+	framecount = r_framecount;
 
 	do
 	{
-		entity_t *ent = efrag->entity;
+		entity_t *pent = pefrag->entity;
 
-		if (ent->model->type > mod_alias)
-			Sys_Error("R_StoreEfrags: Bad entity type %d\n", ent->model->type);
+		if (pent->model->type > mod_alias)
+			Sys_Error("R_StoreEfrags: Bad entity type %d\n", pent->model->type);
 
-		if (ent->visframe != frame && cl_numvisedicts < MAX_VISEDICTS)
+		if (pent->visframe != framecount && cl_numvisedicts < MAX_VISEDICTS)
 		{
-			ent->visframe = frame;
-			cl_visedicts[cl_numvisedicts++] = ent;
+			pent->visframe = framecount;
+			cl_visedicts[cl_numvisedicts++] = pent;
 		}
 
-		efrag = efrag->leafnext;
+		pefrag = pefrag->leafnext;
 	}
-	while (efrag);
+	while (pefrag);
 }
 
-int R_PrecacheWeaponSounds(void)
-{
-	extern sfx_t *cl_sfx_ric1;
-	extern sfx_t *cl_sfx_ric2;
-	extern sfx_t *cl_sfx_ric3;
-	extern sfx_t *cl_sfx_ric4;
-	extern sfx_t *cl_sfx_ric5;
-	extern sfx_t *cl_sfx_explosion;
-	extern sfx_t *cl_sfx_spark1;
-	extern sfx_t *cl_sfx_spark2;
+/*
+================
+R_PrecacheWeaponSounds
 
+Also registers the tracer cvars and clears the temp entities.
+================
+*/
+void R_PrecacheWeaponSounds(void)
+{
 	Cvar_RegisterVariable(&tracerSpeed);
 	Cvar_RegisterVariable(&tracerOffset);
 	Cvar_RegisterVariable(&tracerLength);
@@ -96,267 +88,242 @@ int R_PrecacheWeaponSounds(void)
 	cl_sfx_spark2 = S_PrecacheSound("weapons/explode5.wav");
 
 	CL_InitTEnts();
-	return 0;
 }
 
-void R_SpraySprite(int entity_ptr, int sprite_idx, int count)
+/*
+================
+R_SpraySprite
+
+Rises bubbles from random points in the box of sprite model modelIndex.
+Like R_Bubbles, which uses the box of the entity's model.
+================
+*/
+void R_SpraySprite(entity_t *ent, int modelIndex, int count)
 {
-	float bounds_x, bounds_y, bounds_z;
-	int frame_count;
-	int i;
-	vec3_t particle_pos;
-	int particle_ptr;
-	int rand_frame;
-	int modelptr;
+	model_t		*model;
+	float		width, height, depth;
+	int			frameCount;
+	int			i;
+	vec3_t		pos;
+	tempent_t	*te;
 
-	if (!sprite_idx)
+	if (!modelIndex)
 		return;
 
-	modelptr = (int)cl_model_precache[sprite_idx];
-	if (!modelptr)
+	model = cl_model_precache[modelIndex];
+	if (!model)
 		return;
 
-	bounds_x = *(float *)(modelptr + 96) - *(float *)(modelptr + 84);
-	bounds_y = *(float *)(modelptr + 104) - *(float *)(modelptr + 92);
-	bounds_z = *(float *)(modelptr + 100) - *(float *)(modelptr + 88);
+	width = model->maxs[0] - model->mins[0];
+	height = model->maxs[2] - model->mins[2];
+	depth = model->maxs[1] - model->mins[1];
 
-	frame_count = R_GetSpriteFrameCount((model_t *)modelptr);
+	frameCount = R_GetSpriteFrameCount(model);
 
-	for (i = 0; i < (count + 1); i++)
+	for (i = 0; i < count + 1; i++)
 	{
-		particle_pos[0] = (float)(rand() % (int)bounds_x) + *(float *)(modelptr + 84);
-		particle_pos[1] = (float)(rand() % (int)bounds_z) + *(float *)(modelptr + 88);
-		particle_pos[2] = *(float *)(modelptr + 92);
+		pos[0] = (float)(rand() % (int)width) + model->mins[0];
+		pos[1] = (float)(rand() % (int)depth) + model->mins[1];
+		pos[2] = model->mins[2];
 
-		particle_ptr = (int)R_AllocTempEntity(particle_pos, (model_t *)modelptr);
-		if (!particle_ptr)
+		te = R_AllocTempEntity(pos, model);
+		if (!te)
 			break;
 
-		*(byte *)particle_ptr |= 1;
-		*(float *)(particle_ptr + 196) = particle_pos[0];
+		te->flags |= FTENT_SINEWAVE;
+		te->entity.syncbase = pos[0];
 
-		rand_frame = rand();
-		*(float *)(particle_ptr + 32) = (float)(3 * (count + 3) + (rand_frame & 0x1F));
-		*(float *)(particle_ptr + 4) = bounds_y / *(float *)(particle_ptr + 32) + (float)cl_time;
+		te->entity.baseline.origin[2] = (float)(3 * (count + 3) + (rand() & 31));
+		te->die = height / te->entity.baseline.origin[2] + (float)cl_time;
 
-		*(float *)(particle_ptr + 192) = (float)(rand() % frame_count);
+		te->entity.frame = (float)(rand() % frameCount);
 	}
 }
 
-float *R_GetParticleFrameInfo(int base, float velocity, float lifetime, int num_frames, int modelIndex)
-{
-	float *result;
-	int frame_idx;
-	int i;
-	float *particle;
-	int rand_val;
-	float vx, vy, vz;
+/*
+================
+R_GetParticleFrameInfo
 
-	result = NULL;
+Throws sprites in random directions, like R_Sprite_Spray.
+================
+*/
+void R_GetParticleFrameInfo(vec3_t org, float speed, float life, int count, int modelIndex)
+{
+	model_t		*model;
+	int			frameCount;
+	int			i;
+	tempent_t	*te;
+
 	if (modelIndex)
 	{
-		result = (float *)cl_model_precache[modelIndex];
-		if (result != NULL)
+		model = cl_model_precache[modelIndex];
+		if (model != NULL)
 		{
-			frame_idx = R_GetSpriteFrameCount((model_t *)result);
+			frameCount = R_GetSpriteFrameCount(model);
 
-			for (i = 0; i < num_frames; i++)
+			for (i = 0; i < count; i++)
 			{
-				particle = (float *)R_AllocTempEntity((vec_t *)base, (model_t *)result);
-				if (!particle)
+				te = R_AllocTempEntity(org, model);
+				if (!te)
 					break;
 
-				rand_val = rand() % (int)frame_idx;
-				*(int*)(particle + 244) = rand_val;
+				te->entity.body = rand() % frameCount;
 
-				if ((rand() & 0xFF) >= 200)
-					*(char*)particle |= 2;
+				if ((rand() & 255) >= 200)
+					te->flags |= FTENT_GRAVITY;
 				else
-					*(char*)particle |= 8;
+					te->flags |= FTENT_SLOWGRAVITY;
 
-				if ((rand() & 0xFF) < 220)
+				if ((rand() & 255) < 220)
 				{
-					*(char*)particle |= 4;
-					vx = (float)(rand() & 7);
-					particle[33] = (vx - 4.0f) * 2.0f;
-					vy = (float)(rand() & 7);
-					particle[34] = (vy - 4.0f) * 4.0f;
-					vz = (float)(rand() & 7);
-					particle[35] = vz - 4.0f;
+					te->flags |= FTENT_ROTATE;
+					te->entity.msg_angles[0][0] = ((float)(rand() & 7) - 4.0f) * 2.0f;
+					te->entity.msg_angles[0][1] = ((float)(rand() & 7) - 4.0f) * 4.0f;
+					te->entity.msg_angles[0][2] = (float)(rand() & 7) - 4.0f;
 				}
 
-				if ((rand() & 0xFF) < 100)
-					*(char*)particle |= 16;
+				if ((rand() & 255) < 100)
+					te->flags |= FTENT_SMOKETRAIL;
 
-				*(char*)particle |= 96;
+				te->flags |= FTENT_COLLIDEWORLD | FTENT_FLICKER;
 
-				rand_val = i & 0x1F;
-				*(int*)(particle + 204) = rand_val;
+				te->entity.effects = i & (TENT_FLICKER_FRAMES - 1);
+				te->entity.rendermode = kRenderNormal;
 
-				particle[42] = 0.0f;
+				te->entity.baseline.origin[0] = (float)((rand() & 4095) - 2048) * (1.0f / 2048);
+				te->entity.baseline.origin[1] = (float)((rand() & 4095) - 2048) * (1.0f / 2048);
+				te->entity.baseline.origin[2] = (float)((rand() & 4095) - 2048) * (1.0f / 2048);
 
-				vx = (float)((rand() & 0xFFF) - 2048) * 0.00048828125f;
-				particle[6] = vx;
-				vy = (float)((rand() & 0xFFF) - 2048) * 0.00048828125f;
-				particle[7] = vy;
-				vz = (float)((rand() & 0xFFF) - 2048) * 0.00048828125f;
-				particle[8] = vz;
-
-				VectorNormalize(particle + 6);
-				VectorScale(particle + 6, velocity, particle + 6);
-				particle[1] = (float)cl_time + lifetime;
+				VectorNormalize(te->entity.baseline.origin);
+				VectorScale(te->entity.baseline.origin, speed, te->entity.baseline.origin);
+				te->die = (float)cl_time + life;
 			}
 		}
 	}
-
-	return result;
 }
 
-int R_CreateExplosionSprites(int origin, float *size, float *velocity, float lifetime, int num_sprites, int sprite_idx, char flags)
+/*
+================
+R_CreateExplosionSprites
+
+Breaks a brush into pieces of sprite or studio model modelIndex, like R_Sprite_Trail.
+================
+*/
+void R_CreateExplosionSprites(vec3_t org, float *dims, float *dir, float life, int count, int modelIndex, char flags)
 {
-	int sprite_base;
-	int frame_count;
-	int i;
-	int particle;
-	char vel_type;
-	int default_count;
-	float explosion_size;
-	int entity_type;
-	float rand_val;
+	model_t		*model;
+	int			frameCount;
+	int			i;
+	tempent_t	*te;
+	char		type;
+	int			pieces;
+	float		speed;
 
-	sprite_base = (int)cl_model_precache[sprite_idx];
-	vel_type = flags & 0x0F;
+	model = cl_model_precache[modelIndex];
+	type = flags & BREAK_TYPEMASK;
 
-	if (sprite_base)
+	if (model)
 	{
-		frame_count = R_GetSpriteFrameCount((model_t *)sprite_base);
+		frameCount = R_GetSpriteFrameCount(model);
 
-		default_count = num_sprites;
-		if (!num_sprites)
-		{
-			explosion_size = size[0] * size[1] * size[2] / 27000.0f;
-			default_count = (int)explosion_size;
-		}
+		pieces = count;
+		if (!count)
+			pieces = (int)(dims[0] * dims[1] * dims[2] / (30 * 30 * 30.0f));	// one piece per 30 unit cube
 
-		if (vel_type == 8)
-			default_count *= 4;
+		if (type == BREAK_WOOD)
+			pieces *= 4;
 
-		for (i = 0; i < default_count; i++)
+		for (i = 0; i < pieces; i++)
 		{
 			rand();
 			rand();
 			rand();
 
-			particle = (int)R_AllocTempEntity((vec_t *)origin, (model_t *)sprite_base);
-			if (!particle)
+			te = R_AllocTempEntity(org, model);
+			if (!te)
 				break;
 
-			entity_type = *(int*)(sprite_base + 68);
-			if (entity_type == 1)
-			{
+			if (model->type == mod_sprite)
+				te->entity.frame = (float)(rand() % frameCount);
+			else if (model->type == mod_studio)
+				te->entity.body = rand() % frameCount;
 
-				rand_val = (float)(rand() % frame_count);
-				*(float*)(particle + 192) = rand_val;
-			}
-			else if (entity_type == 3)
-			{
+			te->flags |= FTENT_COLLIDEWORLD;
 
-				*(int*)(particle + 244) = rand() % frame_count;
-			}
-
-			*(char*)particle |= 0x20;
-
-			if ((rand() & 0xFF) >= 200)
-				*(char*)particle |= 2;
+			if ((rand() & 255) >= 200)
+				te->flags |= FTENT_GRAVITY;
 			else
-				*(char*)particle |= 8;
+				te->flags |= FTENT_SLOWGRAVITY;
 
-			if ((rand() & 0xFF) < 200)
+			if ((rand() & 255) < 200)
 			{
-				*(char*)particle |= 4;
-				rand_val = (float)(rand() & 7);
-				*(float*)(particle + 132) = rand_val * 2.0f - 4.0f;
-				rand_val = (float)(rand() & 7);
-				*(float*)(particle + 136) = rand_val * 4.0f - 4.0f;
-				rand_val = (float)(rand() & 7);
-				*(float*)(particle + 140) = rand_val - 4.0f;
+				te->flags |= FTENT_ROTATE;
+				te->entity.msg_angles[0][0] = (float)(rand() & 7) * 2.0f - 4.0f;
+				te->entity.msg_angles[0][1] = (float)(rand() & 7) * 4.0f - 4.0f;
+				te->entity.msg_angles[0][2] = (float)(rand() & 7) - 4.0f;
 			}
 
-			if ((rand() & 0xFF) < 100 && (vel_type == 2 || (flags & 0x10)))
-				*(char*)particle |= 0x10;
+			if ((rand() & 255) < 100 && (type == BREAK_METAL || (flags & BREAK_SMOKE)))
+				te->flags |= FTENT_SMOKETRAIL;
 
-			if (vel_type == 1 || (flags & 0x20))
+			if (type == BREAK_GLASS || (flags & BREAK_TRANS))
 			{
-				*(int*)(particle + 168) = 2;
-				*(int*)(particle + 172) = 100;
-				*(int*)(particle + 180) = 5;
+				te->entity.rendermode = kRenderTransTexture;
+				te->entity.renderamt = 100;
+				te->entity.renderfx = kRenderFxFadeSlow;
 			}
 			else
 			{
-				*(int*)(particle + 168) = 0;
+				te->entity.rendermode = kRenderNormal;
 			}
 
-			rand_val = (float)((rand() & 0xFFF) - 2048) * velocity[0] * 0.00048828125f;
-			*(float*)(particle + 24) = rand_val;
-			rand_val = (float)((rand() & 0xFFF) - 2048) * velocity[1] * 0.00048828125f;
-			*(float*)(particle + 28) = rand_val;
-			rand_val = (float)(rand() & 0xFFF) * velocity[2] * 0.000244140625f;
-			*(float*)(particle + 32) = rand_val;
+			te->entity.baseline.origin[0] = (float)((rand() & 4095) - 2048) * dir[0] * (1.0f / 2048);
+			te->entity.baseline.origin[1] = (float)((rand() & 4095) - 2048) * dir[1] * (1.0f / 2048);
+			te->entity.baseline.origin[2] = (float)(rand() & 4095) * dir[2] * (1.0f / 4096);
 
-			rand_val = VectorLength(velocity) * 100.0f;
-			VectorScale((float*)(particle + 24), rand_val, (float*)(particle + 24));
+			speed = VectorLength(dir) * 100.0f;
+			VectorScale(te->entity.baseline.origin, speed, te->entity.baseline.origin);
 
-			*(float *)(particle + 4) = (float)cl_time + lifetime;
+			te->die = (float)cl_time + life;
 		}
 	}
-
-	return (int)particle;
 }
 
-int R_CreateBloodSprite(int origin, int *velocity, float lifetime, int sprite_idx)
+/*
+================
+R_CreateBloodSprite
+
+One falling sprite with the given velocity, like R_BubbleTrail.
+================
+*/
+void R_CreateBloodSprite(vec3_t org, vec3_t vel, float life, int modelIndex)
 {
-	int sprite_base;
-	int frame_count;
-	int particle;
-	int entity_type;
-	float rand_frame;
+	model_t		*model;
+	int			frameCount;
+	tempent_t	*te;
 
-	particle = sprite_idx;
-	if (sprite_idx)
-	{
-		sprite_base = (int)cl_model_precache[sprite_idx];
-		if (sprite_base)
-		{
-			frame_count = R_GetSpriteFrameCount((model_t *)sprite_base);
-			particle = (int)R_AllocTempEntity((vec_t *)origin, (model_t *)sprite_base);
+	if (!modelIndex)
+		return;
 
-			if (particle)
-			{
-				*(char*)particle |= 2;
+	model = cl_model_precache[modelIndex];
+	if (!model)
+		return;
 
-				*(int*)(particle + 24) = velocity[0];
-				*(int*)(particle + 28) = velocity[1];
-				*(int*)(particle + 32) = velocity[2];
+	frameCount = R_GetSpriteFrameCount(model);
+	te = R_AllocTempEntity(org, model);
+	if (!te)
+		return;
 
-				*(float *)(particle + 4) = lifetime + (float)cl_time;
+	te->flags |= FTENT_GRAVITY;
 
-				entity_type = *(int*)(sprite_base + 68);
-				if (entity_type == 1)
-				{
+	te->entity.baseline.origin[0] = vel[0];
+	te->entity.baseline.origin[1] = vel[1];
+	te->entity.baseline.origin[2] = vel[2];
 
-					rand_frame = (float)(rand() % frame_count);
-					*(float*)(particle + 192) = rand_frame;
-					return (int)rand_frame;
-				}
-				else
-				{
+	te->die = life + (float)cl_time;
 
-					*(int*)(particle + 244) = rand() % frame_count;
-					return rand() / frame_count;
-				}
-			}
-		}
-	}
-
-	return (int)particle;
+	if (model->type == mod_sprite)
+		te->entity.frame = (float)(rand() % frameCount);
+	else
+		te->entity.body = rand() % frameCount;
 }

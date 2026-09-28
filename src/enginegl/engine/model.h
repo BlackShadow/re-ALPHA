@@ -64,6 +64,9 @@ typedef struct
 #define PLANE_X 0
 #define PLANE_Y 1
 #define PLANE_Z 2
+#define PLANE_ANYX 3
+#define PLANE_ANYY 4
+#define PLANE_ANYZ 5
 
 #include "render.h"
 
@@ -257,6 +260,10 @@ typedef struct model_s
 // Alias Model runtime structures
 // =============================================================================
 
+#define MAXALIASVERTS	1024
+#define MAXALIASFRAMES	256
+#define MAX_SKINS		32
+
 typedef struct
 {
 	int			facesfront;
@@ -295,7 +302,7 @@ typedef struct aliashdr_s
 	int				poseverts;
 	int				posedata;
 	int				commands;
-	int				gl_texturenum[32];
+	int				gl_texturenum[MAX_SKINS];
 	maliasframedesc_t frames[1]; // variable sized
 } aliashdr_t;
 
@@ -304,6 +311,13 @@ typedef struct aliashdr_s
 // =============================================================================
 // Function Prototypes
 // =============================================================================
+
+extern model_t	*loadmodel;
+extern char		loadname[32];	// for hunk tags
+
+extern int			g_stverts[];	// onseam, s, t per vertex (gl_mesh.c)
+extern mtriangle_t	g_triangles[];
+extern trivertx_t	*g_poseverts[MAXALIASFRAMES];
 
 void		Mod_Init(void);
 void		Mod_ClearAll(void);

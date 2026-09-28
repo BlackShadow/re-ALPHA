@@ -12,103 +12,104 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
+// gl_warp.c -- sky and water polygons
+
 #include "quakedef.h"
 
-extern model_t *loadmodel;
-extern double cl_time;
-extern double realtime;
-extern vec3_t r_refdef_vieworg;
-extern entity_t *currententity;
-extern int texture_extension_number;
-extern vec3_t r_origin;
-extern model_t *currentmodel;
-extern cvar_t gl_wateramp;
+#define TURBSCALE		(256.0 / (2 * M_PI))
 
-void GL_Bind(int texnum);
-int COM_CheckParm(const char *parm);
-int COM_FOpenFile(const char *filename, FILE **file);
-void LoadTGA(FILE *fin);
-extern byte *targa_rgba;
-extern int gl_alpha_format;
+#define SKY_TEX_START	2000	// texture numbers of the six sky box faces
+#define SKYBOX_SIZE		256		// sky box face image width and height
+#define SKYBOX_DIST		2048.0f
 
+#define SUBDIVIDE_SIZE	64.0f
+
+#define MAX_CLIP_VERTS	64
+#define ON_EPSILON		0.1
+
+#define SIDE_FRONT		0
+#define SIDE_BACK		1
+#define SIDE_ON			2
+
+// sin(i * 2 * pi / 256) * 8
 float turbsin[256] =
 {
-	0.000000f, 0.196330f, 0.392541f, 0.588517f, 0.784137f, 0.979285f, 1.173840f, 1.367700f,
-	1.560720f, 1.752810f, 1.943840f, 2.133700f, 2.322280f, 2.509450f, 2.695120f, 2.879160f,
-	3.061470f, 3.241930f, 3.420440f, 3.596890f, 3.771170f, 3.943190f, 4.112820f, 4.279980f,
-	4.444560f, 4.606470f, 4.765590f, 4.921850f, 5.075150f, 5.225380f, 5.372470f, 5.516320f,
-	5.656850f, 5.793980f, 5.927610f, 6.057670f, 6.184080f, 6.306770f, 6.425660f, 6.540680f,
-	6.651760f, 6.758830f, 6.861830f, 6.960700f, 7.055370f, 7.145790f, 7.231910f, 7.313680f,
-	7.391040f, 7.463940f, 7.532350f, 7.596230f, 7.655520f, 7.710210f, 7.760250f, 7.805620f,
-	7.846280f, 7.882220f, 7.913410f, 7.939840f, 7.961480f, 7.978320f, 7.990360f, 7.997590f,
-	8.000000f, 7.997590f, 7.990360f, 7.978320f, 7.961480f, 7.939840f, 7.913410f, 7.882220f,
-	7.846280f, 7.805620f, 7.760250f, 7.710210f, 7.655520f, 7.596230f, 7.532350f, 7.463940f,
-	7.391040f, 7.313680f, 7.231910f, 7.145790f, 7.055370f, 6.960700f, 6.861830f, 6.758830f,
-	6.651760f, 6.540680f, 6.425660f, 6.306770f, 6.184080f, 6.057670f, 5.927610f, 5.793980f,
-	5.656850f, 5.516320f, 5.372470f, 5.225380f, 5.075150f, 4.921850f, 4.765590f, 4.606470f,
-	4.444560f, 4.279980f, 4.112820f, 3.943190f, 3.771170f, 3.596890f, 3.420440f, 3.241930f,
-	3.061470f, 2.879160f, 2.695120f, 2.509450f, 2.322280f, 2.133700f, 1.943840f, 1.752810f,
-	1.560720f, 1.367700f, 1.173840f, 0.979285f, 0.784137f, 0.588517f, 0.392541f, 0.196330f,
-	9.79717e-16f, -0.196330f, -0.392541f, -0.588517f, -0.784137f, -0.979285f, -1.173840f, -1.367700f,
-	-1.560720f, -1.752810f, -1.943840f, -2.133700f, -2.322280f, -2.509450f, -2.695120f, -2.879160f,
-	-3.061470f, -3.241930f, -3.420440f, -3.596890f, -3.771170f, -3.943190f, -4.112820f, -4.279980f,
-	-4.444560f, -4.606470f, -4.765590f, -4.921850f, -5.075150f, -5.225380f, -5.372470f, -5.516320f,
-	-5.656850f, -5.793980f, -5.927610f, -6.057670f, -6.184080f, -6.306770f, -6.425660f, -6.540680f,
-	-6.651760f, -6.758830f, -6.861830f, -6.960700f, -7.055370f, -7.145790f, -7.231910f, -7.313680f,
-	-7.391040f, -7.463940f, -7.532350f, -7.596230f, -7.655520f, -7.710210f, -7.760250f, -7.805620f,
-	-7.846280f, -7.882220f, -7.913410f, -7.939840f, -7.961480f, -7.978320f, -7.990360f, -7.997590f,
-	-8.000000f, -7.997590f, -7.990360f, -7.978320f, -7.961480f, -7.939840f, -7.913410f, -7.882220f,
-	-7.846280f, -7.805620f, -7.760250f, -7.710210f, -7.655520f, -7.596230f, -7.532350f, -7.463940f,
-	-7.391040f, -7.313680f, -7.231910f, -7.145790f, -7.055370f, -6.960700f, -6.861830f, -6.758830f,
-	-6.651760f, -6.540680f, -6.425660f, -6.306770f, -6.184080f, -6.057670f, -5.927610f, -5.793980f,
-	-5.656850f, -5.516320f, -5.372470f, -5.225380f, -5.075150f, -4.921850f, -4.765590f, -4.606470f,
-	-4.444560f, -4.279980f, -4.112820f, -3.943190f, -3.771170f, -3.596890f, -3.420440f, -3.241930f,
-	-3.061470f, -2.879160f, -2.695120f, -2.509450f, -2.322280f, -2.133700f, -1.943840f, -1.752810f,
-	-1.560720f, -1.367700f, -1.173840f, -0.979285f, -0.784137f, -0.588517f, -0.392541f, -0.196330f
+	0, 0.19633, 0.392541, 0.588517, 0.784137, 0.979285, 1.17384, 1.3677,
+	1.56072, 1.75281, 1.94384, 2.1337, 2.32228, 2.50945, 2.69512, 2.87916,
+	3.06147, 3.24193, 3.42044, 3.59689, 3.77117, 3.94319, 4.11282, 4.27998,
+	4.44456, 4.60647, 4.76559, 4.92185, 5.07515, 5.22538, 5.37247, 5.51632,
+	5.65685, 5.79398, 5.92761, 6.05767, 6.18408, 6.30677, 6.42566, 6.54068,
+	6.65176, 6.75883, 6.86183, 6.9607, 7.05537, 7.14579, 7.23191, 7.31368,
+	7.39104, 7.46394, 7.53235, 7.59623, 7.65552, 7.71021, 7.76025, 7.80562,
+	7.84628, 7.88222, 7.91341, 7.93984, 7.96148, 7.97832, 7.99036, 7.99759,
+	8, 7.99759, 7.99036, 7.97832, 7.96148, 7.93984, 7.91341, 7.88222,
+	7.84628, 7.80562, 7.76025, 7.71021, 7.65552, 7.59623, 7.53235, 7.46394,
+	7.39104, 7.31368, 7.23191, 7.14579, 7.05537, 6.9607, 6.86183, 6.75883,
+	6.65176, 6.54068, 6.42566, 6.30677, 6.18408, 6.05767, 5.92761, 5.79398,
+	5.65685, 5.51632, 5.37247, 5.22538, 5.07515, 4.92185, 4.76559, 4.60647,
+	4.44456, 4.27998, 4.11282, 3.94319, 3.77117, 3.59689, 3.42044, 3.24193,
+	3.06147, 2.87916, 2.69512, 2.50945, 2.32228, 2.1337, 1.94384, 1.75281,
+	1.56072, 1.3677, 1.17384, 0.979285, 0.784137, 0.588517, 0.392541, 0.19633,
+	9.79717e-16, -0.19633, -0.392541, -0.588517, -0.784137, -0.979285, -1.17384, -1.3677,
+	-1.56072, -1.75281, -1.94384, -2.1337, -2.32228, -2.50945, -2.69512, -2.87916,
+	-3.06147, -3.24193, -3.42044, -3.59689, -3.77117, -3.94319, -4.11282, -4.27998,
+	-4.44456, -4.60647, -4.76559, -4.92185, -5.07515, -5.22538, -5.37247, -5.51632,
+	-5.65685, -5.79398, -5.92761, -6.05767, -6.18408, -6.30677, -6.42566, -6.54068,
+	-6.65176, -6.75883, -6.86183, -6.9607, -7.05537, -7.14579, -7.23191, -7.31368,
+	-7.39104, -7.46394, -7.53235, -7.59623, -7.65552, -7.71021, -7.76025, -7.80562,
+	-7.84628, -7.88222, -7.91341, -7.93984, -7.96148, -7.97832, -7.99036, -7.99759,
+	-8, -7.99759, -7.99036, -7.97832, -7.96148, -7.93984, -7.91341, -7.88222,
+	-7.84628, -7.80562, -7.76025, -7.71021, -7.65552, -7.59623, -7.53235, -7.46394,
+	-7.39104, -7.31368, -7.23191, -7.14579, -7.05537, -6.9607, -6.86183, -6.75883,
+	-6.65176, -6.54068, -6.42566, -6.30677, -6.18408, -6.05767, -5.92761, -5.79398,
+	-5.65685, -5.51632, -5.37247, -5.22538, -5.07515, -4.92185, -4.76559, -4.60647,
+	-4.44456, -4.27998, -4.11282, -3.94319, -3.77117, -3.59689, -3.42044, -3.24193,
+	-3.06147, -2.87916, -2.69512, -2.50945, -2.32228, -2.1337, -1.94384, -1.75281,
+	-1.56072, -1.3677, -1.17384, -0.979285, -0.784137, -0.588517, -0.392541, -0.19633
 };
 
-#define SKY_TEX_START   2000
+int		solidskytexture;
+int		alphaskytexture;
+float	speedscale;		// for top sky and bottom sky
 
-int solidskytexture;
-int alphaskytexture;
-float speedscale;
+byte	g_WaterColor[4];
 
-byte g_WaterColor[4];
+static int		c_sky;
+static vec3_t	sky_color;
 
-static int skyfacecount;
-static vec3_t sky_color;
-
-static float skymins[2][6];
-static float skymaxs[2][6];
-
-extern char *cl_skyname_string;
-
-static int st_to_vec[6][3] =
-{
-	{3, -1, 2},
-	{-3, 1, 2},
-	{1, 3, 2},
-	{-1, -3, 2},
-	{-3, -1, -2},
-	{-3, 1, -2}
-};
+static float	skymins[2][6], skymaxs[2][6];
 
 static int vec_to_st[6] = {3, -3, 1, -1, -3, -3};
 static int vec_to_t[6] = {-1, 1, 3, -3, -1, 1};
 
 static char *suf[6] = {"rt", "bk", "lf", "ft", "up", "dn"};
 
+static int st_to_vec[6][3] =
+{
+	{3, -1, 2},
+	{-3, 1, 2},
+
+	{1, 3, 2},
+	{-1, -3, 2},
+
+	{-3, -1, -2},
+	{-3, 1, -2}
+};
+
+/*
+=============
+EmitWaterPolys
+
+Does a water warp on the pre-fragmented glpoly_t chain
+=============
+*/
 void EmitWaterPolys(msurface_t *fa, int direction)
 {
-	glpoly_t *p;
-	GLfloat *v;
-	int i;
-	float os;
-	float ot;
-	GLfloat vertex[3];
-	float warpS;
-	float warpT;
-	float z;
+	glpoly_t	*p;
+	float		*v;
+	int			i;
+	float		s, t, os, ot;
+	vec3_t		nv;
 
 	g_WaterColor[0] = currententity->rendercolor[0];
 	g_WaterColor[1] = currententity->rendercolor[1];
@@ -118,162 +119,153 @@ void EmitWaterPolys(msurface_t *fa, int direction)
 	for (p = fa->polys; p; p = p->next)
 	{
 		if (direction)
-			v = &p->verts[p->numverts - 1][0];
+			v = p->verts[p->numverts - 1];
 		else
-			v = &p->verts[0][0];
+			v = p->verts[0];
 
 		glBegin(GL_POLYGON);
-
 		for (i = 0; i < p->numverts; i++)
 		{
 			os = v[3];
 			ot = v[4];
 
-			warpS = turbsin[(unsigned char)(__int64)((ot * 0.125 + realtime) * 40.74366543152521)] + os;
-			warpS *= 0.015625f;
+			s = os + turbsin[(int)((ot * 0.125 + realtime) * TURBSCALE) & 255];
+			s *= (1.0f / 64);
 
-			warpT = turbsin[(unsigned char)(__int64)((os * 0.125 + realtime) * 40.74366543152521)] + ot;
-			warpT *= 0.015625f;
+			t = ot + turbsin[(int)((os * 0.125 + realtime) * TURBSCALE) & 255];
+			t *= (1.0f / 64);
 
-			glTexCoord2f(warpS, warpT);
+			glTexCoord2f(s, t);
 
-			vertex[0] = v[0];
-			vertex[1] = v[1];
-			vertex[2] = v[2];
+			// wave the surface
+			VectorCopy(v, nv);
+			nv[2] = turbsin[(int)(cl_time * 160.0 + nv[0] + nv[1]) & 255] * gl_wateramp.value + nv[2];
+			nv[2] = turbsin[(int)(nv[0] * 5.0 + cl_time * 171.0 - nv[1]) & 255] * gl_wateramp.value * 0.8f + nv[2];
 
-			z = turbsin[(unsigned char)(__int64)(cl_time * 160.0 + vertex[0] + vertex[1])] * gl_wateramp.value + vertex[2];
-			z = turbsin[(unsigned char)(__int64)(vertex[0] * 5.0 + cl_time * 171.0 - vertex[1])] * gl_wateramp.value * 0.8f + z;
-			vertex[2] = z;
-
-			glVertex3fv(vertex);
+			glVertex3fv(nv);
 
 			if (direction)
 				v -= VERTEXSIZE;
 			else
 				v += VERTEXSIZE;
 		}
-
 		glEnd();
 	}
 }
 
+/*
+=============
+EmitSkyPolys
+=============
+*/
 void EmitSkyPolys(msurface_t *fa)
 {
-	glpoly_t *p;
-	float *v;
-	int i;
-	vec3_t dir;
-	float length;
-	float s, t;
+	glpoly_t	*p;
+	float		*v;
+	int			i;
+	float		s, t;
+	vec3_t		dir;
+	float		length;
 
-	for (p = (glpoly_t *)*(int *)((int)fa + 36); p; p = (glpoly_t *)p->next)
+	for (p = fa->polys; p; p = p->next)
 	{
 		glBegin(GL_POLYGON);
-
-		v = &p->verts[0][0];
-
-		for (i = 0; i < p->numverts; i++, v += 7)
+		for (i = 0, v = p->verts[0]; i < p->numverts; i++, v += VERTEXSIZE)
 		{
-			dir[0] = v[0] - r_refdef_vieworg[0];
-			dir[1] = v[1] - r_refdef_vieworg[1];
-			dir[2] = v[2] - r_refdef_vieworg[2];
-
-			dir[2] *= 3.0f;
+			VectorSubtract(v, r_refdef_vieworg, dir);
+			dir[2] *= 3;	// flatten the sphere
 
 			length = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
 			length = sqrt(length);
-			length = 378.0f / length;
+			length = 6 * 63 / length;
 
 			dir[0] *= length;
 			dir[1] *= length;
 
-			s = (dir[0] + speedscale) * 0.0078125f;
-			t = (dir[1] + speedscale) * 0.0078125f;
+			s = (dir[0] + speedscale) * (1.0f / 128);
+			t = (dir[1] + speedscale) * (1.0f / 128);
 
 			glTexCoord2f(s, t);
 			glVertex3fv(v);
 		}
-
 		glEnd();
 	}
 }
 
+/*
+===============
+EmitBothSkyLayers
+
+Does a sky warp on the pre-fragmented glpoly_t chain
+This will be called for brushmodels, the world
+will have them chained together.
+===============
+*/
 void EmitBothSkyLayers(msurface_t *fa)
 {
-	float temp;
-	int truncated;
-
 	GL_Bind(solidskytexture);
-
-	temp = cl_time * 8.0f;
-	truncated = (int)temp;
-	truncated &= 0x80;
-	speedscale = temp - (float)truncated;
+	speedscale = cl_time * 8;
+	speedscale -= (int)speedscale & 128;
 
 	EmitSkyPolys(fa);
 
 	glEnable(GL_BLEND);
-
 	GL_Bind(alphaskytexture);
-
-	temp = cl_time * 16.0f;
-	truncated = (int)temp;
-	truncated &= 0x80;
-	speedscale = temp - (float)truncated;
+	speedscale = cl_time * 16;
+	speedscale -= (int)speedscale & 128;
 
 	EmitSkyPolys(fa);
 
 	glDisable(GL_BLEND);
 }
 
+/*
+==================
+R_LoadSkys
+==================
+*/
 void R_LoadSkys(void)
 {
-	int i;
-	char filename[64];
-	FILE *f;
+	int		i;
+	FILE	*f;
+	char	name[64];
 
 	for (i = 0; i < 6; i++)
 	{
 		GL_Bind(SKY_TEX_START + i);
+		sprintf(name, "gfx/env/bkgtst%s.tga", suf[i]);
+		COM_FOpenFile(name, &f);
+		if (!f)
+			continue;
+		LoadTGA(f);
 
-		sprintf(filename, "gfx/env/bkgtst%s.tga", suf[i]);
+		glTexImage2D(GL_TEXTURE_2D, 0, gl_alpha_format, SKYBOX_SIZE, SKYBOX_SIZE, 0, GL_RGBA, GL_UNSIGNED_BYTE, targa_rgba);
 
-		COM_FOpenFile(filename, &f);
-		if (f)
-		{
-			LoadTGA(f);
-			glTexImage2D(GL_TEXTURE_2D, 0, gl_alpha_format, 256, 256, 0,
-						 GL_RGBA, GL_UNSIGNED_BYTE, targa_rgba);
-			free(targa_rgba);
-			targa_rgba = NULL;
+		free(targa_rgba);
+		targa_rgba = NULL;
 
-			glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-			glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		}
+		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	}
 }
 
-static void EmitSkyVertex(float s, float t, int facenum)
+/*
+==============
+EmitSkyVertex
+==============
+*/
+static void EmitSkyVertex(float s, float t, int axis)
 {
-	vec3_t v, b;
-	int j;
-	static int st_to_vec[6][3] =
-	{
-		{3, -1, 2},
-		{-3, 1, 2},
-		{1, 3, 2},
-		{-1, -3, 2},
-		{-3, -1, -2},
-		{-3, 1, -2}
-	};
+	vec3_t	v, b;
+	int		j, k;
 
-	b[0] = s * 2048.0f;
-	b[1] = t * 2048.0f;
-	b[2] = 2048.0f;
+	b[0] = s * SKYBOX_DIST;
+	b[1] = t * SKYBOX_DIST;
+	b[2] = SKYBOX_DIST;
 
 	for (j = 0; j < 3; j++)
 	{
-		int k = st_to_vec[facenum][j];
+		k = st_to_vec[axis][j];
 		if (k < 0)
 			v[j] = -b[-k - 1];
 		else
@@ -281,490 +273,475 @@ static void EmitSkyVertex(float s, float t, int facenum)
 		v[j] += r_refdef_vieworg[j];
 	}
 
-	glTexCoord2f((s + 1.0f) * 0.5f, (t + 1.0f) * 0.5f);
+	glTexCoord2f((s + 1) * 0.5f, (t + 1) * 0.5f);
 	glVertex3fv(v);
 }
 
+/*
+==============
+R_DrawSkyBox
+==============
+*/
 void R_DrawSkyBox(void)
 {
-	int face;
+	int		i;
 
-	for (face = 0; face < 6; face++)
+	for (i = 0; i < 6; i++)
 	{
-		GL_Bind(SKY_TEX_START + face);
+		GL_Bind(SKY_TEX_START + i);
 		glBegin(GL_QUADS);
-		EmitSkyVertex(-1, -1, face);
-		EmitSkyVertex(-1, 1, face);
-		EmitSkyVertex(1, 1, face);
-		EmitSkyVertex(1, -1, face);
+		EmitSkyVertex(-1, -1, i);
+		EmitSkyVertex(-1, 1, i);
+		EmitSkyVertex(1, 1, i);
+		EmitSkyVertex(1, -1, i);
 		glEnd();
 	}
 }
 
+/*
+==============
+MakeSkyVec
+==============
+*/
 void MakeSkyVec(float s, float t, int axis)
 {
 	EmitSkyVertex(s, t, axis);
 }
 
+/*
+=============
+R_InitSky
+
+A sky texture is 256*128, with the right side being a masked overlay
+==============
+*/
 void R_InitSky(texture_t *mt)
 {
-	int x, y;
-	int src_offset;
-	byte *src;
-	unsigned int *dest;
-	unsigned int pixel;
-	int red_sum, green_sum, blue_sum;
-	unsigned int avg_color;
-	unsigned int pixels[16384];
+	int			i, j;
+	byte		*src;
+	unsigned	trans[SKYSIZE * SKYSIZE];
+	unsigned	transpix;
+	int			r, g, b;
+	unsigned	*dest;
+	unsigned	p;
 
-	red_sum = 0;
-	green_sum = 0;
-	blue_sum = 0;
-	src_offset = mt->offsets[0];
-	src = (byte *)mt + src_offset;
-	dest = pixels;
+	src = (byte *)mt + mt->offsets[0];
 
-	for (y = 0; y < 128; y++)
+	// make an average value for the back to avoid
+	// a fringe on the top level
+
+	r = g = b = 0;
+	dest = trans;
+	for (i = 0; i < SKYSIZE; i++)
 	{
-		for (x = 0; x < 128; x++)
+		for (j = 0; j < SKYSIZE; j++)
 		{
-			pixel = pixels[0];
-			*dest++ = pixel;
-
-			red_sum += pixel & 0xFF;
-			green_sum += (pixel >> 8) & 0xFF;
-			blue_sum += (pixel >> 16) & 0xFF;
+			p = trans[0];	// FIXME: never reads the sky pixels
+			*dest++ = p;
+			r += p & 0xff;
+			g += (p >> 8) & 0xff;
+			b += (p >> 16) & 0xff;
 		}
 	}
 
-	avg_color = (red_sum / 0x4000) |
-				((green_sum / 0x4000) << 8) |
-				((blue_sum / 0x4000) << 16) |
-				0xFF000000;
+	transpix = (r / (SKYSIZE * SKYSIZE)) | ((g / (SKYSIZE * SKYSIZE)) << 8) | ((b / (SKYSIZE * SKYSIZE)) << 16) | 0xff000000;
 
 	if (!solidskytexture)
 		solidskytexture = texture_extension_number++;
-
 	GL_Bind(solidskytexture);
-	glTexImage2D(GL_TEXTURE_2D, 0, texture_extension_number, 128, 128, 0,
-				 GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+	glTexImage2D(GL_TEXTURE_2D, 0, texture_extension_number, SKYSIZE, SKYSIZE, 0, GL_RGBA, GL_UNSIGNED_BYTE, trans);
 	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-	for (y = 0; y < 0x4000; y += 128)
+	for (i = 0; i < SKYSIZE * SKYSIZE; i += SKYSIZE)
 	{
-		for (x = 0; x < 128; x++)
+		for (j = 0; j < SKYSIZE; j++)
 		{
-			if (!src[x])
-				pixels[x + y] = avg_color;
+			if (!src[j])
+				trans[i + j] = transpix;
 		}
-		src += 256;
+		src += 2 * SKYSIZE;
 	}
 
 	if (!alphaskytexture)
 		alphaskytexture = texture_extension_number++;
-
 	GL_Bind(alphaskytexture);
-	glTexImage2D(GL_TEXTURE_2D, 0, texture_extension_number, 128, 128, 0,
-				 GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+	glTexImage2D(GL_TEXTURE_2D, 0, texture_extension_number, SKYSIZE, SKYSIZE, 0, GL_RGBA, GL_UNSIGNED_BYTE, trans);
 	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 }
 
-void GL_CalcMinMaxBounds(int vertexCount, float *vertices, float *minBound, float *maxBound)
+/*
+================
+BoundPoly
+================
+*/
+void BoundPoly(int numverts, float *verts, vec3_t mins, vec3_t maxs)
 {
-	int i, j;
-	float *v;
-	float *vmax;
+	int		i, j;
+	float	*v;
 
-	minBound[2] = 9999.0f;
-	minBound[1] = 9999.0f;
-	minBound[0] = 9999.0f;
-	maxBound[2] = -9999.0f;
-	maxBound[1] = -9999.0f;
-	maxBound[0] = -9999.0f;
-
-	if (vertexCount > 0)
+	mins[0] = mins[1] = mins[2] = 9999;
+	maxs[0] = maxs[1] = maxs[2] = -9999;
+	v = verts;
+	for (i = 0; i < numverts; i++)
 	{
-		for (i = 0; i < vertexCount; ++i)
+		for (j = 0; j < 3; j++, v++)
 		{
-			vmax = maxBound;
-			v = minBound;
-			for (j = 0; j < 3; ++j)
-			{
-				if (*vertices < *v)
-					*v = *vertices;
-				if (*vertices > *vmax)
-					*vmax = *vertices;
-				++vmax;
-				++v;
-				++vertices;
-			}
+			if (*v < mins[j])
+				mins[j] = *v;
+			if (*v > maxs[j])
+				maxs[j] = *v;
 		}
 	}
 }
 
-static msurface_t *g_WarpFace;
+static msurface_t *warpface;
 
-static void SubdividePolygon(int vertexCount, float *vertices)
+/*
+================
+SubdividePolygon
+================
+*/
+static void SubdividePolygon(int numverts, float *verts)
 {
-	int axis;
-	float mid;
-	vec3_t mins;
-	vec3_t maxs;
-	float dist[64];
-	float front[64][3];
-	float back[64][3];
-	int numFront;
-	int numBack;
-	int i;
-	int j;
-	float *v;
+	int			i, j, k;
+	vec3_t		mins, maxs;
+	float		m;
+	float		*v;
+	vec3_t		front[64], back[64];
+	int			f, b;
+	float		dist[64];
+	float		frac;
 
-	if (vertexCount > 60)
-		Sys_Error("numverts = %i", vertexCount);
+	if (numverts > 60)
+		Sys_Error("numverts = %i", numverts);
 
-	GL_CalcMinMaxBounds(vertexCount, vertices, mins, maxs);
+	BoundPoly(numverts, verts, mins, maxs);
 
-	axis = 0;
-	while (1)
+	for (i = 0; i < 3; i++)
 	{
-		mid = (maxs[axis] + mins[axis]) * 0.5f;
-		mid = (float)(floor(mid / 64.0f + 0.5f) * 64.0f);
-		if (maxs[axis] - mid >= 8.0f && mid - mins[axis] >= 8.0f)
+		m = (maxs[i] + mins[i]) * 0.5f;
+		m = floor(m / SUBDIVIDE_SIZE + 0.5f) * SUBDIVIDE_SIZE;
+		if (maxs[i] - m >= 8 && m - mins[i] >= 8)
 			break;
-
-		axis++;
-		if (axis >= 3)
-		{
-			glpoly_t *poly;
-			mtexinfo_t *tex;
-			float texMinS;
-			float texMinT;
-			float lightS;
-			float lightT;
-			float *out;
-
-			poly = Hunk_Alloc(16 + vertexCount * VERTEXSIZE * sizeof(float));
-			poly->next = g_WarpFace->polys;
-			g_WarpFace->polys = poly;
-
-			poly->numverts = vertexCount;
-			poly->flags = g_WarpFace->flags;
-
-			tex = g_WarpFace->texinfo;
-			texMinS = (float)g_WarpFace->texturemins[0];
-			texMinT = (float)g_WarpFace->texturemins[1];
-			lightS = (float)(16 * g_WarpFace->light_s);
-			lightT = (float)(16 * g_WarpFace->light_t);
-
-			out = &poly->verts[0][0];
-			v = vertices;
-
-			for (i = 0; i < vertexCount; i++, v += 3, out += VERTEXSIZE)
-			{
-				float s;
-				float t;
-
-				out[0] = v[0];
-				out[1] = v[1];
-				out[2] = v[2];
-
-				s = tex->vecs[0][0] * v[0] + tex->vecs[0][1] * v[1] + tex->vecs[0][2] * v[2];
-				t = tex->vecs[1][0] * v[0] + tex->vecs[1][1] * v[1] + tex->vecs[1][2] * v[2];
-
-				out[3] = s;
-				out[4] = t;
-
-				out[5] = (s + tex->vecs[0][3] - texMinS + lightS + 8.0f) / 2048.0f;
-				out[6] = (t + tex->vecs[1][3] - texMinT + lightT + 8.0f) / 2048.0f;
-			}
-
-			return;
-		}
 	}
 
-	for (i = 0; i < vertexCount; i++)
-		dist[i] = vertices[i * 3 + axis] - mid;
-	dist[vertexCount] = dist[0];
-	memcpy(&vertices[vertexCount * 3], vertices, sizeof(float) * 3);
-
-	numFront = 0;
-	numBack = 0;
-
-	v = vertices;
-	for (i = 0; i < vertexCount; i++, v += 3)
+	if (i == 3)
 	{
-		if (dist[i] >= 0.0f)
+		glpoly_t	*poly;
+		mtexinfo_t	*tex;
+		float		texmins, texmint, lights, lightt;
+		float		s, t;
+		float		*out;
+
+		// small enough, so emit it
+		poly = Hunk_Alloc(sizeof(glpoly_t) + (numverts - 4) * VERTEXSIZE * sizeof(float));
+		poly->next = warpface->polys;
+		warpface->polys = poly;
+		poly->numverts = numverts;
+		poly->flags = warpface->flags;
+
+		tex = warpface->texinfo;
+		texmins = warpface->texturemins[0];
+		texmint = warpface->texturemins[1];
+		lights = warpface->light_s * 16;
+		lightt = warpface->light_t * 16;
+
+		out = poly->verts[0];
+		for (j = 0, v = verts; j < numverts; j++, v += 3, out += VERTEXSIZE)
 		{
-			front[numFront][0] = v[0];
-			front[numFront][1] = v[1];
-			front[numFront][2] = v[2];
-			numFront++;
+			VectorCopy(v, out);
+			s = DotProduct(v, tex->vecs[0]);
+			t = DotProduct(v, tex->vecs[1]);
+			out[3] = s;
+			out[4] = t;
+
+			// lightmap texture coordinates
+			out[5] = (s + tex->vecs[0][3] - texmins + lights + 8) / (BLOCK_WIDTH * 16);
+			out[6] = (t + tex->vecs[1][3] - texmint + lightt + 8) / (BLOCK_HEIGHT * 16);
 		}
+		return;
+	}
 
-		if (dist[i] <= 0.0f)
+	// cut it
+	for (j = 0; j < numverts; j++)
+		dist[j] = verts[j * 3 + i] - m;
+
+	// wrap cases
+	dist[j] = dist[0];
+	VectorCopy(verts, verts + numverts * 3);
+
+	f = b = 0;
+	v = verts;
+	for (j = 0; j < numverts; j++, v += 3)
+	{
+		if (dist[j] >= 0)
 		{
-			back[numBack][0] = v[0];
-			back[numBack][1] = v[1];
-			back[numBack][2] = v[2];
-			numBack++;
+			VectorCopy(v, front[f]);
+			f++;
 		}
-
-		if (dist[i] != 0.0f && dist[i + 1] != 0.0f && (dist[i] > 0.0f) != (dist[i + 1] > 0.0f))
+		if (dist[j] <= 0)
 		{
-			float frac;
-			float *next;
-
-			frac = dist[i] / (dist[i] - dist[i + 1]);
-			next = v + 3;
-			for (j = 0; j < 3; j++)
-			{
-				float val = (next[j] - v[j]) * frac + v[j];
-				front[numFront][j] = val;
-				back[numBack][j] = val;
-			}
-			numFront++;
-			numBack++;
+			VectorCopy(v, back[b]);
+			b++;
+		}
+		if (dist[j] == 0 || dist[j + 1] == 0)
+			continue;
+		if ((dist[j] > 0) != (dist[j + 1] > 0))
+		{
+			// clip point
+			frac = dist[j] / (dist[j] - dist[j + 1]);
+			for (k = 0; k < 3; k++)
+				front[f][k] = back[b][k] = (v[3 + k] - v[k]) * frac + v[k];
+			f++;
+			b++;
 		}
 	}
 
-	SubdividePolygon(numFront, (float *)front);
-	SubdividePolygon(numBack, (float *)back);
+	SubdividePolygon(f, front[0]);
+	SubdividePolygon(b, back[0]);
 }
 
+/*
+================
+GL_SubdivideSurface
+
+Breaks a polygon up along axial 64 unit
+boundaries so that turbulent and sky warps
+can be done reasonably.
+================
+*/
 void GL_SubdivideSurface(msurface_t *fa)
 {
-	int i;
-	int vertexCount;
-	float verts[64][3];
+	vec3_t		verts[64];
+	int			numverts;
+	int			i;
+	int			lindex;
+	float		*vec;
 
-	g_WarpFace = fa;
+	warpface = fa;
 
-	vertexCount = fa->numedges;
-	for (i = 0; i < vertexCount; i++)
+	//
+	// convert edges back to a normal polygon
+	//
+	numverts = fa->numedges;
+	for (i = 0; i < numverts; i++)
 	{
-		int lindex;
-		medge_t *edge;
-		float *vec;
-
 		lindex = loadmodel->surfedges[fa->firstedge + i];
-		if (lindex <= 0)
-		{
-			edge = &loadmodel->edges[-lindex];
-			vec = loadmodel->vertexes[edge->v[1]].position;
-		}
-		else
-		{
-			edge = &loadmodel->edges[lindex];
-			vec = loadmodel->vertexes[edge->v[0]].position;
-		}
 
-		verts[i][0] = vec[0];
-		verts[i][1] = vec[1];
-		verts[i][2] = vec[2];
+		if (lindex > 0)
+			vec = loadmodel->vertexes[loadmodel->edges[lindex].v[0]].position;
+		else
+			vec = loadmodel->vertexes[loadmodel->edges[-lindex].v[1]].position;
+		VectorCopy(vec, verts[i]);
 	}
 
-	SubdividePolygon(vertexCount, (float *)verts);
+	SubdividePolygon(numverts, verts[0]);
 }
 
-int SetupSkyPolygonClipping(int param1, int param2, int param3)
+/*
+=============
+SetupSkyPolygonClipping
+
+Sets the water tint color.
+=============
+*/
+int SetupSkyPolygonClipping(int r, int g, int b)
 {
-	sky_color[0] = (float)param1;
-	sky_color[1] = (float)param2;
-	sky_color[2] = (float)param3;
-	g_WaterColor[0] = (byte)param1;
-	g_WaterColor[1] = (byte)param2;
-	g_WaterColor[2] = (byte)param3;
+	sky_color[0] = r;
+	sky_color[1] = g;
+	sky_color[2] = b;
+	g_WaterColor[0] = r;
+	g_WaterColor[1] = g;
+	g_WaterColor[2] = b;
 	g_WaterColor[3] = 128;
 
-	return param1;
+	return r;
 }
 
-int ReadWord(FILE *file)
+/*
+=============
+ReadWord
+=============
+*/
+int ReadWord(FILE *f)
 {
-	unsigned char byte1, byte2;
+	byte	b1, b2;
 
-	byte1 = fgetc(file);
-	byte2 = fgetc(file);
-	return (short)(byte1 + (byte2 << 8));
+	b1 = fgetc(f);
+	b2 = fgetc(f);
+
+	return (short)(b1 + (b2 << 8));
 }
 
-void AccumulateSkySurface(int planeAxis, float *vertices)
+/*
+=================
+DrawSkyPolygon
+=================
+*/
+void DrawSkyPolygon(int nump, float *vecs)
 {
-	float minX, minY, minZ;
-	float absX, absY, absZ;
-	int axis;
-	int i;
-	int axis2;
-	int axis3;
+	int		i, j, k;
+	float	vx, vy, vz;	// sum of the verts
+	float	ax, ay, az;
+	float	s, dv;
+	int		axis;
 
-	++skyfacecount;
+	c_sky++;
 
-	minX = vertices[0];
-	minY = vertices[1];
-	minZ = vertices[2];
-
-	if (planeAxis > 0)
+	// decide which face it maps to
+	vx = vecs[0];
+	vy = vecs[1];
+	vz = vecs[2];
+	for (i = 0; i < nump; i++)
 	{
-		for (i = 0; i < planeAxis; ++i)
-		{
-			minX = vertices[0] + minX;
-			vertices += 3;
-			minY = vertices[-2] + minY;
-			minZ = vertices[-1] + minZ;
-		}
+		vx = vecs[0] + vx;
+		vecs += 3;
+		vy = vecs[-2] + vy;
+		vz = vecs[-1] + vz;
 	}
 
-	absX = fabs(minX);
-	absY = fabs(minY);
-	absZ = fabs(minZ);
-
-	if (absY < absX && absZ < absX)
-	{
-		axis = (minX < 0.0f) ? 1 : 0;
-	}
-	else if (absZ >= absY)
-	{
-		axis = (minZ < 0.0f) ? 5 : 4;
-	}
+	ax = fabs(vx);
+	ay = fabs(vy);
+	az = fabs(vz);
+	if (ay < ax && az < ax)
+		axis = (vx < 0) ? 1 : 0;
+	else if (az >= ay)
+		axis = (vz < 0) ? 5 : 4;
 	else
-	{
-		axis = (minY < 0.0f) ? 3 : 2;
-	}
+		axis = (vy < 0) ? 3 : 2;
 
-	if (planeAxis > 0)
+	// project new texture coords
+	if (nump > 0)
 	{
-		axis2 = vec_to_st[axis];
-		axis3 = vec_to_t[axis];
-
-		for (i = 0; i < planeAxis; ++i)
+		j = vec_to_st[axis];
+		k = vec_to_t[axis];
+		for (i = 0; i < nump; i++, vecs += 3)
 		{
-			float val;
-			if (axis2 <= 0)
-				val = -vertices[-axis2 - 1];
+			if (j <= 0)
+				dv = -vecs[-j - 1];
 			else
-				val = vertices[axis2 - 1];
+				dv = vecs[j - 1];
 
-			float ratio1 = (axis3 >= 0) ? vertices[axis3 - 1] / val : -(vertices[-axis3 - 1] / val);
+			if (k >= 0)
+				s = vecs[k - 1] / dv;
+			else
+				s = -(vecs[-k - 1] / dv);
 
-			if (skymins[0][axis] > ratio1)
-				skymins[0][axis] = ratio1;
-
-			vertices += 3;
+			if (skymins[0][axis] > s)
+				skymins[0][axis] = s;
 		}
 	}
 }
 
-void ClipSkyPolygon(int vertexCount, float *vertices, int planeIndex)
+/*
+================
+ClipSkyPolygon
+================
+*/
+void ClipSkyPolygon(int nump, float *vecs, int stage)
 {
-	float *v;
-	int i;
-	double dotProduct;
-	float clipVerts[192];
-	float outVerts[192];
-	int outCount = 0;
-	int clipCount = 0;
-	int edgeDots[64];
+	float		*norm;
+	int			i;
+	double		d;
+	float		newv[2][MAX_CLIP_VERTS * 3];
+	qboolean	front, back;
+	int			sides[MAX_CLIP_VERTS];
 
-	if (vertexCount > 62)
+	if (nump > MAX_CLIP_VERTS - 2)
 		Sys_Error("ClipSkyPolygon: too many verts");
 
-	v = (float *)&st_to_vec[0][0] + 3 * planeIndex;
+	norm = (float *)st_to_vec[stage];	// FIXME: int table read as floats
 
 	while (1)
 	{
-		if (planeIndex >= 6)
+		if (stage >= 6)
 		{
-			AccumulateSkySurface(vertexCount, vertices);
+			// fully clipped, so draw it
+			DrawSkyPolygon(nump, vecs);
 			return;
 		}
 
-		clipCount = 0;
-		outCount = 0;
-
-		for (i = 0; i < vertexCount; ++i)
+		front = back = false;
+		for (i = 0; i < nump; i++, vecs += 3)
 		{
-			dotProduct = vertices[0] * v[0] + vertices[1] * v[1] + vertices[2] * v[2];
-
-			if (dotProduct <= 0.1)
+			d = vecs[0] * norm[0] + vecs[1] * norm[1] + vecs[2] * norm[2];
+			if (d <= ON_EPSILON)
 			{
-				if (dotProduct >= 0.1)
-					edgeDots[i] = 2;
+				if (d >= ON_EPSILON)
+					sides[i] = SIDE_ON;
 				else
 				{
-					clipCount = 1;
-					edgeDots[i] = 1;
+					back = true;
+					sides[i] = SIDE_BACK;
 				}
 			}
 			else
 			{
-				outCount = 1;
-				edgeDots[i] = 0;
+				front = true;
+				sides[i] = SIDE_FRONT;
 			}
-
-			vertices += 3;
 		}
 
-		if (outCount && clipCount)
+		if (front && back)
 			break;
 
-		v += 3;
-		++planeIndex;
+		// not clipped
+		norm += 3;
+		stage++;
 	}
 
-	ClipSkyPolygon(outCount, (float *)outVerts, planeIndex + 1);
-	ClipSkyPolygon(clipCount, (float *)clipVerts, planeIndex + 1);
+	// FIXME: the clipped polygons are never built, the side flags are passed as counts
+	ClipSkyPolygon(front, newv[0], stage + 1);
+	ClipSkyPolygon(back, newv[1], stage + 1);
 }
 
-void R_DrawSkyChain(msurface_t *surface)
+/*
+=================
+R_DrawSkyChain
+=================
+*/
+void R_DrawSkyChain(msurface_t *s)
 {
-	glpoly_t *poly;
-	int vertexCount;
-	float *vertexData;
-	float tmpVerts[192];
-	float *outVerts;
-	int vertexIdx;
+	msurface_t	*fa;
+	int			i, numverts;
+	vec3_t		verts[MAX_CLIP_VERTS];
+	glpoly_t	*p;
+	float		*v, *out;
 
-	skyfacecount = 0;
+	c_sky = 0;
 	GL_Bind(solidskytexture);
 
-	for (; surface; surface = surface->texturechain)
+	// calculate vertex values for sky box
+	for (fa = s; fa; fa = fa->texturechain)
 	{
-		for (poly = surface->polys; poly; poly = poly->next)
+		for (p = fa->polys; p; p = p->next)
 		{
-			vertexCount = poly->numverts;
-			if (vertexCount > 0)
+			numverts = p->numverts;
+			for (i = 0, v = p->verts[0], out = verts[0]; i < numverts; i++, v += VERTEXSIZE, out += 3)
 			{
-				vertexData = &poly->verts[0][0];
-				outVerts = tmpVerts;
-
-				for (vertexIdx = 0; vertexIdx < vertexCount; ++vertexIdx)
-				{
-					outVerts[0] = vertexData[0] - r_origin[0];
-					outVerts[1] = vertexData[1] - r_origin[1];
-					outVerts[2] = vertexData[2] - r_origin[2];
-					outVerts += 3;
-					vertexData += 7;
-				}
+				VectorSubtract(v, r_origin, out);
 			}
-
-			ClipSkyPolygon(vertexCount, tmpVerts, 0);
+			ClipSkyPolygon(numverts, verts[0], 0);
 		}
 	}
 }
 
-int InitSkyPolygonBounds(void)
+/*
+==============
+InitSkyPolygonBounds
+==============
+*/
+void InitSkyPolygonBounds(void)
 {
-	int i;
+	int		i;
 
-	for (i = 0; i < 6; ++i)
+	for (i = 0; i < 6; i++)
 	{
-		skymins[1][i] = 9999.0f;
-		skymaxs[0][i] = -9999.0f;
-		skymins[0][i] = 9999.0f;
-		skymaxs[1][i] = -9999.0f;
+		skymins[1][i] = 9999;
+		skymaxs[0][i] = -9999;
+		skymins[0][i] = 9999;
+		skymaxs[1][i] = -9999;
 	}
-
-	return i * 4;
 }

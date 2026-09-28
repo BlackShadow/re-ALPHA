@@ -12,17 +12,18 @@
 *   use or distribution of this code by or to any unlicensed person is illegal.
 *
 ****/
+// snd_dsp.c -- room effect settings used by the mixer
 
 #include "quakedef.h"
 
-cvar_t room_delay = {"room_delay", "0"};
-cvar_t room_feedback = {"room_feedback", "0.2"};
-cvar_t room_dlylp = {"room_dlylp", "1.0"};
-cvar_t room_size = {"room_size", "0"};
-cvar_t room_refl = {"room_refl", "0.7"};
-cvar_t room_rvblp = {"room_rvblp", "1.0"};
-cvar_t room_left = {"room_left", "0"};
-cvar_t room_lp = {"room_lp", "0"};
-cvar_t room_mod = {"room_mod", "0"};
-cvar_t room_type = {"room_type", "0"};
-cvar_t room_off = {"room_off", "0"};
+cvar_t	room_delay = {"room_delay", "0"};
+cvar_t	room_feedback = {"room_feedback", "0.2"};
+cvar_t	room_dlylp = {"room_dlylp", "1.0"};
+cvar_t	room_size = {"room_size", "0"};
+cvar_t	room_refl = {"room_refl", "0.7"};
+cvar_t	room_rvblp = {"room_rvblp", "1.0"};
+cvar_t	room_left = {"room_left", "0"};
+cvar_t	room_lp = {"room_lp", "0"};
+cvar_t	room_mod = {"room_mod", "0"};
+cvar_t	room_type = {"room_type", "0"};
+cvar_t	room_off = {"room_off", "0"};

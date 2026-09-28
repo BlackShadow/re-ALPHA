@@ -13,77 +13,78 @@
 *
 ****/
 
+// chase.c -- chase camera code
+
 #include "quakedef.h"
 
-extern vec3_t	cl_viewangles;
-extern float	r_refdef_vieworg[3];
-extern float	r_refdef_viewangles[3];
+vec3_t	chase_dest;
 
-vec3_t chase_dest;
+cvar_t	chase_active = { "chase_active", "0" };
+cvar_t	chase_back = { "chase_back", "100" };
+cvar_t	chase_up = { "chase_up", "16" };
+cvar_t	chase_right = { "chase_right", "0" };
 
-cvar_t chase_active = { "chase_active", "0" };
-cvar_t chase_back = { "chase_back", "100" };
-cvar_t chase_up = { "chase_up", "16" };
-cvar_t chase_right = { "chase_right", "0" };
-
-void TraceLine(vec_t *start, vec_t *end, vec_t *impact)
+/*
+==============
+TraceLine
+==============
+*/
+void TraceLine(vec3_t start, vec3_t end, vec3_t impact)
 {
-	trace_t trace;
+	trace_t	trace;
 
 	memset(&trace, 0, sizeof(trace));
-	SV_RecursiveHullCheck((hull_t *)(cl_worldmodel + 236), 0, 0.0, 1.0, (float *)start, (float *)end, &trace);
+	SV_RecursiveHullCheck(cl_worldmodel->hulls, 0, 0, 1, start, end, &trace);
 
-	impact[0] = trace.endpos[0];
-	impact[1] = trace.endpos[1];
-	impact[2] = trace.endpos[2];
+	VectorCopy(trace.endpos, impact);
 }
 
+/*
+==============
+Chase_Update
+==============
+*/
 void Chase_Update(void)
 {
-	int i;
-	double pitch_calc;
-	double pitch_dot;
-	double final_pitch;
-	double dot_result;
-	vec3_t forward, right, up;
-	vec3_t dest;
-	vec3_t impact;
-	float dist;
+	int		i;
+	float	dist, back;
+	double	pitch;
+	vec3_t	forward, up, right;
+	vec3_t	dest, stop;
 
 	AngleVectors(cl_viewangles, forward, right, up);
 
+	// calc exact destination
 	for (i = 0; i < 3; i++)
 	{
-		pitch_calc = forward[i] * chase_back.value;
-		pitch_dot = r_refdef_vieworg[i] - right[i] * chase_right.value;
-		final_pitch = pitch_dot - pitch_calc;
-		chase_dest[i] = final_pitch;
+		back = forward[i] * chase_back.value;
+		chase_dest[i] = r_refdef_vieworg[i] - right[i] * chase_right.value - back;
 	}
-
 	chase_dest[2] = chase_up.value + r_refdef_vieworg[2];
 
+	// find the spot the player is looking at
 	VectorMA(r_refdef_vieworg, 4096.0, forward, dest);
+	TraceLine(r_refdef_vieworg, dest, stop);
 
-	TraceLine((vec_t *)r_refdef_vieworg, (vec_t *)dest, impact);
+	// calculate pitch to look at the same spot from camera
+	VectorSubtract(stop, r_refdef_vieworg, stop);
+	dist = stop[2] * forward[2] + stop[1] * forward[1] + stop[0] * forward[0];
+	if (dist < 1)
+		dist = 1;
+	pitch = atan(stop[2] / dist);
 
-	impact[0] = impact[0] - r_refdef_vieworg[0];
-	impact[1] = impact[1] - r_refdef_vieworg[1];
-	impact[2] = impact[2] - r_refdef_vieworg[2];
-
-	dist = impact[2] * forward[2] + impact[1] * forward[1] + impact[0] * forward[0];
-	if (dist < 1.0)
-		dist = 1.0;
-
-	dot_result = atan(impact[2] / dist);
-
+	// move towards destination
 	r_refdef_vieworg[0] = chase_dest[0];
 	r_refdef_vieworg[1] = chase_dest[1];
-
-	dist = dot_result / -3.141592653589793 * 180.0;
-	r_refdef_viewangles[PITCH] = dist;
+	r_refdef_viewangles[PITCH] = pitch / -M_PI * 180;
 	r_refdef_vieworg[2] = chase_dest[2];
 }
 
+/*
+==============
+Chase_Init
+==============
+*/
 void Chase_Init(void)
 {
 	Cvar_RegisterVariable(&chase_active);
